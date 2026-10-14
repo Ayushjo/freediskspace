@@ -338,8 +338,14 @@ public sealed class CleanupQueue
                 return true;
             }
         }
-        return false;
+        // Exact folders only: the profile, AppData, Documents, Downloads…
+        // themselves are never staged — what is inside them still can be.
+        // A "Select all" on Biggest Folders once offered all of AppData.
+        return StorageClassifier.IsContainer(normalized) || IsDriveRoot(normalized);
     }
+
+    private static bool IsDriveRoot(string normalized) =>
+        Path.GetPathRoot(normalized) is { } root && root.TrimEnd('\\', '/').Equals(normalized, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// True when <paramref name="path"/> belongs to an installed app —
@@ -381,14 +387,7 @@ public sealed class CleanupQueue
         StagedItem item;
         lock (_gate)
         {
-            foreach (var prefix in ExcludedPrefixes)
-            {
-                if (normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
-                    && (normalized.Length == prefix.Length || normalized[prefix.Length] is '\\' or '/'))
-                {
-                    return false;
-                }
-            }
+            if (IsExcludedPath(normalized)) return false;
             if (_items.Any(i => string.Equals(i.Path, normalized, StringComparison.OrdinalIgnoreCase)))
                 return false;
             item = new StagedItem

@@ -14,24 +14,46 @@ public sealed class SettingsWindow : Window
     private readonly Action<string> _onAppearance;
     private readonly Action<double> _onTextScale;
     private readonly Action _onGeneralChanged;
+    private readonly Action<Window> _onSetup;
+    private readonly TextBlock _setupSummary = new() { TextWrapping = TextWrapping.Wrap };
     private readonly StackPanel _appearanceRow = new() { Orientation = Orientation.Horizontal };
     private readonly StackPanel _textScaleRow = new() { Orientation = Orientation.Horizontal };
 
-    public SettingsWindow(Action<string> onAppearance, Action<double> onTextScale, Action onGeneralChanged)
+    public SettingsWindow(Action<string> onAppearance, Action<double> onTextScale, Action onGeneralChanged,
+        Action<Window> onSetup)
     {
         _onAppearance = onAppearance;
         _onTextScale = onTextScale;
         _onGeneralChanged = onGeneralChanged;
+        _onSetup = onSetup;
 
         Title = "freedisk.space Settings";
         Width = 460;
-        Height = 470;
+        Height = 560;
         MinWidth = 380;
         MinHeight = 360;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         ResizeMode = ResizeMode.CanMinimize;
 
         var body = new StackPanel { Margin = new Thickness(20) };
+
+        // What the person does and uses — tailors Tools & Projects.
+        body.Children.Add(Ui.SectionLabel("YOUR SETUP"));
+        var setup = new DockPanel { Margin = new Thickness(0, 6, 0, 14) };
+        var change = Ui.Button("Change…", null, Ui.ButtonStyle.Outline, () =>
+        {
+            _onSetup(this);
+            PaintSetupSummary();
+        });
+        change.VerticalAlignment = VerticalAlignment.Center;
+        change.Margin = new Thickness(12, 0, 0, 0);
+        DockPanel.SetDock(change, Dock.Right);
+        setup.Children.Add(change);
+        _setupSummary.FontSize = Ui.Scaled(12.5);
+        _setupSummary.VerticalAlignment = VerticalAlignment.Center;
+        setup.Children.Add(_setupSummary);
+        body.Children.Add(setup);
+        PaintSetupSummary();
 
         body.Children.Add(Ui.SectionLabel("APPEARANCE"));
         _appearanceRow.Margin = new Thickness(0, 4, 0, 14);
@@ -96,6 +118,18 @@ public sealed class SettingsWindow : Window
             Content = body,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
         };
+    }
+
+    private void PaintSetupSummary()
+    {
+        var settings = AppSettings.Load();
+        var roles = DiskMap.Core.UserProfiles.Roles.Where(r => settings.Roles.Contains(r.Id)).Select(r => r.Title).ToList();
+        var tools = DiskMap.Core.UserProfiles.Tools.Where(t => settings.Tools.Contains(t.Id)).Select(t => t.Title).ToList();
+        _setupSummary.Text = roles.Count == 0
+            ? "Not set — Tools & Projects shows everything it finds."
+            : string.Join(", ", roles) + (tools.Count > 0
+                ? " · " + string.Join(", ", tools.Take(5)) + (tools.Count > 5 ? $" +{tools.Count - 5}" : "")
+                : "");
     }
 
     private static readonly (string Id, string Label)[] Appearances =

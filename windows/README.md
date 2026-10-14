@@ -29,6 +29,12 @@ dotnet test windows\DiskMap.Win.slnx
 Start-Process windows\app\DiskMap.App\bin\Debug\net10.0-windows\DiskMap.App.exe
 ```
 
+To build an installer (installs to Program Files, adds a Start menu
+entry, and can be uninstalled from Settings → Apps), install
+[Inno Setup 6](https://jrsoftware.org/isinfo.php), then run
+`windows\scripts\package-installer.ps1 -Version 0.2.4`. The output is
+`windows\dist\freedisk.space-setup-0.2.4-x64.exe`.
+
 Requires .NET 10 SDK. The app requires administrator: Windows shows the
 UAC prompt at every launch (`requireAdministrator` in `app.manifest`), so
 `dotnet run` works only from an elevated terminal — from a normal one it

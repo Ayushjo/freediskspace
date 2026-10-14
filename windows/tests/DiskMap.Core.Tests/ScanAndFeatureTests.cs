@@ -475,6 +475,7 @@ public class QuickWinsTests
     {
         var tree = new FileTree();
         int root = tree.AddNode("proj", -1, true, 0, 0, 0);
+        tree.AddNode("package.json", root, false, 10, 10, 1);   // what makes dist build output
         int modules = tree.AddNode("node_modules", root, true, 0, 0, 0);
         tree.AddNode("dist", modules, true, 0, 0, 0);
         int ownDist = tree.AddNode("dist", root, true, 0, 0, 0);
@@ -490,6 +491,7 @@ public class QuickWinsTests
     {
         var tree = new FileTree();
         int root = tree.AddNode("proj", -1, true, 0, 0, 0);
+        tree.AddNode("package.json", root, false, 10, 10, 1);
         int modules = tree.AddNode("node_modules", root, true, 0, 0, 0);
         int dist = tree.AddNode("dist", root, true, 0, 0, 0);
 

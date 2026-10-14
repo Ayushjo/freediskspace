@@ -81,8 +81,16 @@ public sealed class ScanModel : ViewModelBase
     public int SelectedNode
     {
         get => _selectedNode;
-        set { if (Set(ref _selectedNode, value)) Changed(); }
+        set { if (Set(ref _selectedNode, value)) SelectionChanged?.Invoke(this, EventArgs.Empty); }
     }
+
+    /// <summary>
+    /// The selection moved. Only the inspector and charts follow it; list
+    /// pages just repaint their highlight. (It used to raise StateChanged,
+    /// which rebuilt the whole list on every click — closing the row's ⋯
+    /// menu the moment it opened and throwing away the scroll position.)
+    /// </summary>
+    public event EventHandler? SelectionChanged;
 
     /// <summary>Inspector target: the selection, else the zoomed folder.</summary>
     public int InspectedNode =>
@@ -252,6 +260,10 @@ public sealed class ScanModel : ViewModelBase
     /// <summary>Raised when a page wants a folder picked (it can't show the dialog itself).</summary>
     public event Action? ScanRequested;
     public void RequestScan() => ScanRequested?.Invoke();
+
+    /// <summary>Raised to reopen "what do you do / what do you use" (the window owns the dialog).</summary>
+    public event Action? OnboardingRequested;
+    public void RequestOnboarding() => OnboardingRequested?.Invoke();
 
     /// <summary>Drill + navigate to Visualize, used by "Visualize this folder".</summary>
     public void Visualize(int nodeId)
@@ -506,12 +518,13 @@ public sealed class ScanModel : ViewModelBase
     public bool Stage(int nodeId, string reason, string? group = null, int groupCount = 1,
         bool notify = true)
     {
-        if (Tree is null || nodeId < 0 || nodeId >= Tree.Count) return false;
+        // The scanned root itself is never a cleanup item — only what's in it.
+        if (Tree is null || nodeId <= 0 || nodeId >= Tree.Count) return false;
         var verdict = VerdictOf(nodeId);
         if (verdict.Advice == CleanupAdvice.Never)
         {
             if (notify)
-                Toast($"{Tree.NameOf(nodeId)} is managed by Windows — {verdict.Instead ?? verdict.Note ?? "it can't be cleaned up here"}");
+                Toast($"{Tree.NameOf(nodeId)} is protected — {verdict.Instead ?? verdict.Note ?? "it can't be cleaned up here"}");
             return false;
         }
         if (verdict.Advice == CleanupAdvice.Warn

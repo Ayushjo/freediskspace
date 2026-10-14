@@ -124,6 +124,14 @@ public static class StorageClassifier
     private const string SystemNote = "Managed by Windows.";
     private const string SystemInstead = "Use Settings → System → Storage → Temporary files.";
     private const string RedownloadNote = "Re-downloadable, but it costs time and bandwidth to get back.";
+    private const string AppDataNote = "Data an app keeps for itself — settings, sign-ins, databases. Removing it can reset or break that app.";
+    private const string ContainerNote = "A Windows user or system folder — clean what's inside it, never the folder itself.";
+    private const string ToolNote = "Part of an installed tool — removing its files breaks it.";
+    private const string ToolInstead = "Uninstall or repair the tool instead, or use its own cleanup command.";
+    private const string SecretsNote = "Keys and credentials live here — losing them can lock you out of servers, repos or cloud accounts.";
+    private const string ShaderNote = "A graphics shader cache — rebuilt as games and apps run.";
+    private const string WaveformNote = "A simulation waveform dump — re-run the simulation to recreate it.";
+    private const string CadBackupNote = "A backup copy your design app saves next to the real file — the main file is separate.";
 
     private sealed record Rule(
         string[] Pattern, StorageClass Class, bool Claim,
@@ -165,18 +173,34 @@ public static class StorageClassifier
         Claim("programdata/package cache", Apps, CleanupAdvice.Warn,
             "Installer cache — apps need it to repair or uninstall.", AppInstead, depth: 1),
         Claim("programdata/docker*", VirtualDisks, CleanupAdvice.Warn, DockerNote, DockerInstead, depth: 1),
-        Area("programdata", AppData, depth: 1),
+        Area("programdata", AppData, CleanupAdvice.Review, AppDataNote, depth: 1),
         Claim("program files", Apps, CleanupAdvice.Warn, AppNote, AppInstead, depth: 1),
         Claim("program files (x86)", Apps, CleanupAdvice.Warn, AppNote, AppInstead, depth: 1),
         Claim("xboxgames", Games, CleanupAdvice.Warn, GameNote, GameInstead, depth: 1),
         Claim("riot games", Games, CleanupAdvice.Warn, GameNote, GameInstead, depth: 1),
         Claim("epic games", Games, CleanupAdvice.Warn, GameNote, GameInstead, depth: 1),
-        Claim("steamlibrary", Games, CleanupAdvice.Warn, GameNote, GameInstead, depth: 1),
+        Area("steamlibrary", Games, CleanupAdvice.Warn, GameNote, GameInstead, depth: 1),
         Claim("msys64", DevTools, CleanupAdvice.Review, depth: 1),
         Claim("cygwin*", DevTools, CleanupAdvice.Review, depth: 1),
         Claim("mingw*", DevTools, CleanupAdvice.Review, depth: 1),
         Claim("flutter", DevTools, CleanupAdvice.Review, depth: 1),
+        Claim("src/flutter", DevTools, CleanupAdvice.Review, depth: 1),
         Claim("python*", DevTools, CleanupAdvice.Review, depth: 1),
+        // Hardware toolchains installed at the drive root.
+        Claim("xilinx", DevTools, CleanupAdvice.Review, "AMD/Xilinx Vivado and Vitis.", "Remove versions with the AMD installer's uninstaller.", depth: 1),
+        Claim("amddesigntools", DevTools, CleanupAdvice.Review, "AMD Vivado and Vitis.", "Remove versions with the AMD installer's uninstaller.", depth: 1),
+        Claim("intelfpga*", DevTools, CleanupAdvice.Review, "Intel Quartus and Questa.", "Remove versions with the Quartus uninstaller.", depth: 1),
+        Claim("altera*", DevTools, CleanupAdvice.Review, "Intel/Altera Quartus.", depth: 1),
+        Claim("lscc", DevTools, CleanupAdvice.Review, "Lattice Diamond / Radiant.", depth: 1),
+        Claim("microchip", DevTools, CleanupAdvice.Review, "Microchip Libero / MPLAB.", depth: 1),
+        Claim("modeltech*", DevTools, CleanupAdvice.Review, depth: 1),
+        Claim("questasim*", DevTools, CleanupAdvice.Review, depth: 1),
+        Claim("oss-cad-suite", DevTools, CleanupAdvice.Review, depth: 1),
+        Claim("iverilog", DevTools, CleanupAdvice.Review, depth: 1),
+        Claim("ghdl", DevTools, CleanupAdvice.Review, depth: 1),
+        Claim("keil*", DevTools, CleanupAdvice.Review, depth: 1),
+        Claim("st", DevTools, CleanupAdvice.Review, "STMicroelectronics tools (STM32CubeIDE…).", depth: 1),
+        Claim("ti", DevTools, CleanupAdvice.Review, "Texas Instruments tools (Code Composer Studio…).", depth: 1),
         Claim("xampp", DevTools, CleanupAdvice.Review, depth: 1),
         Claim("laragon", DevTools, CleanupAdvice.Review, depth: 1),
         Area("dev", Projects, depth: 1),
@@ -209,7 +233,15 @@ public static class StorageClassifier
         Claim("deriveddata", Dependencies),
         Claim(".gradle", PackageCaches),
         Claim(".git", Projects, CleanupAdvice.Warn, GitNote),
-        Claim("steamapps", Games, CleanupAdvice.Warn, GameNote, GameInstead),
+        Claim(".ssh", AppData, CleanupAdvice.Never, SecretsNote),
+        Claim(".gnupg", AppData, CleanupAdvice.Never, SecretsNote),
+        Claim(".aws", AppData, CleanupAdvice.Never, SecretsNote),
+        Claim(".azure", AppData, CleanupAdvice.Never, SecretsNote),
+        Claim(".kube", DevTools, CleanupAdvice.Warn, SecretsNote),
+        // steamapps is an area so its shader cache can be a cache while
+        // installed games stay a warning.
+        Claim("steamapps/shadercache", Caches, CleanupAdvice.Fine, ShaderNote),
+        Area("steamapps", Games, CleanupAdvice.Warn, GameNote, GameInstead),
         Claim("virtualbox vms", VirtualDisks, CleanupAdvice.Warn, VmNote),
         Claim("hyper-v", VirtualDisks, CleanupAdvice.Warn, VmNote),
         Claim("virtual machines", VirtualDisks, CleanupAdvice.Warn, VmNote),
@@ -233,6 +265,31 @@ public static class StorageClassifier
         Claim(".ollama", AiModels, CleanupAdvice.Review, RedownloadNote, "Run `ollama rm <model>`."),
         Claim(".lmstudio", AiModels, CleanupAdvice.Review, RedownloadNote),
         Claim(".keras", AiModels, CleanupAdvice.Review, RedownloadNote),
+        // GPU shader caches, creative-app and CAD caches — rebuilt on demand.
+        Claim("appdata/local/nvidia/dxcache", Caches, CleanupAdvice.Fine, ShaderNote),
+        Claim("appdata/local/nvidia/glcache", Caches, CleanupAdvice.Fine, ShaderNote),
+        Claim("appdata/local/nvidia corporation/nv_cache", Caches, CleanupAdvice.Fine, ShaderNote),
+        Claim("appdata/local/amd/dxcache", Caches, CleanupAdvice.Fine, ShaderNote),
+        Claim("appdata/local/amd/dxccache", Caches, CleanupAdvice.Fine, ShaderNote),
+        Claim("appdata/local/amd/vkcache", Caches, CleanupAdvice.Fine, ShaderNote),
+        Claim("appdata/local/amd/glcache", Caches, CleanupAdvice.Fine, ShaderNote),
+        Claim("appdata/local/d3dscache", Caches, CleanupAdvice.Fine, ShaderNote),
+        Claim("appdata/local/epicgameslauncher/saved/webcache*", Caches),
+        Claim("appdata/roaming/adobe/common/media cache files", Caches, CleanupAdvice.Fine,
+            "Adobe's media cache — Premiere and After Effects rebuild it when projects open."),
+        Claim("appdata/roaming/adobe/common/media cache", Caches),
+        Claim("appdata/roaming/adobe/common/peak files", Caches),
+        Claim("appdata/local/autodesk/revit/?/journals", Caches, CleanupAdvice.Fine, "Revit session journals — logs Revit writes every session."),
+        Claim("appdata/local/autodesk/revit/?/collaborationcache", Caches, CleanupAdvice.Review,
+            "Local copies of cloud-workshared Revit models — re-downloaded when you open them.", "Close Revit first."),
+        Claim("appdata/local/autodesk/revit/paccache", Caches),
+        // Installed per-user tools and hardware toolchains' data.
+        Claim("appdata/local/mathworks", Apps, CleanupAdvice.Warn, "MATLAB's Service Host and support files.",
+            "Repair or reinstall MATLAB / MathWorks Service Host instead."),
+        Claim("appdata/roaming/xilinx", DevTools, CleanupAdvice.Review),
+        Claim("appdata/roaming/kicad", DevTools, CleanupAdvice.Review),
+        Claim("appdata/local/arduino15/staging", PackageCaches),
+        Area("appdata/local/arduino15", DevTools, CleanupAdvice.Review),
         Claim("appdata/local/programs", Apps, CleanupAdvice.Warn, AppNote, AppInstead),
         Claim("appdata/local/microsoft/windowsapps", Apps, CleanupAdvice.Never, AppNote, AppInstead),
         Claim("appdata/local/microsoft/windows", System, CleanupAdvice.Never, SystemNote, SystemInstead),
@@ -263,7 +320,7 @@ public static class StorageClassifier
         Claim("appdata/roaming/mozilla", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
         Claim("appdata/local/mozilla", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
         Claim("appdata/roaming/opera software", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
-        Area("appdata", AppData),
+        Area("appdata", AppData, CleanupAdvice.Review, AppDataNote),
 
         // Home-folder toolchains (Users\you\.cargo …).
         Claim(".cargo", DevTools, CleanupAdvice.Review),
@@ -292,6 +349,13 @@ public static class StorageClassifier
         Claim(".sdkman", DevTools, CleanupAdvice.Review),
         Area(".cache", PackageCaches),
         Claim("users/?/go", DevTools, CleanupAdvice.Review),
+        Claim("users/?/scoop", Apps, CleanupAdvice.Warn, "Apps installed with Scoop.", "Remove them with `scoop uninstall <app>` (and `scoop cleanup *` for old versions)."),
+        Claim("users/?/flutter", DevTools, CleanupAdvice.Review),
+        Claim("users/?/documents/flutter", DevTools, CleanupAdvice.Review),
+        Claim("users/?/dev/flutter", DevTools, CleanupAdvice.Review),
+        Claim("users/?/development/flutter", DevTools, CleanupAdvice.Review),
+        Area("users/?/documents/kicad", Projects),
+        Area("users/?/documents/matlab", Projects),
 
         // Personal areas — areas, so dev folders inside still classify.
         Area("users/?/documents/code*", Projects),
@@ -365,7 +429,49 @@ public static class StorageClassifier
             [".msix"] = new(Installers, CleanupAdvice.Fine),
             [".msixbundle"] = new(Installers, CleanupAdvice.Fine),
             [".appx"] = new(Installers, CleanupAdvice.Fine),
+            [".vcd"] = new(Dependencies, CleanupAdvice.Review, WaveformNote),
+            [".fst"] = new(Dependencies, CleanupAdvice.Review, WaveformNote),
+            [".wlf"] = new(Dependencies, CleanupAdvice.Review, WaveformNote),
+            [".vpd"] = new(Dependencies, CleanupAdvice.Review, WaveformNote),
+            [".fsdb"] = new(Dependencies, CleanupAdvice.Review, WaveformNote),
+            [".ghw"] = new(Dependencies, CleanupAdvice.Review, WaveformNote),
+            [".sv$"] = new(Caches, CleanupAdvice.Review, CadBackupNote),
+            [".skb"] = new(Caches, CleanupAdvice.Review, CadBackupNote),
+            [".3dmbak"] = new(Caches, CleanupAdvice.Review, CadBackupNote),
+            [".blend1"] = new(Caches, CleanupAdvice.Review, CadBackupNote),
+            [".blend2"] = new(Caches, CleanupAdvice.Review, CadBackupNote),
         };
+
+    /// <summary>
+    /// Folders that are never staged themselves — only what is inside them
+    /// (the profile, AppData, Documents…). Exact matches from the drive
+    /// root; `?` = any one segment, a trailing `*` = prefix.
+    /// </summary>
+    private static readonly string[][] Containers = new[]
+    {
+        "users", "users/?", "users/public", "program files", "program files (x86)", "programdata",
+        "users/?/appdata", "users/?/appdata/local", "users/?/appdata/roaming", "users/?/appdata/locallow",
+        "users/?/appdata/local/packages", "users/?/appdata/local/programs",
+        "users/?/documents", "users/?/desktop", "users/?/downloads", "users/?/pictures",
+        "users/?/videos", "users/?/music", "users/?/favorites", "users/?/contacts", "users/?/links",
+        "users/?/searches", "users/?/saved games", "users/?/3d objects", "users/?/onedrive*",
+        "users/?/onedrive*/documents", "users/?/onedrive*/desktop", "users/?/onedrive*/pictures",
+    }.Select(Split).ToArray();
+
+    /// <summary>True for a folder that may only be cleaned inside, never as a whole (see <see cref="Containers"/>).</summary>
+    public static bool IsContainer(string fullPath)
+    {
+        var segs = Segments(fullPath);
+        foreach (var pattern in Containers)
+        {
+            if (segs.Length != pattern.Length + 1) continue;
+            bool ok = true;
+            for (int k = 0; k < pattern.Length && ok; k++)
+                ok = SegmentMatches(pattern[k], segs[k + 1]);
+            if (ok) return true;
+        }
+        return false;
+    }
 
     /// <summary>Lower-cased path segments: "C:\Users\me" → ["c:", "users", "me"].</summary>
     private static string[] Segments(string path) =>
@@ -414,6 +520,14 @@ public static class StorageClassifier
     /// </summary>
     public static StorageVerdict Classify(string fullPath, bool isDirectory)
     {
+        var verdict = ClassifyPath(fullPath, isDirectory);
+        return isDirectory && IsContainer(fullPath)
+            ? verdict with { Advice = CleanupAdvice.Never, Note = ContainerNote, Instead = null }
+            : verdict;
+    }
+
+    private static StorageVerdict ClassifyPath(string fullPath, bool isDirectory)
+    {
         var segs = Segments(fullPath);
         StorageVerdict? area = null;
         int folderCount = isDirectory ? segs.Length : segs.Length - 1;
@@ -421,11 +535,28 @@ public static class StorageClassifier
         {
             if (MatchFolder(segs, count) is not { } rule) continue;
             var verdict = new StorageVerdict(rule.Class, rule.Advice, rule.Note, rule.Instead);
-            if (rule.Claim) return verdict;
+            if (rule.Claim) return InstalledToolOrSelf(verdict, segs.AsSpan(0, count));
             area = verdict;
         }
         if (!isDirectory && segs.Length > 0 && FileVerdict(segs[^1]) is { } file) return file;
         return area ?? new StorageVerdict(Other, CleanupAdvice.Fine);
+    }
+
+    /// <summary>
+    /// A node_modules/.venv/build output under plain AppData belongs to an
+    /// installed tool (an agent, an Electron app's sources), not a project
+    /// — removing it breaks the tool. Temp and known caches are claims of
+    /// their own, so they never reach here.
+    /// </summary>
+    private static StorageVerdict InstalledToolOrSelf(StorageVerdict claim, ReadOnlySpan<string> folders) =>
+        claim.Class == Dependencies && UnderAppData(folders)
+            ? new StorageVerdict(AppData, CleanupAdvice.Warn, ToolNote, ToolInstead)
+            : claim;
+
+    private static bool UnderAppData(ReadOnlySpan<string> folders)
+    {
+        foreach (var s in folders) if (s == "appdata") return true;
+        return false;
     }
 
     /// <summary>Bytes per class plus the biggest node each class claimed (for drill-in).</summary>
@@ -482,7 +613,12 @@ public static class StorageClassifier
                 if (frame.Depth >= segs.Length) { Add(frame.Area ?? Other, c, size); continue; }
                 segs[frame.Depth] = tree.NameOf(c).ToLowerInvariant();
                 var rule = MatchFolder(segs, frame.Depth + 1);
-                if (rule is { Claim: true }) { Add(rule.Class, c, size); continue; }
+                if (rule is { Claim: true })
+                {
+                    // Same exception as Classify: dependencies inside AppData are the tool's.
+                    Add(rule.Class == Dependencies && UnderAppData(segs.AsSpan(0, frame.Depth + 1)) ? AppData : rule.Class, c, size);
+                    continue;
+                }
                 stack.Push((c, frame.Depth + 1, rule?.Class ?? frame.Area));
             }
         }

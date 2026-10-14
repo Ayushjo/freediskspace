@@ -1107,3 +1107,42 @@ Finding catalogs skip `.Trash`, `.Trashes`, Spotlight, FSEvents and document-
 version folders via `StorageClassifier.systemHoldingFlags` (one
 `folderChainFlags` pass, no path building). Overview's biggest files and
 folders keep them: a full Trash is real usage worth seeing.
+
+### Windows: a folder's name is never evidence (2026-10-14)
+
+A real cleanup on Windows took a Flutter SDK's `bin` and `packages`, MATLAB's
+`ServiceHost\…\bin` and an agent's `node_modules`/`dist` under AppData:
+developer rules matched names alone (`bin` = .NET output, `packages` =
+NuGet), and a one-click "Clean up <folder>" staged every match under a folder.
+Now `developer-rules.json` carries evidence per rule — `requiresSibling`
+(a `.csproj` beside `bin`, a manifest beside `build`, a `.xpr` beside
+`*.runs`), `requiresChild` (`pyvenv.cfg` in a venv, `_info` in a ModelSim
+`work`), `requiresParent`, `forbidSibling`, and `skipIfTracked` (inside a git
+work tree, generic names must be git-ignored). Project-scoped rules never
+match inside installed tools (AppData except Temp, `Program Files`, home
+dot-folders, SDK/tool classes); a tool cache inside an SDK is the SDK's. Quick
+Wins reuse the same evidence. The user folders themselves (profile, AppData,
+Documents, Downloads…) and drive roots are excluded in `CleanupQueue` by exact
+match — only what is inside them can be staged. Duplicates skip dependency,
+dot-, app and project folders and git work trees. The folder-wide Clean
+buttons are gone: every removal is a row someone ticked.
+
+### Windows: selection is not state (2026-10-14)
+
+`SelectedNode` raised `StateChanged`, so a row click rebuilt every visible
+page — the list re-ranked, scroll jumped, and a row's ⋯ menu closed the moment
+it opened (its anchor was torn down). Selection now has its own event: the
+inspector and charts follow it, lists repaint only their highlight. One
+`RowMenu` serves ⋯ and right-click on every list.
+
+### Windows: onboarding decides what Tools & Projects shows (2026-10-14)
+
+First launch asks what the PC is for (software, Windows apps, cloud, hardware
+— FPGA/HDL/PCB/embedded —, data & AI, architecture/CAD, creative, gaming,
+everyday) and which tools are used; tools found on disk (a path exists,
+nothing read) start ticked. `profiles.json` maps tools to developer
+ecosystems; Developer Storage became Tools & Projects, shows the profile's
+ecosystems with the rest as "also found on this PC", and leaves the sidebar
+when a profile has none. Skipping shows everything. Risky and protected rows
+(OS, WSL/VM disks, apps, browser profiles, user folders) stay listed but sink
+to a greyed group with no checkbox, however large.

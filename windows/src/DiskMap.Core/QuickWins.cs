@@ -57,6 +57,8 @@ public static class QuickWins
         var names = new HashSet<string>(patterns.DirectoryNames, StringComparer.OrdinalIgnoreCase);
         var suffixTails = new HashSet<string>(
             patterns.PathSuffixes.Select(SuffixTail), StringComparer.OrdinalIgnoreCase);
+        var locator = DeveloperCatalog.Locator(tree);
+        var gitignores = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
 
         var stack = new Stack<int>();
         stack.Push(0);
@@ -67,7 +69,11 @@ public static class QuickWins
             if (tree.IsDirectory[id] && tree.Parent[id] == 0
                 && StorageClassifier.IsSystemHolding("\\" + tree.NameOf(id)))
                 continue;
-            if (id != 0 && tree.IsDirectory[id] && Match(id, names, suffixTails, patterns, root, tree) is { } matched)
+            // A bare name is not proof (a Flutter SDK's bin, a tool's dist):
+            // name hits must pass the developer rules' evidence. Path-suffix
+            // hits (Temp, npm-cache) are exact locations.
+            if (id != 0 && tree.IsDirectory[id] && Match(id, names, suffixTails, patterns, root, tree) is { } matched
+                && (!names.Contains(matched) || DeveloperCatalog.IsVerifiedOutput(tree, id, root, locator, gitignores)))
             {
                 hits.Add(new Hit(id, tree.NameOf(id), CategoryOf(matched, patterns)));
                 continue; // swallow descendants

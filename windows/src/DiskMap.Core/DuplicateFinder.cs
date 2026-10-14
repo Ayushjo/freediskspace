@@ -50,8 +50,9 @@ public static class DuplicateFinder
     }
 
     /// <summary>
-    /// Regular files under root, skipping directories, empty files, and
-    /// cloud placeholders (opening those would recall the content).
+    /// Regular files under root, skipping directories, empty files, cloud
+    /// placeholders (opening those would recall the content) and every
+    /// folder <see cref="SkipsSubtree"/> rules out.
     /// </summary>
     public static List<(int Id, string Path, long Size)> Candidates(FileTree tree, string root) =>
         Candidates(tree, root, collidingSizesOnly: false);
@@ -62,38 +63,88 @@ public static class DuplicateFinder
     /// PathOf is string work per node, so a drive scan of millions of files
     /// skips nearly all of it. Produces the same groups.
     /// </summary>
-    public static List<(int Id, string Path, long Size)> SizeCollidingCandidates(FileTree tree, string root) =>
-        Candidates(tree, root, collidingSizesOnly: true);
+    /// <param name="minBytes">Smaller files are skipped — tiny identical files are a program's or library's internals, and freeing them saves nothing.</param>
+    public static List<(int Id, string Path, long Size)> SizeCollidingCandidates(FileTree tree, string root, long minBytes = 0) =>
+        Candidates(tree, root, collidingSizesOnly: true, minBytes);
 
     private static bool IsCandidate(FileTree tree, int id) =>
         !tree.IsDirectory[id]
         && (tree.Flags[id] & NodeFlags.NotDownloaded) == 0
-        && tree.LogicalSize[id] > 0;
+        && tree.LogicalSize[id] > 0
+        // Dot-files are configs: .cursorrules and .clinerules may be byte-
+        // identical, yet each tool reads only its own.
+        && !tree.NameOf(id).StartsWith('.');
 
-    private static List<(int Id, string Path, long Size)> Candidates(FileTree tree, string root, bool collidingSizesOnly)
+    /// <summary>
+    /// Folders whose files are never offered as duplicates: identical
+    /// bytes there are a tool's, an app's or a repository's, and removing
+    /// one copy breaks its owner (pnpm-linked packages, a database's
+    /// identical pages, an app's bundled DLLs).
+    /// </summary>
+    private static readonly HashSet<string> SkippedFolders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "node_modules", "bower_components", "site-packages", "dist-packages", "__pycache__",
+        "AppData", "Program Files", "Program Files (x86)", "ProgramData", "Windows",
+        "WindowsApps", "$Recycle.Bin", "System Volume Information",
+    };
+
+    internal static bool SkipsSubtree(FileTree tree, int id)
+    {
+        string name = tree.NameOf(id);
+        if (name.StartsWith('.') || SkippedFolders.Contains(name)) return true;
+        // A profile folder (Users\<name>) may hold a stray package.json —
+        // it is still where personal files live, so only .git counts there.
+        int parent = tree.Parent[id];
+        bool profile = parent >= 0 && tree.NameOf(parent).Equals("Users", StringComparison.OrdinalIgnoreCase);
+        var (manifests, extensions) = Manifests.Value;
+        for (int c = tree.FirstChild[id]; c != -1; c = tree.NextSibling[c])
+        {
+            string child = tree.NameOf(c);
+            if (child == ".git") return true;   // a working tree: its files are the repo's
+            // A project (package.json, .csproj, .xpr, pubspec.yaml…): its
+            // copies are vendored sources, build output, simulation runs.
+            if (!profile && (manifests.Contains(child) || extensions.Contains(Path.GetExtension(child))))
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>The developer rules' project manifests: exact names, and extensions (.csproj, .xpr…).</summary>
+    private static readonly Lazy<(HashSet<string> Names, HashSet<string> Extensions)> Manifests = new(() =>
+        (DeveloperCatalog.ManifestNames,
+         new HashSet<string>(DeveloperCatalog.ManifestSuffixes, StringComparer.OrdinalIgnoreCase)));
+
+    private static List<(int Id, string Path, long Size)> Candidates(FileTree tree, string root, bool collidingSizesOnly,
+        long minBytes = 0)
     {
         var countsBySize = new Dictionary<long, int>();
         if (collidingSizesOnly)
         {
             for (int id = 1; id < tree.Count; id++)
-                if (IsCandidate(tree, id))
+                if (IsCandidate(tree, id) && tree.LogicalSize[id] >= minBytes)
                     countsBySize[tree.LogicalSize[id]] = countsBySize.GetValueOrDefault(tree.LogicalSize[id]) + 1;
         }
         var result = new List<(int, string, long)>();
-        var stack = new Stack<int>();
-        if (tree.Count > 0) stack.Push(0);
+        var stack = new Stack<(int Id, int Depth)>();
+        if (tree.Count > 0) stack.Push((0, 0));
         while (stack.Count > 0)
         {
-            int id = stack.Pop();
-            if (id > 0 && IsCandidate(tree, id)
+            var (id, depth) = stack.Pop();
+            if (id > 0 && IsCandidate(tree, id) && tree.LogicalSize[id] >= minBytes
                 && (!collidingSizesOnly || countsBySize.GetValueOrDefault(tree.LogicalSize[id]) > 1))
             {
                 result.Add((id, tree.PathOf(id, root), tree.LogicalSize[id]));
             }
+            if (id > 0 && tree.IsDirectory[id] && SkipsSubtree(tree, id)) continue;
+            // Installed software (Scoop apps, SDKs, toolchains) lives near the
+            // top of a scan; classifying the first levels catches it cheaply.
+            if (id > 0 && tree.IsDirectory[id] && depth <= 6
+                && DeveloperCatalog.ToolAreas.Contains(StorageClassifier.Classify(tree.PathOf(id, root), true).Class))
+                continue;
             int child = tree.FirstChild[id];
             while (child != -1)
             {
-                stack.Push(child);
+                stack.Push((child, depth + 1));
                 child = tree.NextSibling[child];
             }
         }

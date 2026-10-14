@@ -15,6 +15,7 @@
     <EmbeddedResource Include="file-type-categories.json" />
     <EmbeddedResource Include="developer-rules.json" />
     <EmbeddedResource Include="cleanup-recipes.json" />
+    <EmbeddedResource Include="profiles.json" />
     <InternalsVisibleTo Include="DiskMap.Core.Tests" />
   </ItemGroup>
 

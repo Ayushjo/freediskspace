@@ -45,6 +45,7 @@ public partial class MainWindow : Window
         _model.ConfirmBulk = (title, message, items, footnote) =>
             Dialogs.Confirm(this, title, message, items, $"Add {items.Count:N0} to Cleanup", footnote: footnote);
         _model.ScanRequested += async () => await PickAndScan();
+        _model.OnboardingRequested += () => ShowOnboarding();
         _model.StagedChanged += (_, _) => RefreshCleanupBadge();
         _model.PropertyChanged += OnModelChanged;
         RefreshScanBanner();
@@ -73,6 +74,11 @@ public partial class MainWindow : Window
                     if (Environment.GetEnvironmentVariable("DISKMAP_PAGE") is { Length: > 0 } page)
                         SelectPage(page);
                 }
+                // First launch: what do you do, what do you use — once. The
+                // screenshot harness never stops for it.
+                if (!AppSettings.Load().Onboarded
+                    && Environment.GetEnvironmentVariable("DISKMAP_SHOT") is not { Length: > 0 })
+                    ShowOnboarding();
                 // WIN-080: render-to-file screenshot — the macOS --snapshot-dir
                 // counterpart. Waits a beat for async page content (the
                 // Overview's deferred Compute) before encoding.
@@ -152,7 +158,6 @@ public partial class MainWindow : Window
             ]),
             ("CLEAN",
             [
-                ("Safe to Review", Icons.SafeReview, () => (UserControl)new SafeToReviewPage()),
                 ("Caches", Icons.Caches, () => (UserControl)new CachesPage()),
                 ("Old Downloads", Icons.Downloads, () => (UserControl)new OldDownloadsPage()),
                 ("Large Media", Icons.Media, () => (UserControl)new LargeMediaPage()),
@@ -161,12 +166,15 @@ public partial class MainWindow : Window
             [
                 ("File Browser", Icons.FileBrowser, () => (UserControl)new FileBrowserPage()),
                 ("Visualize", Icons.Visualize, () => (UserControl)new VisualizePage()),
-                ("Developer Storage", Icons.Developer, () => (UserControl)new DeveloperStoragePage()),
+                ("Tools & Projects", Icons.Developer, () => (UserControl)new DeveloperStoragePage()),
                 ("Applications", Icons.Applications, () => (UserControl)new ApplicationsPage()),
                 ("Snapshots", Icons.Snapshots, () => (UserControl)new SnapshotsPage()),
             ]),
         };
 
+        // An everyday user who picked no tools gets no developer page in the
+        // sidebar (Overview links still reach it).
+        bool toolsPage = AppSettings.Load().ShowsToolsPage;
         foreach (var (header, items) in sections)
         {
             var label = Ui.SectionLabel(header);
@@ -175,6 +183,7 @@ public partial class MainWindow : Window
             foreach (var (name, glyph, factory) in items)
             {
                 _pageFactories[name] = factory;
+                if (name == "Tools & Projects" && !toolsPage) continue;
                 var row = new StackPanel { Orientation = Orientation.Horizontal };
                 row.Children.Add(Ui.Glyph(glyph, 13, Ui.Brush("AppSubtle")));
                 row.Children.Add(new TextBlock
@@ -284,6 +293,8 @@ public partial class MainWindow : Window
     {
         if (!_pageFactories.TryGetValue(name, out var factory)) return;
         _currentPage = name;
+        // Find has its own query box — one search field on screen, not two.
+        SearchHost.Visibility = name == "Find" ? Visibility.Hidden : Visibility.Visible;
         foreach (var (itemName, border) in _navItems)
         {
             bool selected = itemName == name;
@@ -311,8 +322,8 @@ public partial class MainWindow : Window
     private static readonly string[] DestinationOrder =
     [
         "Overview", "Find", "Biggest Files", "Biggest Folders", "Forgotten Files",
-        "Duplicates", "Safe to Review", "Caches", "Old Downloads",
-        "Large Media", "File Browser", "Visualize", "Developer Storage",
+        "Duplicates", "Caches", "Old Downloads",
+        "Large Media", "File Browser", "Visualize", "Tools & Projects",
         "Applications", "Snapshots",
     ];
 
@@ -516,7 +527,7 @@ public partial class MainWindow : Window
             _settingsWindow.Activate();
             return;
         }
-        _settingsWindow = new SettingsWindow(SetAppearance, SetTextScale, RebuildForTheme) { Owner = this };
+        _settingsWindow = new SettingsWindow(SetAppearance, SetTextScale, RebuildForTheme, w => ShowOnboarding(w)) { Owner = this };
         _settingsWindow.Closed += (_, _) => _settingsWindow = null;
         _settingsWindow.Show();
     }
@@ -701,8 +712,17 @@ public partial class MainWindow : Window
         RefreshAdaptiveLayout();
         RefreshCleanupBadge();
         RefreshScanButton();
-        ScanCancelHost.Content = Ui.Button("Cancel", Icons.Cancel, Ui.ButtonStyle.Outline,
-            () => _model.CancelScan());
+    }
+
+    /// <summary>
+    /// "What do you do / what do you use" — first launch, Settings, and the
+    /// Tools &amp; Projects page. Saving rebuilds the sidebar and pages.
+    /// </summary>
+    internal void ShowOnboarding(Window? owner = null)
+    {
+        var window = new OnboardingWindow { Owner = owner ?? this };
+        window.ShowDialog();
+        if (window.Saved) RebuildForTheme();
     }
 
     // ---- WIN-053: command palette (⌘K port) ----
@@ -739,7 +759,8 @@ public partial class MainWindow : Window
 
         var popup = new Popup
         {
-            PlacementTarget = SearchHost,
+            // Find hides the top search box; the bar itself still anchors it.
+            PlacementTarget = SearchHost.IsVisible ? SearchHost : (UIElement)SearchHost.Parent,
             Placement = PlacementMode.Bottom,
             HorizontalOffset = -30,
             VerticalOffset = 8,

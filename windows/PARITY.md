@@ -752,6 +752,9 @@ state, but the inspector and coloring layers are missing entirely.
   registry choice the user opts into, not an installer side effect.
   MSIX remains the right move if a Store listing ever happens; the
   manifest decision is reversible — code has no packaging coupling.
+  Update: `scripts/package-installer.ps1` (Inno Setup, `installer/freedisk.iss`)
+  now wraps that single-file exe in a normal installer — Program Files,
+  Start menu entry, uninstall from Settings → Apps.
 
 - [x] **WIN-074: Update mechanism decision — no updater.**
   Offline-purist default, matching macOS's Sparkle-off-by-default
@@ -872,6 +875,32 @@ same spirit as the macOS "do better" list. Track here so they aren't lost.
   paths list is unchanged.
 
 ---
+
+## 13. Safety & clarity pass (2026-10-14)
+
+- [x] **WIN-090: Evidence before deletion.** Generic folder names (bin, obj,
+  packages, build, dist, out, target, env…) need proof — a project file beside
+  them, a marker inside, git ignoring them. Installed tools, SDKs, AppData and
+  home dot-folders are never projects. User folders themselves and drive roots
+  are refused by `CleanupQueue`. Duplicates skip apps, dependencies, projects,
+  dot-files and git work trees. `SafetyRulesTests`.
+- [x] **WIN-091: Hardware, CAD, games and creative storage.** Vivado runs/caches,
+  Quartus databases, ModelSim/Questa libraries, Verilator `obj_dir`, cocotb,
+  OpenLane runs, KiCad/Altium backups and outputs, PlatformIO, STM32Cube/Keil/
+  IAR/MSVC build dirs, Simulink codegen, Revit journals/caches, Unity/Unreal/
+  Godot caches, GPU shader caches, Adobe/Resolve/Lightroom caches; waveform
+  dumps and CAD backup files classified.
+- [x] **WIN-092: Onboarding.** Roles → tools (found-on-this-PC pre-ticked);
+  Settings → Your setup reopens it; Developer Storage → Tools & Projects,
+  filtered by the profile with "also found" chips.
+- [x] **WIN-093: Protected rows last.** Lists and Overview's biggest files put
+  risky/protected items in a greyed group at the bottom, without checkboxes.
+- [x] **WIN-094: Redundancy and menu fixes.** Selection no longer rebuilds pages
+  (the ⋯ menu works); one row menu everywhere; removed: Safe to Review hub,
+  inspector Insights tab, second scan Cancel, header select-all, kind pill row,
+  Visualize Top Sizes/Folders modes, duplicate "what's inside" bars, per-row and
+  per-group add buttons on Duplicates/Tools & Projects, dead checkboxes on
+  Applications, Overview's footer Rescan; Find hides the top search.
 
 ## Suggested order
 

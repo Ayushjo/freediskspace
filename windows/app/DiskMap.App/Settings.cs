@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using DiskMap.Core;
 
 namespace DiskMap.App;
 
@@ -18,6 +19,19 @@ public sealed class AppSettings
     /// <summary>WIN-066: after each scan on a ReFS volume, map extents and count block clones once.</summary>
     [JsonPropertyName("cloneAccounting")] public bool CloneAccounting { get; set; }
     [JsonPropertyName("showDusty")] public bool ShowDusty { get; set; } = true;
+    /// <summary>Onboarding: what the person does (profiles.json role ids) — empty = skipped.</summary>
+    [JsonPropertyName("roles")] public List<string> Roles { get; set; } = [];
+    /// <summary>Onboarding: the tools they picked (profiles.json tool ids).</summary>
+    [JsonPropertyName("tools")] public List<string> Tools { get; set; } = [];
+    /// <summary>True once onboarding was finished or skipped — it shows on first launch only.</summary>
+    [JsonPropertyName("onboarded")] public bool Onboarded { get; set; }
+
+    /// <summary>
+    /// Whether Tools &amp; Projects belongs in the sidebar: always without a
+    /// profile, otherwise only when the profile brings any tool ecosystem
+    /// (an everyday user who picked nothing doesn't get a developer page).
+    /// </summary>
+    public bool ShowsToolsPage => UserProfiles.EcosystemsFor(Roles, Tools) is not { Count: 0 };
 
     private static string Path0 => System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
