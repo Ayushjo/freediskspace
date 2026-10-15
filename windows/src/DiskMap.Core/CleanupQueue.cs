@@ -329,7 +329,7 @@ public sealed class CleanupQueue
     /// </summary>
     public static bool IsExcludedPath(string path)
     {
-        string normalized = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar);
+        string normalized = NormalizePath(path);
         foreach (var prefix in ExcludedPrefixes)
         {
             if (normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
@@ -345,7 +345,16 @@ public sealed class CleanupQueue
     }
 
     private static bool IsDriveRoot(string normalized) =>
-        Path.GetPathRoot(normalized) is { } root && root.TrimEnd('\\', '/').Equals(normalized, StringComparison.OrdinalIgnoreCase);
+        Path.GetPathRoot(normalized) is { } root && root.Equals(normalized, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Full path without a trailing separator — except on a root, which keeps
+    /// it. A bare "C:" is a trimmed drive root to every caller here; left
+    /// alone, GetFullPath would read it as the working folder on C:.
+    /// </summary>
+    internal static string NormalizePath(string path) =>
+        Path.TrimEndingDirectorySeparator(Path.GetFullPath(
+            path is [_, ':'] ? path + Path.DirectorySeparatorChar : path));
 
     /// <summary>
     /// True when <paramref name="path"/> belongs to an installed app —
@@ -383,7 +392,7 @@ public sealed class CleanupQueue
         string? sharesStorageGroup = null,
         int groupCopyCount = 1)
     {
-        string normalized = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar);
+        string normalized = NormalizePath(path);
         StagedItem item;
         lock (_gate)
         {

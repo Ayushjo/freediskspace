@@ -224,6 +224,19 @@ public class SafetyRulesTests
         Assert.False(new CleanupQueue().Stage(@"D:\", 1, "test"));
     }
 
+    [Fact]
+    public void TheWorkingDrivesRootIsNeverStaged()
+    {
+        // A root trimmed to "C:" reads as the working folder on C: — the
+        // exclusion once depended on where the process happened to start.
+        string root = Path.GetPathRoot(Environment.CurrentDirectory)!;
+        string bare = root.TrimEnd('\\');
+        Assert.True(CleanupQueue.IsExcludedPath(root));
+        Assert.True(CleanupQueue.IsExcludedPath(bare));
+        Assert.False(new CleanupQueue().Stage(root, 1, "test"));
+        Assert.False(new CleanupQueue().Stage(bare, 1, "test"));
+    }
+
     [Theory]
     [InlineData(@"C:\Users\me\AppData\Local\hermes\agent\node_modules", "appdata", CleanupAdvice.Warn)]
     [InlineData(@"C:\Users\me\AppData\Local\Temp\x\node_modules", "caches", CleanupAdvice.Fine)]
