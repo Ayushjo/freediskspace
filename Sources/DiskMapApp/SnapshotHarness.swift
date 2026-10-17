@@ -424,6 +424,9 @@ enum SnapshotHarness {
         all.first { $0.1 == destination }?.0 ?? "unknown"
     }
 
+    /// `--tab projects`: the tab a page with tabs opens on (Developer for now).
+    static var requestedTab: String? { value(after: "--tab") }
+
     private static func value(after flag: String) -> String? {
         guard let index = arguments.firstIndex(of: flag), arguments.indices.contains(index + 1) else { return nil }
         return arguments[index + 1]
