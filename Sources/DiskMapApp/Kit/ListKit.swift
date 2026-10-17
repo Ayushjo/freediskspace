@@ -281,7 +281,7 @@ struct ListPageSwitch: View {
     @ObservedObject var model: ScanModel
     var body: some View {
         SegmentSwitch(items: [
-            .init(title: "Folders", isOn: model.destination == .biggestFolders) { model.destination = .biggestFolders },
+            .init(title: "Folders", isOn: model.destination == .biggestFolders || model.destination == .fileBrowser) { model.destination = .biggestFolders },
             .init(title: "Files", isOn: model.destination == .biggestFiles) { model.destination = .biggestFiles },
             .init(title: "Forgotten", isOn: model.destination == .forgottenFiles) { model.destination = .forgottenFiles },
         ])

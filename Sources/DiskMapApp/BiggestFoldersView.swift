@@ -11,6 +11,7 @@ struct BiggestFoldersView: View {
     var onOpenCleanup: () -> Void = {}
 
     @State private var query = ""
+    @State private var sortMode: SortMode = .size
     @State private var showTechnical = false
     @State private var selectedID: Int32?
     @Environment(\.widthClass) private var widthClass
@@ -27,9 +28,42 @@ struct BiggestFoldersView: View {
         Int(current) < totals.count ? max(totals[Int(current)], 1) : 1
     }
 
+    /// Size first, like the rest of Explore; the file browser's other orders too.
+    enum SortMode: String, CaseIterable, Identifiable {
+        case size, name, changed, kind
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .size: return "Largest"
+            case .name: return "Name"
+            case .changed: return "Recently changed"
+            case .kind: return "Kind"
+            }
+        }
+    }
+
     private var rawRows: [(id: Int32, size: Int64)] {
         guard tree.count > 0, totals.count == tree.count else { return [] }
-        return tree.children(of: current, totals: totals).sorted { $0.size > $1.size }
+        return Self.sorted(tree.children(of: current, totals: totals), by: sortMode, tree: tree)
+    }
+
+    /// Folders before files when sorting by kind; ties fall back to size.
+    static func sorted(_ rows: [(id: Int32, size: Int64)], by mode: SortMode, tree: FileTree) -> [(id: Int32, size: Int64)] {
+        rows.sorted { a, b in
+            switch mode {
+            case .size: return a.size != b.size ? a.size > b.size : a.id < b.id
+            case .name: return tree.name(of: a.id).localizedStandardCompare(tree.name(of: b.id)) == .orderedAscending
+            case .changed:
+                let da = tree.modifiedDay[Int(a.id)], db = tree.modifiedDay[Int(b.id)]
+                return da != db ? da > db : a.size > b.size
+            case .kind:
+                let fa = tree.isDirectory[Int(a.id)], fb = tree.isDirectory[Int(b.id)]
+                if fa != fb { return fa }
+                let ea = (tree.name(of: a.id) as NSString).pathExtension.lowercased()
+                let eb = (tree.name(of: b.id) as NSString).pathExtension.lowercased()
+                return ea != eb ? ea < eb : a.size > b.size
+            }
+        }
     }
 
     private static let hiddenTechnical: Set<String> = [
@@ -132,6 +166,7 @@ struct BiggestFoldersView: View {
                             focused: $searchFocused)
                 .frame(maxWidth: widthClass == .compact ? .infinity : 760)
             Spacer(minLength: 0)
+            ListDropdown(label: "Sort", options: SortMode.allCases, selection: $sortMode, title: \.title)
         }
     }
 
@@ -143,7 +178,7 @@ struct BiggestFoldersView: View {
         HStack(spacing: 0) {
             Text("Name").frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 12)
             Text("Kind").frame(width: columns.kind, alignment: .leading)
-            Text("Size ↓").foregroundStyle(DiskMapTheme.ink).frame(width: columns.bar + columns.size, alignment: .trailing)
+            Text(sortMode == .size ? "Size ↓" : "Size").foregroundStyle(sortMode == .size ? DiskMapTheme.ink : DiskMapTheme.ink3).frame(width: columns.bar + columns.size, alignment: .trailing)
             Text("Last changed").frame(width: columns.changed, alignment: .leading).padding(.leading, 24)
             if columns.showFree { Text("Can be freed").frame(minWidth: columns.free, maxWidth: columns.freeMax, alignment: .leading) }
             Color.clear.frame(width: columns.add)
