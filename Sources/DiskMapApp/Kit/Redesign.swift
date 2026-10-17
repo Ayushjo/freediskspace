@@ -293,3 +293,43 @@ struct SegmentSwitch: View {
         .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(DiskMapTheme.line, lineWidth: 1))
     }
 }
+
+/// "Extra copies ········ 23": a label, a dotted leader, a value.
+struct LeaderRow: View {
+    var label: String
+    var value: String
+    var emphasis = false
+    var accentValue = false
+    var faint = false
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(label)
+                .font(emphasis ? .system(size: DiskMapType.scaled(16), weight: .semibold) : DiskMapType.body)
+                .foregroundStyle(faint ? DiskMapTheme.ink3 : DiskMapTheme.ink)
+                .lineLimit(1)
+                .fixedSize()
+            LeaderLine()
+            Text(value)
+                .font(emphasis ? .system(size: DiskMapType.scaled(18), weight: .medium, design: .monospaced) : DiskMapType.figure)
+                .foregroundStyle(accentValue ? DiskMapTheme.accent : faint ? DiskMapTheme.ink3 : DiskMapTheme.ink)
+                .lineLimit(1)
+                .fixedSize()
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+struct LeaderLine: View {
+    var body: some View {
+        GeometryReader { geo in
+            Path { p in
+                p.move(to: CGPoint(x: 0, y: geo.size.height / 2))
+                p.addLine(to: CGPoint(x: geo.size.width, y: geo.size.height / 2))
+            }
+            .stroke(DiskMapTheme.ink3.opacity(0.6), style: StrokeStyle(lineWidth: 1, dash: [1, 3]))
+        }
+        .frame(height: 2)
+        .frame(minWidth: 12)
+        .accessibilityHidden(true)
+    }
+}
