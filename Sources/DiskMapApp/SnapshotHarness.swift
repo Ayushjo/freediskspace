@@ -102,6 +102,13 @@ enum SnapshotHarness {
             })
             await model.refreshQueue()
         }
+        // `--snapshot-store <dir> --seed-history 7`: write weekly fixture scans
+        // of this tree into <dir> (never the real snapshot folder), so What
+        // changed renders a history. Sizes vary by area, as real use does.
+        if let count = value(after: "--seed-history").flatMap(Int.init), let dir = snapshotStore,
+           let tree = model.tree, let root = model.rootURL {
+            try? seedHistory(tree: tree, root: root, count: count, into: dir)
+        }
         // `--size-basis logical`: show logical sizes (demo trees use sparse
         // files, which report their size but allocate almost nothing).
         if value(after: "--size-basis") == "logical" {
@@ -422,6 +429,38 @@ enum SnapshotHarness {
 
     private static func key(_ destination: AppDestination) -> String {
         all.first { $0.1 == destination }?.0 ?? "unknown"
+    }
+
+    /// `--snapshot-store <dir>`: where What changed reads and saves scans in this run.
+    static var snapshotStore: URL? {
+        guard isActive || arguments.contains("--snapshot-dir") else { return nil }
+        return value(after: "--snapshot-store").map { URL(fileURLWithPath: $0, isDirectory: true) }
+    }
+
+    /// Weekly scans before today: Developer grows, caches shrink, the rest drifts.
+    static func seedHistory(tree: FileTree, root: URL, count: Int, into dir: URL) throws {
+        guard count > 0, tree.count > 0 else { return }
+        let paths = (0..<tree.count).map { tree.path(of: Int32($0), root: root).path.lowercased() }
+        for k in 0..<count {
+            let t = Double(k) / Double(count)
+            var copy = FileTree()
+            var total: Int64 = 0
+            for i in 0..<tree.count {
+                let p = paths[i]
+                let factor: Double = p.contains("/developer") || p.contains("node_modules") ? 0.55 + 0.45 * t
+                    : p.contains("/caches") ? 1.45 - 0.45 * t
+                    : p.contains("/downloads") ? 0.75 + 0.25 * t
+                    : 0.97 + 0.03 * t
+                let logical = tree.isDirectory[i] ? tree.logicalSize[i] : Int64(Double(tree.logicalSize[i]) * factor)
+                let allocated = tree.isDirectory[i] ? tree.allocatedSize[i] : Int64(Double(tree.allocatedSize[i]) * factor)
+                if !tree.isDirectory[i] { total += logical }
+                copy.addNode(name: tree.name(of: Int32(i)), parent: tree.parent[i], isDirectory: tree.isDirectory[i],
+                             logicalSize: logical, allocatedSize: allocated, modifiedDaysSinceEpoch: tree.modifiedDay[i])
+            }
+            let date = Date().addingTimeInterval(-Double(count - k) * 7 * 86_400)
+            let meta = SnapshotMeta(name: SnapshotMeta.defaultName(for: date), scannedBytes: total)
+            _ = try SnapshotStore.save(DiskSnapshot(rootPath: root.path, capturedAt: date, tree: copy), meta: meta, in: dir)
+        }
     }
 
     /// `--tab projects`: the tab a page with tabs opens on (Developer for now).
