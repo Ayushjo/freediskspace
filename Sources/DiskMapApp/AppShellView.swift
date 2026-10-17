@@ -419,10 +419,7 @@ struct AppShellView: View {
                 DuplicatesView(model: model, tree: tree, rootURL: root)
             } else { needsScan }
         case .cleanSafe:
-            SafeToReviewView(
-                model: model,
-                onOpenCaches: { model.destination = .cleanCaches }
-            )
+            CleanUpView(model: model, pickFolder: pickFolder)
         case .cleanCaches:
             CachesReviewView(
                 model: model

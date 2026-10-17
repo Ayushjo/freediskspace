@@ -29,8 +29,8 @@ struct CleanupQueueView: View {
                 )
                 .transition(.opacity)
             } else if model.stagedItems.isEmpty {
-                DiskMapEmptyState(symbol: "tray", title: "Nothing in Cleanup",
-                                  message: "Add files from any page with Add to Cleanup (⌘⌫). Nothing moves to the Trash until you confirm here.")
+                DiskMapEmptyState(symbol: "tray", title: "Your basket is empty",
+                                  message: "Tick things in Clean up, or add files from any page with Add to Cleanup (⌘⌫). Nothing moves to the Trash until you confirm here.")
             } else {
                 list
             }
@@ -39,7 +39,7 @@ struct CleanupQueueView: View {
                 lastCleanup
             }
         }
-        .background(DiskMapTheme.canvas)
+        .background(DiskMapTheme.page)
         .frame(minWidth: 640, minHeight: 480)
         .task { await model.refreshQueue() }
         // Every item that will move, by full path and size (MAC-FIXES-FROM-WINDOWS §4.2).
@@ -96,8 +96,8 @@ struct CleanupQueueView: View {
     private var header: some View {
         HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Cleanup")
-                    .font(DiskMapType.title)
+                Text("Basket")
+                    .font(DiskMapType.pageTitle)
                     .foregroundStyle(DiskMapTheme.ink)
                 Text(freeSummary)
                     .font(DiskMapType.figure)
@@ -118,7 +118,7 @@ struct CleanupQueueView: View {
             // Committing finishes any measuring itself, with progress, so the
             // button never waits on it (MAC-FIXES-FROM-WINDOWS §2.3).
             Button("Move to Trash…") { confirmingTrash = true }
-                .buttonStyle(PrimaryButtonStyle())
+                .buttonStyle(AccentButtonStyle())
                 .disabled(model.stagedItems.isEmpty || model.commitProgress != nil)
                 .help("Moves everything here to the Trash, after you confirm")
         }
