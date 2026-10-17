@@ -58,6 +58,18 @@ enum SnapshotHarness {
             NSApp.terminate(nil)
             return
         }
+        // `--settings`: the Settings window on its own, then quit.
+        if arguments.contains("--settings") {
+            let window = NSWindow(contentRect: NSRect(origin: .zero, size: snapshotSize()),
+                                  styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            window.contentView = NSHostingView(rootView: SettingsView())
+            window.setContentSize(snapshotSize())
+            window.makeKeyAndOrderFront(nil)
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            write(window: window, to: dir.appendingPathComponent("settings-\(appearanceName).png"))
+            NSApp.terminate(nil)
+            return
+        }
         // Optional mid-scan frame: `--snapshot-at 3` captures 3 s after launch.
         if let at = value(after: "--snapshot-at").flatMap(Double.init),
            let window = mainWindow() {

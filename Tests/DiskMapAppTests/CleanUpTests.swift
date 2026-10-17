@@ -109,3 +109,16 @@ struct CleanUpTests {
         #expect(AppDestination.primaryNav.count == 6)
     }
 }
+
+@Suite("Clean up preference")
+struct CleanUpPreferenceTests {
+    @Test func nothingIsTickedWhenThePersonChoosesThemselves() {
+        let t = ReviewableTarget(id: "spotify", category: .caches, displayName: "Spotify", detail: "d", bytes: 10,
+                                 primaryPath: "/u/Library/Caches/spotify", paths: ["/u/Library/Caches/spotify"], nodeIDs: [],
+                                 safety: SafetyAssessment(level: .safe, reason: "r", title: "t"),
+                                 consequence: "c", symbolName: "folder", bundleHint: nil)
+        let items = CleanUpView.buildItems(reviewables: [t], downloads: [], media: [], totals: [], rootPath: "/u")
+        #expect(CleanUpView.defaultTicks(items, isStaged: { _ in false }, tickRebuilds: true) == ["r-spotify"])
+        #expect(CleanUpView.defaultTicks(items, isStaged: { _ in false }, tickRebuilds: false).isEmpty)
+    }
+}

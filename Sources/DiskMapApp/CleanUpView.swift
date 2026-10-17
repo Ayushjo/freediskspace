@@ -122,9 +122,15 @@ struct CleanUpView: View {
         return out.filter { $0.bytes > 0 }.sorted { $0.bytes > $1.bytes }
     }
 
-    /// What Clean up ticks by itself: only things that rebuild by themselves.
-    static func defaultTicks(_ items: [CleanItem], isStaged: (URL) -> Bool) -> Set<String> {
-        Set(items.filter { $0.group == .rebuilds && !isStaged($0.revealURL) }.map(\.id))
+    /// Settings › Clean up › What to tick for you.
+    static let tickKey = "CleanUp.TickRebuilds"
+
+    /// What Clean up ticks by itself: only things that rebuild by themselves,
+    /// or nothing when the person chose to tick everything themselves.
+    static func defaultTicks(_ items: [CleanItem], isStaged: (URL) -> Bool,
+                             tickRebuilds: Bool = UserDefaults.standard.object(forKey: tickKey) as? Bool ?? true) -> Set<String> {
+        guard tickRebuilds else { return [] }
+        return Set(items.filter { $0.group == .rebuilds && !isStaged($0.revealURL) }.map(\.id))
     }
 
     /// The folder a file sits in, relative to the scan ("Downloads/misc").

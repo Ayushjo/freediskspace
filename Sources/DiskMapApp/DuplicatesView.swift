@@ -11,7 +11,8 @@ struct DuplicatesView: View {
     let rootURL: URL
 
     @State private var checked: Set<Int32> = []
-    @State private var policy: KeepPolicy = .oldest
+    /// Remembered, and set in Settings › Clean up.
+    @AppStorage(KeepPolicy.key) private var policy: KeepPolicy = .oldest
     @State private var kindFilter: DupKind = .all
     /// Per group (by hash): the copy the person chose to keep instead.
     @State private var keeperOverride: [String: Int32] = [:]
@@ -19,6 +20,7 @@ struct DuplicatesView: View {
 
     enum KeepPolicy: String, CaseIterable, Identifiable {
         case oldest, newest, shortestPath
+        static let key = "Duplicates.Keep"
         var id: String { rawValue }
         var title: String {
             switch self {
