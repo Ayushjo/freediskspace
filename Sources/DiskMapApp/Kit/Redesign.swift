@@ -13,6 +13,8 @@ extension DiskMapTheme {
     static let card = adaptive(light: (255, 255, 255), dark: (20, 20, 23))
     /// Selected nav row, filled rows, quiet wells.
     static let soft = adaptive(light: (244, 244, 241), dark: (30, 30, 34))
+    /// The selected segment of a segmented switch: lifts off `soft` in both appearances.
+    static let segmentOn = adaptive(light: (255, 255, 255), dark: (52, 52, 58))
     /// The dark "You can free" panel. Stays dark in both appearances.
     static let night = adaptive(light: (16, 17, 19), dark: (28, 28, 33))
     /// Violet on the dark panel and in dark mode figures.
@@ -160,8 +162,9 @@ struct AccentButtonStyle: ButtonStyle {
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(DiskMapTheme.accent.opacity(!isEnabled ? 0.4 : configuration.isPressed ? 0.85 : 1))
-                    .overlay(hard ? RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(DiskMapTheme.ink, lineWidth: 1) : nil)
-                    .background(hard ? RoundedRectangle(cornerRadius: 8, style: .continuous).fill(DiskMapTheme.ink).offset(x: 3, y: 3) : nil)
+                    .overlay(hard ? RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color.black, lineWidth: 1) : nil)
+                    // Black, not ink: ink turns white in dark mode and the shadow would glow.
+                    .background(hard ? RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.black).offset(x: 3, y: 3) : nil)
             )
             .offset(x: configuration.isPressed && hard ? 2 : 0, y: configuration.isPressed && hard ? 2 : 0)
             .contentShape(Rectangle())

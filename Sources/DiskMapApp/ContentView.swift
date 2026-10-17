@@ -163,7 +163,7 @@ final class ScanModel: ObservableObject {
     @Published var cachedFileTypes: [FileTypeTotals] = []
     @Published var toastMessage: String?
     @Published var exploreMode: ExploreViewMode = .treemap
-    @Published var colorMode: ExploreColorMode = .folder
+    @Published var colorMode: ExploreColorMode = .freeable
     @Published var depthLevel: Double = 7
     @Published var topNav: TopNavTab = .explore
     @Published var destination: AppDestination = .overview
@@ -1006,6 +1006,8 @@ enum ExploreViewMode: String, CaseIterable, Identifiable {
 }
 
 enum ExploreColorMode: String, CaseIterable, Identifiable {
+    /// Outlined map with violet stripes on what can be freed (the redesign's default).
+    case freeable = "Can be freed"
     case type = "By type"
     case folder = "By folder"
     case age = "By age"

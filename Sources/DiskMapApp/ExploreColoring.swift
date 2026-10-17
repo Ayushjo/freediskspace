@@ -11,6 +11,7 @@ enum ExploreColoring {
         folderTypeHex: [Int32: String] = [:]
     ) -> Color {
         switch mode {
+        case .freeable: return depthGrey(id: id, tree: tree)
         case .folder: return folderColor(id: id, tree: tree)
         case .type: return typeColor(id: id, tree: tree, categories: categories, folderTypeHex: folderTypeHex)
         case .age: return ageColor(id: id, tree: tree)
@@ -30,6 +31,18 @@ enum ExploreColoring {
         let depth = max(0, ancestorDepth(id, tree: tree) - ancestorDepth(top, tree: tree))
         return depth == 0 ? base : DiskMapTheme.wash(base, strength: 1.0 - min(0.35, Double(depth) * 0.08))
     }
+
+    /// Charts other than the treemap in "Can be freed": quiet opaque greys by
+    /// depth, fixed in both appearances like the data tints so the dark
+    /// `tileLabel` stays readable; the chart paints what can be freed violet.
+    private static func depthGrey(id: Int32, tree: FileTree) -> Color {
+        let levels: [(Double, Double, Double)] = [(232, 232, 228), (242, 242, 238), (222, 222, 217), (248, 248, 245)]
+        let l = levels[ancestorDepth(id, tree: tree) % levels.count]
+        return Color(red: l.0 / 255, green: l.1 / 255, blue: l.2 / 255)
+    }
+
+    /// The pale violet those charts use for "can be freed" (fixed, like the greys).
+    static let freeableTint = Color(red: 212 / 255, green: 203 / 255, blue: 247 / 255)
 
     private static func ancestorDepth(_ id: Int32, tree: FileTree) -> Int {
         var d = 0
