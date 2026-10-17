@@ -152,6 +152,8 @@ final class ScanModel: ObservableObject {
     @Published var selectedNode: Int32 = 0
     @Published var recentRoots: [URL] = ScanModel.loadRecentRoots()
     @Published var lastScanSeconds: Double?
+    /// When the last scan finished (the page bar's "Scanned 2 minutes ago").
+    @Published var lastScanFinishedAt: Date?
     /// Directories the last scan could not open for lack of permission
     /// (TASK-039). Every total above them is short by what they hold.
     @Published var deniedDirectoryIDs: [Int32] = []
@@ -395,6 +397,7 @@ final class ScanModel: ObservableObject {
         currentNode = 0
         clearMultiSelection()   // node ids from the old tree mean nothing now
         lastScanSeconds = result.elapsedSeconds
+        lastScanFinishedAt = SnapshotHarness.isDeterministic ? Date(timeIntervalSinceNow: -120) : Date()
         if let quickUpdate {
             lastScanKind = .quick(seconds: quickUpdate.elapsedSeconds, changedFolders: quickUpdate.changedDirectories,
                                   walkedFolders: quickUpdate.rewalkedSubtrees)

@@ -411,7 +411,7 @@ enum SnapshotHarness {
         ("forgottenFiles", .forgottenFiles), ("duplicates", .duplicates), ("cleanSafe", .cleanSafe),
         ("cleanCaches", .cleanCaches), ("cleanDownloads", .cleanDownloads), ("cleanMedia", .cleanMedia),
         ("fileBrowser", .fileBrowser), ("visualize", .visualize), ("developerStorage", .developerStorage),
-        ("applications", .applications), ("snapshots", .snapshots),
+        ("applications", .applications), ("snapshots", .snapshots), ("history", .history),
     ]
 
     private static func destinations() -> [AppDestination] {
