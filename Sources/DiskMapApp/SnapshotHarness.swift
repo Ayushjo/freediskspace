@@ -83,6 +83,11 @@ enum SnapshotHarness {
                 view = AnyView(RiskyStageSheet(proposal: RiskyStageProposal(
                     request: CleanupStageRequest(url: docker, size: 18_000_000_000, reason: "Biggest file: Docker.raw"),
                     verdict: StorageClassifier.classify(path: docker.path, isDirectory: false), resolve: { _ in })))
+            case "menubar":
+                // After the scan, so the figures are real.
+                for _ in 0..<600 where model.tree == nil || model.isScanning { try? await Task.sleep(nanoseconds: 100_000_000) }
+                await model.ensureCatalog(.reviewables)
+                view = AnyView(MenuBarStatusView(model: model))
             case "save":
                 view = AnyView(SaveScanSheet(name: .constant(SnapshotMeta.defaultName(for: Date())), note: .constant(""),
                                              itemCount: 2_418_337, bytes: 320_400_000_000, onCancel: {}, onSave: {}))

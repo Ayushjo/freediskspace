@@ -101,82 +101,103 @@ struct MenuBarStatusView: View {
     @State private var week: StorageHistory.Comparison?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             if let volume {
-                VStack(alignment: .leading, spacing: 6) {
+                let low = MenuBarText.isLow(volume)
+                VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .center, spacing: 6) {
-                        MonoLabel(volume.volumeName.uppercased())
+                        Text(volume.volumeName).font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink2)
+                        if low { BoardTag(text: "Low on space", tone: .ink) }
                         Spacer(minLength: 0)
                         if showDusty {
-                            Dusty(pose: MenuBarText.isLow(volume) ? .smallDusty : .smallHello, width: 26)
-                                .help(MenuBarText.isLow(volume) ? "Dusty’s gathering dust: space is low" : "Plenty of room")
+                            Dusty(pose: low ? .smallDusty : .smallHello, width: 26)
+                                .help(low ? "Dusty’s gathering dust: space is low" : "Plenty of room")
                         }
                     }
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text("\(ByteFormat.string(Int64(volume.freeBytes))) free")
-                            .font(.system(size: DiskMapType.scaled(20), weight: .semibold).monospacedDigit())
-                            .foregroundStyle(DiskMapTheme.ink)
-                        Text("of \(ByteFormat.string(Int64(volume.totalBytes)))")
-                            .font(DiskMapType.figureSmall)
-                            .foregroundStyle(DiskMapTheme.ink3)
+                        Text(ByteFormat.hero(Int64(volume.freeBytes))).font(DiskMapType.hero(34)).foregroundStyle(DiskMapTheme.ink)
+                        Text("free of \(ByteFormat.hero(Int64(volume.totalBytes)))").font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink3)
                     }
-                    ProportionBar(fraction: min(1, max(0, volume.usedFraction)),
-                                  tint: MenuBarText.isLow(volume) ? DiskMapTheme.danger : DiskMapTheme.ink.opacity(0.55),
-                                  height: 2)
-                        .accessibilityLabel("\(Int((volume.usedFraction * 100).rounded())) percent used")
-                    if MenuBarText.isLow(volume) {
-                        SafetyLabel(level: nil, title: "Low on space", tint: DiskMapTheme.danger)
+                    GeometryReader { geo in
+                        HStack(spacing: 0) {
+                            Rectangle().fill(DiskMapTheme.ink).frame(width: geo.size.width * min(1, max(0, volume.usedFraction)))
+                            FreeStripes()
+                        }
                     }
+                    .frame(height: 8)
+                    .clipShape(RoundedRectangle(cornerRadius: 2))
+                    .accessibilityLabel("\(Int((volume.usedFraction * 100).rounded())) percent used")
                 }
+            }
+            let safe = model.safeReclaimableBytes
+            if safe > 0 {
+                Button { open(.cleanSafe) } label: {
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("You can free").font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink2)
+                            Text(ByteFormat.hero(safe)).font(.system(size: DiskMapType.scaled(18), weight: .semibold, design: .monospaced))
+                                .foregroundStyle(DiskMapTheme.accent)
+                        }
+                        Spacer()
+                        Text("Clean up →").font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.accentDeep)
+                    }
+                    .padding(12)
+                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(DiskMapTheme.accentWash))
+                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(DiskMapTheme.accent.opacity(0.35), lineWidth: 1))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Opens Clean up. Nothing is removed from here.")
             }
             if let record {
                 VStack(alignment: .leading, spacing: 4) {
                     // One change line: the week when there is history, else since the last scan.
                     if let week, let line = MenuBarText.week(week) {
-                        Text(line)
-                            .font(DiskMapType.secondary)
-                            .foregroundStyle(DiskMapTheme.ink)
-                            .fixedSize(horizontal: false, vertical: true)
+                        Text(line).font(DiskMapType.body).foregroundStyle(DiskMapTheme.ink).fixedSize(horizontal: false, vertical: true)
                     } else if let volume {
                         Text(MenuBarText.delta(previousFree: record.freeBytes, currentFree: volume.freeBytes))
-                            .font(DiskMapType.secondary)
-                            .foregroundStyle(DiskMapTheme.ink)
-                            .fixedSize(horizontal: false, vertical: true)
+                            .font(DiskMapType.body).foregroundStyle(DiskMapTheme.ink).fixedSize(horizontal: false, vertical: true)
                     }
-                    Text("Last scan  \(CanonicalPath.displayPath(absolutePath: record.rootPath)) · \(record.scannedAt.formatted(.relative(presentation: .named)))")
-                        .font(DiskMapType.figureSmall)
-                        .foregroundStyle(DiskMapTheme.ink3)
-                        .lineLimit(2)
+                    Text("Last scan \(CanonicalPath.displayPath(absolutePath: record.rootPath)) · \(record.scannedAt.formatted(.relative(presentation: .named)))")
+                        .font(DiskMapType.figureSmall).foregroundStyle(DiskMapTheme.ink3).lineLimit(2)
                 }
             } else {
-                Text("No scan yet.")
-                    .font(DiskMapType.secondary)
-                    .foregroundStyle(DiskMapTheme.ink3)
+                Text("No scan yet. Open freedisk.space to see what fills your Mac.")
+                    .font(DiskMapType.body).foregroundStyle(DiskMapTheme.ink2).fixedSize(horizontal: false, vertical: true)
             }
             if model.cachedDeveloper.summary.staleProjectCount > 0 {
-                Text("\(countLabel(model.cachedDeveloper.summary.staleProjectCount, "project")) untouched for 6+ months hold \(ByteFormat.string(model.cachedDeveloper.summary.staleReclaimableBytes)).")
-                    .font(DiskMapType.secondary)
-                    .foregroundStyle(DiskMapTheme.ink2)
-                    .fixedSize(horizontal: false, vertical: true)
+                Button { open(.developerStorage) } label: {
+                    Text("\(countLabel(model.cachedDeveloper.summary.staleProjectCount, "project")) untouched for 6+ months hold \(ByteFormat.hero(model.cachedDeveloper.summary.staleReclaimableBytes)) →")
+                        .font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(.leading)
+                }
+                .buttonStyle(.plain)
             }
-            Hairline()
+            Rectangle().fill(DiskMapTheme.line).frame(height: 1)
             HStack(spacing: 8) {
                 Button(model.isScanning ? "Scanning…" : "Rescan") { rescan() }
-                    .buttonStyle(PrimaryButtonStyle())
+                    .buttonStyle(SecondaryButtonStyle())
+                    .fixedSize()
                     .disabled(model.isScanning || (model.rootURL ?? record.map { URL(fileURLWithPath: $0.rootPath) }) == nil)
                 Button("Open freedisk.space") { openApp() }
-                    .buttonStyle(SecondaryButtonStyle())
+                    .buttonStyle(AccentButtonStyle(fullWidth: true))
             }
         }
-        .padding(16)
-        .frame(width: 300)
+        .padding(18)
+        .frame(width: 320)
         .fixedSize(horizontal: false, vertical: true)   // the panel is as tall as its content
-        .background(DiskMapTheme.raised)
+        .background(DiskMapTheme.page)
         .contextMenu {
             Button("Hide from Menu Bar") { showMenuBarExtra = false }
         }
         .onAppear(perform: refresh)
         .onChange(of: model.isScanning) { _, _ in refresh() }
+    }
+
+    private func open(_ destination: AppDestination) {
+        model.destination = destination
+        openApp()
     }
 
     private func refresh() {
