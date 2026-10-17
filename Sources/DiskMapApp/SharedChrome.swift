@@ -277,7 +277,7 @@ struct DiskMapLoadingState: View {
 struct SelectionToolbar: View {
     var selectedCount: Int
     var selectedBytes: Int64
-    var primaryTitle: String = "Add to Cleanup"
+    var primaryTitle: String = "Add to basket"
     var primaryEnabled: Bool = true
     var onPrimary: () -> Void
     var onClear: () -> Void
@@ -309,12 +309,12 @@ struct SelectionToolbar: View {
             }
             .buttonStyle(IconButtonStyle())
             Button(primaryTitle, action: onPrimary)
-                .buttonStyle(PrimaryButtonStyle())
+                .buttonStyle(AccentButtonStyle())
                 .disabled(!primaryEnabled || selectedCount == 0)
         }
         .padding(.horizontal, DiskMapSpace.md)
         .frame(height: 48)
-        .background(DiskMapTheme.canvas)
+        .background(DiskMapTheme.card)
         .overlay(alignment: .top) { Hairline() }
     }
 }
@@ -428,7 +428,7 @@ struct AdaptiveInspectorSplit<Main: View, Inspector: View>: View {
                     Rectangle().fill(DiskMapTheme.line).frame(width: 1)
                     inspectorContent
                         .frame(width: DiskMapLayout.inspectorWidth(for: windowWidth))
-                        .background(DiskMapTheme.canvas)
+                        .background(DiskMapTheme.sidebar)
                 }
             } else {
                 ZStack(alignment: .trailing) {
@@ -447,7 +447,7 @@ struct AdaptiveInspectorSplit<Main: View, Inspector: View>: View {
                         }
                         .padding(.horizontal, 14)
                         .frame(height: 38)
-                        .background(DiskMapTheme.canvas)
+                        .background(DiskMapTheme.page)
                         Hairline()
                         mainContent
                     }
@@ -460,7 +460,7 @@ struct AdaptiveInspectorSplit<Main: View, Inspector: View>: View {
                             Rectangle().fill(DiskMapTheme.line).frame(width: 1)
                             inspectorContent
                                 .frame(width: min(320, max(280, windowWidth * 0.34)))
-                                .background(DiskMapTheme.canvas)
+                                .background(DiskMapTheme.sidebar)
                         }
                         .transition(.move(edge: .trailing).combined(with: .opacity))
                     }

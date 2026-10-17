@@ -102,7 +102,7 @@ struct FileBrowserView: View {
                 mainColumn
             }
         }
-        .background(DiskMapTheme.canvas)
+        .background(DiskMapTheme.page)
         .onAppear {
             syncFromModel()
             scheduleFolderComposition(for: currentID)
@@ -328,7 +328,7 @@ struct FileBrowserView: View {
                                   message: "Click a row to see what it is and what you can do. Double-click a folder to open it.")
             }
         }
-        .background(DiskMapTheme.canvas)
+        .background(DiskMapTheme.page)
     }
 
     // MARK: Composition (async)

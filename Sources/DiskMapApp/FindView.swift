@@ -100,7 +100,7 @@ struct FindView: View {
         // first keystroke rebuilt the field and dropped focus after one letter.
         AdaptiveInspectorSplit(windowWidth: contentWidth, inspectionToken: selectedID.map(String.init),
                                main: mainColumn, inspector: inspector)
-        .background(DiskMapTheme.canvas)
+        .background(DiskMapTheme.page)
         .task(id: runKey) { await run() }
         .task(id: model.scanID) {
             index = nil
@@ -377,7 +377,7 @@ struct FindView: View {
                 DiskMapEmptyState(symbol: "magnifyingglass", title: "Select a result", message: "Its details and actions appear here.")
             }
         }
-        .background(DiskMapTheme.canvas)
+        .background(DiskMapTheme.page)
     }
 
     static func relativeModified(_ day: Int32) -> String { RelativeAge.long(day: day) }

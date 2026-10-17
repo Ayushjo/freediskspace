@@ -221,7 +221,7 @@ struct FileInspector: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             InspectorActions(
-                primaryTitle: staged ? "In Cleanup" : "Add to Cleanup",
+                primaryTitle: staged ? "In the basket" : "Add to basket",
                 primaryDone: staged,
                 primaryEnabled: allowTrash,
                 primary: {

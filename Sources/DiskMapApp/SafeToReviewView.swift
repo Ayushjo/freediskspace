@@ -48,7 +48,7 @@ struct SafeToReviewView: View {
 
     var body: some View {
         AdaptiveInspectorSplit(windowWidth: contentWidth, inspectionToken: selectedID, main: mainColumn, inspector: inspector)
-        .background(DiskMapTheme.canvas)
+        .background(DiskMapTheme.page)
         .catalogGate(.reviewables, model: model, title: "Finding safe-to-review items…")
     }
 
@@ -56,7 +56,7 @@ struct SafeToReviewView: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 18) {
                 PageHeader(eyebrow: "Clean", title: "Safe to Review",
-                           subtitle: "Storage with a clear cleanup path. Nothing is removed until you confirm in Cleanup.") {
+                           subtitle: "Storage with a clear cleanup path. Nothing is removed until you confirm in the basket.") {
                     HeaderSummary(parts: [ByteFormat.string(summary.totalBytes), countLabel(summary.targetCount, "item")])
                 }
                 categoryBar
@@ -198,7 +198,7 @@ struct SafeToReviewView: View {
                 DiskMapEmptyState(symbol: "leaf", title: "Select an item", message: "Its details and actions appear here.")
             }
         }
-        .background(DiskMapTheme.canvas)
+        .background(DiskMapTheme.page)
     }
 
     private func stage(_ items: [ReviewableTarget]) async {

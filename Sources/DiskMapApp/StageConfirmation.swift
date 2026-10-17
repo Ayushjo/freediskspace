@@ -65,7 +65,7 @@ extension ScanModel {
         return (safe, skipped)
     }
 
-    /// Bulk "Add to Cleanup". Lists every item in a sheet and stages only
+    /// Bulk "Add to basket". Lists every item in a sheet and stages only
     /// after a yes; risky items are skipped and named. `allowing` are
     /// category ids this screen adds on purpose (Applications adds apps).
     /// Nil when cancelled or nothing could be offered.
@@ -101,15 +101,15 @@ extension ScanModel {
             let more = skipped.count > 2 ? " +\(skipped.count - 2)" : ""
             showToast("Added \(countLabel(summary.added, "item")) · skipped \(countLabel(skipped.count, "risky item")) (\(names)\(more))")
         } else {
-            showToast(summary.added > 0 ? "Added \(countLabel(summary.added, "item")) to Cleanup — ⇧⌘⌫ to review"
-                      : summary.alreadyPresent > 0 ? "Already in Cleanup" : "Nothing could be added")
+            showToast(summary.added > 0 ? "Added \(countLabel(summary.added, "item")) to the basket — ⇧⌘⌫ to review"
+                      : summary.alreadyPresent > 0 ? "Already in the basket" : "Nothing could be added")
         }
         return summary
     }
 
     static func stagedToast(_ summary: CleanupStageSummary) -> String {
-        summary.added > 0 ? "Added \(countLabel(summary.added, "item")) to Cleanup — ⇧⌘⌫ to review"
-            : summary.alreadyPresent > 0 ? "Already in Cleanup" : "Blocked by safety rules"
+        summary.added > 0 ? "Added \(countLabel(summary.added, "item")) to the basket — ⇧⌘⌫ to review"
+            : summary.alreadyPresent > 0 ? "Already in the basket" : "Blocked by safety rules"
     }
 
     /// One item: things macOS manages are refused with what to do instead;
@@ -118,7 +118,7 @@ extension ScanModel {
         let verdict = Self.verdict(for: request)
         if !allowing.contains(verdict.storageClass.id) {
             if verdict.advice == .never {
-                showToast("macOS manages this. " + (verdict.instead ?? verdict.note ?? "It can’t be added to Cleanup."))
+                showToast("macOS manages this. " + (verdict.instead ?? verdict.note ?? "It can’t go in the basket."))
                 return nil
             }
             if verdict.advice == .warn {
@@ -243,7 +243,7 @@ struct RiskyStageSheet: View {
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 3) {
                     MonoLabel(proposal.verdict.storageClass.title)
-                    Text("Add \(name) to Cleanup?")
+                    Text("Add \(name) to the basket?")
                         .font(DiskMapType.heading)
                         .foregroundStyle(DiskMapTheme.ink)
                         .lineLimit(2)
@@ -298,12 +298,12 @@ struct BulkStageSheet: View {
     var body: some View {
         let skipped = proposal.skipped.count
         PathListConfirmSheet(
-            title: "Add \(countLabel(proposal.safe.count, "item")) to Cleanup?",
-            message: "Nothing is deleted yet — you review the list in Cleanup and confirm again before anything moves to the Trash.",
+            title: "Add \(countLabel(proposal.safe.count, "item")) to the basket?",
+            message: "Nothing is deleted yet — you review the basket and confirm again before anything moves to the Trash.",
             footnote: skipped == 0 ? nil
                 : "\(countLabel(skipped, "risky item")) (\(proposal.skipped.prefix(3).map { $0.request.url.lastPathComponent }.joined(separator: ", "))\(skipped > 3 ? "…" : "")) won’t be added — add \(skipped == 1 ? "it" : "them") one at a time to see why.",
             rows: proposal.safe.map { ConfirmPathRow(path: $0.url.path, bytes: $0.size) },
-            confirmTitle: "Add to Cleanup",
+            confirmTitle: "Add to basket",
             onConfirm: { proposal.resolve(true) },
             onCancel: { proposal.resolve(false) }
         )

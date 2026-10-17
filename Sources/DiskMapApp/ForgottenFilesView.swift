@@ -95,7 +95,7 @@ struct ForgottenFilesView: View {
 
     var body: some View {
         AdaptiveInspectorSplit(windowWidth: contentWidth, inspectionToken: selectedID.map(String.init), main: mainColumn, inspector: inspectorColumn)
-        .background(DiskMapTheme.canvas)
+        .background(DiskMapTheme.page)
         .catalogGate(.forgotten, model: model, title: "Finding forgotten files…")
     }
 
@@ -311,7 +311,7 @@ struct ForgottenFilesView: View {
                 DiskMapEmptyState(symbol: "clock", title: "Select a file", message: "Its details and actions appear here.")
             }
         }
-        .background(DiskMapTheme.canvas)
+        .background(DiskMapTheme.page)
     }
 
     private func stageSelected() async {

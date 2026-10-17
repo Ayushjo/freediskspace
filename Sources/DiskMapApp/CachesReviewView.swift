@@ -60,7 +60,7 @@ struct CachesReviewView: View {
 
     var body: some View {
         AdaptiveInspectorSplit(windowWidth: contentWidth, inspectionToken: selectedID, main: mainColumn, inspector: inspector)
-        .background(DiskMapTheme.canvas)
+        .background(DiskMapTheme.page)
         .catalogGate(.reviewables, model: model, title: "Finding caches…")
     }
 
@@ -160,7 +160,7 @@ struct CachesReviewView: View {
                 DiskMapEmptyState(symbol: "internaldrive", title: "Select an app", message: "Its cache details appear here.")
             }
         }
-        .background(DiskMapTheme.canvas)
+        .background(DiskMapTheme.page)
     }
 
     private func stage(_ items: [ReviewableTarget]) async {

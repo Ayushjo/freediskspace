@@ -62,7 +62,7 @@ struct OldDownloadsView: View {
                 AdaptiveInspectorSplit(windowWidth: contentWidth, inspectionToken: selectedID.map(String.init), main: mainColumn, inspector: inspector)
             }
         }
-        .background(DiskMapTheme.canvas)
+        .background(DiskMapTheme.page)
         .catalogGate(.oldDownloads, model: model, title: "Looking through Downloads…")
     }
 
@@ -208,7 +208,7 @@ struct OldDownloadsView: View {
                                   message: "See why it’s here and what you can do.")
             }
         }
-        .background(DiskMapTheme.canvas)
+        .background(DiskMapTheme.page)
     }
 
     private func parentDisplay(_ path: String) -> String {

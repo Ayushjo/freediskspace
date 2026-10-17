@@ -65,7 +65,7 @@ struct LargeMediaView: View {
                 AdaptiveInspectorSplit(windowWidth: contentWidth, inspectionToken: selectedID.map(String.init), main: mainColumn, inspector: inspector)
             }
         }
-        .background(DiskMapTheme.canvas)
+        .background(DiskMapTheme.page)
         .catalogGate(.largeMedia, model: model, title: "Finding large media…")
     }
 
@@ -258,7 +258,7 @@ struct LargeMediaView: View {
                 DiskMapEmptyState(symbol: "film", title: "Select a file", message: "Its preview, details and actions appear here.")
             }
         }
-        .background(DiskMapTheme.canvas)
+        .background(DiskMapTheme.page)
     }
 
     private func clearFilters() {
