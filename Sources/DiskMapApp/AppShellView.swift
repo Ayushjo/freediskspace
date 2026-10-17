@@ -102,14 +102,13 @@ struct AppShellView: View {
         .frame(minWidth: 880, minHeight: 600)
         .onChange(of: model.destination) { _, _ in model.clearMultiSelection() }
         .sheet(isPresented: $model.isCleanupQueuePresented) {
+            // Sized by the basket itself: its items beside the receipt.
             CleanupQueueView(model: model)
-                .frame(minWidth: 640, minHeight: 480)
         }
         .sheet(item: $model.pendingBulkStage) { BulkStageSheet(proposal: $0) }
         .sheet(item: $model.pendingRiskyStage) { RiskyStageSheet(proposal: $0) }
         .sheet(isPresented: $showExplain) {
             ExplainStorageSheet(model: model)
-                .frame(minWidth: 520, minHeight: 420)
         }
         .overlay {
             if showPalette {
@@ -481,71 +480,92 @@ struct ExplainStorageSheet: View {
         let stories = StorageNarrator.stories(from: snap)
         let recs = StorageNarrator.recommendations(from: snap)
         return VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .center, spacing: DiskMapSpace.sm) {
-                if showDusty {
-                    Dusty(pose: .smallCurious, width: DiskMapType.scaled(40))
-                }
+            HStack(alignment: .center, spacing: 14) {
+                if showDusty { Dusty(pose: .smallCurious, width: DiskMapType.scaled(40)) }
                 VStack(alignment: .leading, spacing: 4) {
-                    MonoLabel("From your last scan")
-                    Text("Explain my storage")
-                        .font(DiskMapType.title)
-                        .foregroundStyle(DiskMapTheme.ink)
+                    Text("Explain my storage").font(DiskMapType.pageTitle).foregroundStyle(DiskMapTheme.ink)
+                    Text("From your last scan, on this Mac. Nothing is estimated beyond it.")
+                        .font(DiskMapType.body).foregroundStyle(DiskMapTheme.ink2)
                 }
                 Spacer()
                 Button("Done") { dismiss() }
                     .buttonStyle(SecondaryButtonStyle())
                     .keyboardShortcut(.cancelAction)
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 18)
-            Hairline()
+            .padding(.horizontal, 26)
+            .padding(.top, 22)
+            .padding(.bottom, 16)
             ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    Group {
-                        if let vol = snap.volume {
-                            Text("Your Mac has \(ByteFormat.string(Int64(vol.freeBytes))) free of \(ByteFormat.string(Int64(vol.totalBytes))) — \(snap.health.title.lowercased()).")
-                        } else {
-                            Text("This covers \(ByteFormat.string(snap.scannedBytes)) from your last scan.")
-                        }
-                    }
-                    .font(DiskMapType.heading)
-                    .foregroundStyle(DiskMapTheme.ink)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        SectionHeader(label: "What’s going on")
-                        ForEach(stories) { story in
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(story.title)
-                                    .font(DiskMapType.bodyEmphasis)
-                                    .foregroundStyle(DiskMapTheme.ink)
-                                Text(story.detail)
-                                    .font(DiskMapType.secondary)
-                                    .foregroundStyle(DiskMapTheme.ink2)
-                                    .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 20) {
+                    headline(snap)
+                    if !stories.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("What’s going on").font(DiskMapType.cardTitle).foregroundStyle(DiskMapTheme.ink)
+                            VStack(spacing: 0) {
+                                ForEach(Array(stories.enumerated()), id: \.element.id) { index, story in
+                                    HStack(alignment: .top, spacing: 14) {
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            Text(story.title).font(DiskMapType.bodyEmphasis).foregroundStyle(DiskMapTheme.ink)
+                                            Text(Self.shortenPaths(story.detail)).font(DiskMapType.body).foregroundStyle(DiskMapTheme.ink2)
+                                                .fixedSize(horizontal: false, vertical: true)
+                                        }
+                                        Spacer(minLength: 0)
+                                    }
+                                    .padding(.horizontal, 16).padding(.vertical, 12)
+                                    .overlay(alignment: .top) { if index > 0 { Rectangle().fill(DiskMapTheme.line).frame(height: 1) } }
+                                }
                             }
+                            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(DiskMapTheme.card))
+                            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(DiskMapTheme.line, lineWidth: 1))
                         }
                     }
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        SectionHeader(label: "Next steps")
-                        ForEach(recs) { rec in
-                            NextStepRow(rec: rec) {
-                                model.destination = rec.destination
-                                dismiss()
+                    if !recs.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Next steps").font(DiskMapType.cardTitle).foregroundStyle(DiskMapTheme.ink)
+                            VStack(spacing: 0) {
+                                ForEach(Array(recs.enumerated()), id: \.element.id) { index, rec in
+                                    NextStepRow(rec: rec) {
+                                        model.destination = rec.destination
+                                        dismiss()
+                                    }
+                                    .overlay(alignment: .top) { if index > 0 { Rectangle().fill(DiskMapTheme.line).frame(height: 1) } }
+                                }
                             }
+                            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(DiskMapTheme.card))
+                            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(DiskMapTheme.line, lineWidth: 1))
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         }
                     }
-
-                    Text("Every figure here comes from your last local scan — nothing is estimated beyond it.")
-                        .font(DiskMapType.figureSmall)
-                        .foregroundStyle(DiskMapTheme.ink3)
+                    Text("Opening a step shows the list first. Nothing is removed from here.")
+                        .font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink3)
                 }
-                .padding(24)
+                .padding(.horizontal, 26)
+                .padding(.bottom, 26)
             }
         }
-        .frame(minWidth: 520, minHeight: 440)
-        .background(DiskMapTheme.canvas)
+        .frame(width: 640, height: 720)
+        .background(DiskMapTheme.page)
+    }
+
+    @ViewBuilder
+    private func headline(_ snap: AnalysisSnapshot) -> some View {
+        if let vol = snap.volume {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(ByteFormat.hero(Int64(vol.freeBytes))).font(DiskMapType.hero(44)).foregroundStyle(DiskMapTheme.ink)
+                    Text("free of \(ByteFormat.hero(Int64(vol.totalBytes)))").font(.system(size: DiskMapType.scaled(17))).foregroundStyle(DiskMapTheme.ink3)
+                }
+                Text("Your Mac is \(snap.health.title.lowercased()).").font(DiskMapType.body).foregroundStyle(DiskMapTheme.ink2)
+            }
+        } else {
+            Text("This covers \(ByteFormat.hero(snap.scannedBytes)) from your last scan.")
+                .font(DiskMapType.heading).foregroundStyle(DiskMapTheme.ink)
+        }
+    }
+
+    /// Paths in the narration read like the rest of the app ("~/Pictures/…").
+    static func shortenPaths(_ text: String) -> String {
+        text.replacingOccurrences(of: NSHomeDirectory(), with: "~")
     }
 }
 
@@ -557,36 +577,27 @@ private struct NextStepRow: View {
 
     var body: some View {
         Button(action: open) {
-            HStack(spacing: 12) {
-                Circle().fill(rec.safety == .safe ? DiskMapTheme.safe : DiskMapTheme.review).frame(width: 6, height: 6)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(rec.title)
-                        .font(DiskMapType.bodyEmphasis)
-                        .foregroundStyle(DiskMapTheme.ink)
-                    Text(rec.detail)
-                        .font(DiskMapType.secondary)
-                        .foregroundStyle(DiskMapTheme.ink3)
+            HStack(spacing: 14) {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text(rec.title).font(DiskMapType.bodyEmphasis).foregroundStyle(DiskMapTheme.ink)
+                        BoardTag(text: rec.safety == .safe ? "Rebuilds" : "Look first", tone: rec.safety == .safe ? .accent : .neutral)
+                    }
+                    Text(rec.detail).font(DiskMapType.body).foregroundStyle(DiskMapTheme.ink2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                Text(ByteFormat.string(rec.bytes))
-                    .font(DiskMapType.figure)
-                    .foregroundStyle(DiskMapTheme.ink)
-                Text("Review")
-                    .font(DiskMapType.secondary)
-                    .foregroundStyle(DiskMapTheme.accent)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: DiskMapType.scaled(10), weight: .semibold))
-                    .foregroundStyle(DiskMapTheme.accent)
+                Text(ByteFormat.hero(rec.bytes)).font(DiskMapType.figure)
+                    .foregroundStyle(rec.safety == .safe ? DiskMapTheme.accentDeep : DiskMapTheme.ink)
+                Image(systemName: "chevron.right").font(.system(size: DiskMapType.scaled(10), weight: .semibold)).foregroundStyle(DiskMapTheme.ink3)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(RowBackground(selected: false, hovering: hovering))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(hovering ? DiskMapTheme.soft.opacity(0.6) : Color.clear)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .padding(.horizontal, -10)
         .accessibilityLabel("\(rec.title), \(ByteFormat.string(rec.bytes)). Review")
     }
 }

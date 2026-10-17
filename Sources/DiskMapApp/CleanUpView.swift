@@ -339,7 +339,7 @@ struct CleanUpView: View {
 }
 
 /// The paper receipt: what moves, what you get back, where it goes, the undo.
-private struct Receipt: View {
+struct Receipt: View {
     var lines: [(String, Int64)]
     var total: Int64
     var freeBefore: Int64?

@@ -157,136 +157,134 @@ struct PathListConfirmSheet: View {
     var body: some View {
         let sorted = rows.sorted { $0.bytes != $1.bytes ? $0.bytes > $1.bytes : $0.path < $1.path }
         let total = rows.reduce(Int64(0)) { $0 + max(0, $1.bytes) }
-        VStack(alignment: .leading, spacing: 14) {
-            Text(title)
-                .font(DiskMapType.heading)
-                .foregroundStyle(DiskMapTheme.ink)
-            Text(message)
-                .font(DiskMapType.secondary)
-                .foregroundStyle(DiskMapTheme.ink2)
-                .fixedSize(horizontal: false, vertical: true)
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(sorted.prefix(Self.rowLimit)) { row in
-                        HStack(alignment: .firstTextBaseline, spacing: 12) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text((row.path as NSString).lastPathComponent)
-                                    .font(DiskMapType.bodyEmphasis)
-                                    .foregroundStyle(DiskMapTheme.ink)
-                                    .lineLimit(1)
-                                Text(row.path)
-                                    .font(DiskMapType.figureSmall)
-                                    .foregroundStyle(DiskMapTheme.ink3)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                    .textSelection(.enabled)
-                            }
-                            Spacer(minLength: 8)
-                            Text(ByteFormat.string(row.bytes))
-                                .font(DiskMapType.figure)
-                                .foregroundStyle(DiskMapTheme.ink2)
-                        }
-                        .padding(.vertical, 6)
-                        .accessibilityElement(children: .combine)
-                        Hairline()
-                    }
-                    if sorted.count > Self.rowLimit {
-                        Text("+ \((sorted.count - Self.rowLimit).formatted()) more")
-                            .font(DiskMapType.secondary)
-                            .foregroundStyle(DiskMapTheme.ink3)
-                            .padding(.vertical, 8)
-                    }
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 14) {
+                IconTile(systemName: destructive ? "trash" : "basket", size: 40)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(title).font(.system(size: DiskMapType.scaled(20), weight: .semibold)).foregroundStyle(DiskMapTheme.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(message).font(DiskMapType.body).foregroundStyle(DiskMapTheme.ink2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .frame(minHeight: 120, maxHeight: 340)
-            HStack {
-                Text("\(countLabel(rows.count, "item")) · \(ByteFormat.string(total))")
-                    .font(DiskMapType.figure)
-                    .foregroundStyle(DiskMapTheme.ink)
-                Spacer()
+            VStack(spacing: 0) {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(sorted.prefix(Self.rowLimit)) { row in
+                            HStack(alignment: .center, spacing: 12) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text((row.path as NSString).lastPathComponent)
+                                        .font(DiskMapType.bodyEmphasis).foregroundStyle(DiskMapTheme.ink).lineLimit(1)
+                                    Text(CanonicalPath.displayPath(absolutePath: row.path))
+                                        .font(.system(size: DiskMapType.scaled(11), design: .monospaced)).foregroundStyle(DiskMapTheme.ink3)
+                                        .lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                                }
+                                Spacer(minLength: 8)
+                                Text(ByteFormat.hero(row.bytes)).font(DiskMapType.figure).foregroundStyle(DiskMapTheme.ink)
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .overlay(alignment: .bottom) { Rectangle().fill(DiskMapTheme.line.opacity(0.7)).frame(height: 1) }
+                            .accessibilityElement(children: .combine)
+                        }
+                        if sorted.count > Self.rowLimit {
+                            Text("+ \((sorted.count - Self.rowLimit).formatted()) more")
+                                .font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink3)
+                                .padding(.horizontal, 14).padding(.vertical, 8)
+                        }
+                    }
+                }
+                .frame(minHeight: 120, maxHeight: 320)
+                LeaderRow(label: countLabel(rows.count, "item"), value: ByteFormat.hero(total), emphasis: true, accentValue: destructive)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .overlay(alignment: .top) { Rectangle().fill(DiskMapTheme.ink.opacity(0.85)).frame(height: 1) }
             }
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(DiskMapTheme.card))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(DiskMapTheme.line, lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             if let footnote {
-                Text(footnote)
-                    .font(DiskMapType.secondary)
-                    .foregroundStyle(DiskMapTheme.review)
-                    .fixedSize(horizontal: false, vertical: true)
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "exclamationmark.circle").foregroundStyle(DiskMapTheme.review)
+                    Text(footnote).font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
+                Text(destructive ? "Put Back returns everything while it's in the Trash." : "Nothing moves yet.")
+                    .font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink3)
                 Spacer()
+                // Cancel is the default: Return never adds or moves anything by accident.
                 Button("Cancel", action: onCancel)
                     .buttonStyle(SecondaryButtonStyle())
                     .keyboardShortcut(.defaultAction)
                 Button(confirmTitle, action: onConfirm)
-                    .buttonStyle(PrimaryButtonStyle())
+                    .buttonStyle(AccentButtonStyle(large: true, hard: destructive))
             }
         }
-        .padding(24)
-        .frame(width: 560)
-        .background(DiskMapTheme.raised)
+        .padding(26)
+        .frame(width: 620)
+        .background(DiskMapTheme.page)
     }
 }
 
-/// "Add <name> to Cleanup?" for one risky item: what it is, why removing it
+/// "Add <name> to the basket?" for one risky item: what it is, why removing it
 /// hurts, and the better way to get the space back.
 struct RiskyStageSheet: View {
     var proposal: RiskyStageProposal
 
     var body: some View {
         let name = proposal.request.url.lastPathComponent
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 14) {
                 Image(systemName: "exclamationmark.triangle")
-                    .font(.system(size: DiskMapType.scaled(18), weight: .medium))
+                    .font(.system(size: DiskMapType.scaled(16), weight: .medium))
                     .foregroundStyle(DiskMapTheme.review)
                     .frame(width: 40, height: 40)
-                    .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(DiskMapTheme.review.opacity(0.12)))
+                    .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(DiskMapTheme.card))
+                    .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(DiskMapTheme.line, lineWidth: 1))
                     .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 3) {
-                    MonoLabel(proposal.verdict.storageClass.title)
+                VStack(alignment: .leading, spacing: 6) {
+                    BoardTag(text: proposal.verdict.storageClass.title)
                     Text("Add \(name) to the basket?")
-                        .font(DiskMapType.heading)
-                        .foregroundStyle(DiskMapTheme.ink)
+                        .font(.system(size: DiskMapType.scaled(20), weight: .semibold)).foregroundStyle(DiskMapTheme.ink)
                         .lineLimit(2)
+                    Text(CanonicalPath.displayPath(absolutePath: proposal.request.url.path))
+                        .font(.system(size: DiskMapType.scaled(11), design: .monospaced)).foregroundStyle(DiskMapTheme.ink3)
+                        .lineLimit(2).truncationMode(.middle).textSelection(.enabled)
                 }
             }
             if let note = proposal.verdict.note {
-                Text(note)
-                    .font(DiskMapType.body)
-                    .foregroundStyle(DiskMapTheme.ink)
+                Text(note).font(DiskMapType.body).foregroundStyle(DiskMapTheme.ink)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let instead = proposal.verdict.instead {
-                VStack(alignment: .leading, spacing: 4) {
-                    MonoLabel("Instead")
-                    Text(.init(instead))
-                        .font(DiskMapType.secondary)
-                        .foregroundStyle(DiskMapTheme.ink2)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("A better way").font(DiskMapType.bodyEmphasis).foregroundStyle(DiskMapTheme.ink)
+                    Text(.init(instead)).font(DiskMapType.body).foregroundStyle(DiskMapTheme.ink2)
+                        .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(12)
+                .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: DiskMapRadius.card, style: .continuous)
-                    .stroke(DiskMapTheme.line, lineWidth: 1))
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(DiskMapTheme.card))
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(DiskMapTheme.line, lineWidth: 1))
+                .overlay(alignment: .leading) {
+                    UnevenRoundedRectangle(topLeadingRadius: 10, bottomLeadingRadius: 10).fill(DiskMapTheme.accent).frame(width: 3)
+                }
             }
-            Text(proposal.request.url.path)
-                .font(DiskMapType.figureSmall)
-                .foregroundStyle(DiskMapTheme.ink3)
-                .lineLimit(2)
-                .truncationMode(.middle)
-                .textSelection(.enabled)
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 Spacer()
-                Button("Cancel") { proposal.resolve(false) }
-                    .buttonStyle(PrimaryButtonStyle())
+                // Keeping it is the default; adding needs a deliberate click.
+                Button("Keep it") { proposal.resolve(false) }
+                    .buttonStyle(AccentButtonStyle(large: true))
                     .keyboardShortcut(.defaultAction)
                 Button("Add anyway") { proposal.resolve(true) }
                     .buttonStyle(SecondaryButtonStyle())
             }
         }
-        .padding(24)
-        .frame(width: 480)
-        .background(DiskMapTheme.raised)
+        .padding(26)
+        .frame(width: 520)
+        .background(DiskMapTheme.page)
         .onDisappear { proposal.resolve(false) }
     }
 }

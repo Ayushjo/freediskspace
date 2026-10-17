@@ -383,24 +383,8 @@ struct SnapshotsView: View {
     // MARK: Save sheet
 
     private var saveSheet: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Save this scan").font(DiskMapType.heading)
-            Text("Keeps the sizes from this scan so you can see what changed next time. It doesn't copy or back up your files.")
-                .font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink2)
-            Text("Name").font(DiskMapType.secondary.weight(.semibold)).foregroundStyle(DiskMapTheme.ink2)
-            TextField("Name", text: $saveName).textFieldStyle(.roundedBorder)
-            Text("Optional note").font(DiskMapType.secondary.weight(.semibold)).foregroundStyle(DiskMapTheme.ink2)
-            TextField("e.g. Before cleaning Docker", text: $saveNote, axis: .vertical)
-                .lineLimit(3...5).textFieldStyle(.roundedBorder)
-            HStack {
-                Spacer()
-                Button("Cancel") { showSave = false }.buttonStyle(SecondaryButtonStyle()).keyboardShortcut(.cancelAction)
-                Button("Save") { saveSnapshot() }.buttonStyle(PrimaryButtonStyle()).keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(24)
-        .frame(width: 420)
-        .background(DiskMapTheme.raised)
+        SaveScanSheet(name: $saveName, note: $saveNote, itemCount: model.tree?.count, bytes: model.selectedTotals.first,
+                      onCancel: { showSave = false }, onSave: { saveSnapshot() })
     }
 
     // MARK: Actions
@@ -697,5 +681,63 @@ extension SnapshotsView {
         let (div, unit): (Double, String) = big >= 1_000_000_000 ? (1e9, "GB") : big >= 1_000_000 ? (1e6, "MB") : (1e3, "KB")
         let f = { (v: Int64) in String(format: "%.1f", Double(v) / div) }
         return "\(f(before)) → \(f(after)) \(unit)"
+    }
+}
+
+/// Save this scan: a name, an optional note, what is kept.
+struct SaveScanSheet: View {
+    @Binding var name: String
+    @Binding var note: String
+    var itemCount: Int?
+    var bytes: Int64?
+    var onCancel: () -> Void
+    var onSave: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 14) {
+                IconTile(systemName: "chart.bar", size: 40)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Save this scan").font(.system(size: DiskMapType.scaled(20), weight: .semibold)).foregroundStyle(DiskMapTheme.ink)
+                    Text("Keeps the sizes from this scan so What changed can compare next time. It doesn’t copy or back up your files.")
+                        .font(DiskMapType.body).foregroundStyle(DiskMapTheme.ink2).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Name").font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink3)
+                    TextField("", text: $name).textFieldStyle(.plain).font(DiskMapType.body).accessibilityLabel("Name")
+                }
+                .padding(14)
+                .overlay(alignment: .bottom) { Rectangle().fill(DiskMapTheme.line).frame(height: 1) }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Note · optional").font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink3)
+                    // Plain fields ignore the prompt colour, so the hint is drawn here.
+                    TextField("", text: $note, axis: .vertical)
+                        .textFieldStyle(.plain).font(DiskMapType.body).lineLimit(2...4)
+                        .accessibilityLabel("Note")
+                        .background(alignment: .topLeading) {
+                            if note.isEmpty {
+                                Text("e.g. Before cleaning Docker").font(DiskMapType.body).foregroundStyle(DiskMapTheme.ink3)
+                                    .allowsHitTesting(false).accessibilityHidden(true)
+                            }
+                        }
+                }
+                .padding(14)
+            }
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(DiskMapTheme.card))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(DiskMapTheme.line, lineWidth: 1))
+            if let itemCount { LeaderRow(label: "Folders and files", value: itemCount.formatted()) }
+            if let bytes { LeaderRow(label: "Size of this scan", value: ByteFormat.hero(bytes)) }
+            HStack(spacing: 10) {
+                Text("Kept on this Mac only.").font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink3)
+                Spacer()
+                Button("Cancel", action: onCancel).buttonStyle(SecondaryButtonStyle()).keyboardShortcut(.cancelAction)
+                Button("Save", action: onSave).buttonStyle(AccentButtonStyle(large: true)).keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(26)
+        .frame(width: 500)
+        .background(DiskMapTheme.page)
     }
 }

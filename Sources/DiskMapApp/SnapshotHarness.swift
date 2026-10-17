@@ -70,6 +70,42 @@ enum SnapshotHarness {
             NSApp.terminate(nil)
             return
         }
+        // `--render-sheet trash|bulk|risky`: one confirmation sheet on its own, then quit.
+        if let which = value(after: "--render-sheet") {
+            let home = NSHomeDirectory()
+            let rows = [("Library/Developer/Xcode/DerivedData", 12_100_000_000), ("Library/Developer/CoreSimulator/Devices", 10_400_000_000),
+                        ("Library/Caches/com.spotify.client", 5_600_000_000), ("Downloads/Install Xcode.xip", 3_100_000_000),
+                        ("Library/Caches/Homebrew", 2_400_000_000)].map { ConfirmPathRow(path: home + "/" + $0.0, bytes: Int64($0.1)) }
+            let view: AnyView
+            switch which {
+            case "risky":
+                let docker = URL(fileURLWithPath: home + "/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw")
+                view = AnyView(RiskyStageSheet(proposal: RiskyStageProposal(
+                    request: CleanupStageRequest(url: docker, size: 18_000_000_000, reason: "Biggest file: Docker.raw"),
+                    verdict: StorageClassifier.classify(path: docker.path, isDirectory: false), resolve: { _ in })))
+            case "save":
+                view = AnyView(SaveScanSheet(name: .constant(SnapshotMeta.defaultName(for: Date())), note: .constant(""),
+                                             itemCount: 2_418_337, bytes: 320_400_000_000, onCancel: {}, onSave: {}))
+            case "bulk":
+                view = AnyView(PathListConfirmSheet(title: "Add 5 items to the basket?",
+                    message: "Nothing is deleted yet — you review the basket and confirm again before anything moves to the Trash.",
+                    footnote: "1 risky item (Docker.raw) won’t be added — add it on its own to see why.",
+                    rows: rows, confirmTitle: "Add to basket", onConfirm: {}, onCancel: {}))
+            default:
+                view = AnyView(PathListConfirmSheet(title: "Move 5 items to the Trash?",
+                    message: "Moves 5 items to the Trash — nothing is deleted permanently. About 33.6 GB is freed once you empty the Trash.",
+                    footnote: nil, rows: rows, confirmTitle: "Move to Trash", destructive: true, onConfirm: {}, onCancel: {}))
+            }
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
+            let host = NSHostingView(rootView: view)
+            window.contentView = host
+            window.setContentSize(host.fittingSize)
+            window.makeKeyAndOrderFront(nil)
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            write(window: window, to: dir.appendingPathComponent("sheet-\(which)-\(appearanceName).png"))
+            NSApp.terminate(nil)
+            return
+        }
         // Optional mid-scan frame: `--snapshot-at 3` captures 3 s after launch.
         if let at = value(after: "--snapshot-at").flatMap(Double.init),
            let window = mainWindow() {

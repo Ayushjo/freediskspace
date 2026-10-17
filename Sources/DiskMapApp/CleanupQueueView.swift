@@ -14,11 +14,10 @@ struct CleanupQueueView: View {
     /// it's dismissed, put back, or something new is added.
     @State private var justMoved: CleanupRecord?
 
+    @Environment(\.widthClass) private var widthClass
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            commitProgressBar
-            Hairline()
+        Group {
             if model.stagedItems.isEmpty, let moved = justMoved, model.lastCleanup == moved {
                 CleanupSuccessView(
                     count: moved.items.count,
@@ -27,20 +26,18 @@ struct CleanupQueueView: View {
                     onPutBack: { Task { await model.putBackLastCleanup(); justMoved = nil } },
                     onDone: { dismiss() }
                 )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .transition(.opacity)
-            } else if model.stagedItems.isEmpty {
-                DiskMapEmptyState(symbol: "tray", title: "Your basket is empty",
-                                  message: "Tick things in Clean up, or add files from any page with Add to Cleanup (⌘⌫). Nothing moves to the Trash until you confirm here.")
             } else {
-                list
-            }
-            undoRow
-            if justMoved == nil || model.lastCleanup != justMoved || !model.stagedItems.isEmpty {
-                lastCleanup
+                HStack(spacing: 0) {
+                    itemsColumn
+                    Rectangle().fill(DiskMapTheme.line).frame(width: 1)
+                    receiptColumn.frame(width: 360)
+                }
             }
         }
         .background(DiskMapTheme.page)
-        .frame(minWidth: 640, minHeight: 480)
+        .frame(width: 1_000, height: 680)
         .task { await model.refreshQueue() }
         // Every item that will move, by full path and size (MAC-FIXES-FROM-WINDOWS §4.2).
         .sheet(isPresented: $confirmingTrash) {
@@ -65,6 +62,76 @@ struct CleanupQueueView: View {
             )
         }
         .interactiveDismissDisabled(model.commitProgress != nil)
+    }
+
+    private var itemsColumn: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            commitProgressBar
+            if model.stagedItems.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Your basket is empty").font(DiskMapType.heading).foregroundStyle(DiskMapTheme.ink)
+                    Text("Tick things in Clean up, or add files from any page with Add to basket (⌘⌫). Nothing moves to the Trash until you confirm here.")
+                        .font(DiskMapType.body).foregroundStyle(DiskMapTheme.ink2).fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(DiskMapTheme.card))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(DiskMapTheme.line, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+                .padding(.horizontal, 24)
+                Spacer()
+            } else {
+                list
+            }
+            undoRow
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var receiptColumn: some View {
+        let vol = model.analysis.volume
+        let lines = grouped.map { group in
+            (group.items.count == 1 ? group.items[0].url.lastPathComponent : "\(group.source) · \(group.items.count)",
+             group.items.reduce(Int64(0)) { $0 + (model.reclaimEstimate.perItem[$1.id] ?? $1.size) })
+        }
+        let busy = model.commitProgress != nil
+        return ZStack(alignment: .top) {
+            DiskMapTheme.sidebar
+            BoardGrid().opacity(0.8)
+            ScrollView {
+                VStack(spacing: 0) {
+                    Receipt(lines: lines, total: model.reclaimEstimate.bytes, freeBefore: vol.map { Int64($0.freeBytes) },
+                            volumeName: vol?.volumeName ?? model.rootURL?.lastPathComponent ?? "This Mac", skippedCount: 0, compact: false)
+                    if model.reclaimEstimate.heldByUnqueuedCopies > 0 {
+                        Text("\(diskByteString(model.reclaimEstimate.heldByUnqueuedCopies)) stays in use by copies or links that aren’t in the basket.")
+                            .font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink2)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 18)
+                    }
+                    Button { confirmingTrash = true } label: {
+                        VStack(alignment: .leading, spacing: 14) {
+                            Text("YOU’LL CONFIRM ONCE MORE").font(.system(size: DiskMapType.scaled(10.5), weight: .medium, design: .monospaced)).opacity(0.85)
+                            Text(model.stagedItems.isEmpty ? "Nothing to move" : "Move \(countLabel(model.stagedItems.count, "item")) to Trash…")
+                                .font(.system(size: DiskMapType.scaled(21), weight: .semibold)).kerning(-0.3)
+                        }
+                        .foregroundStyle(DiskMapTheme.onAccent)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 20).padding(.vertical, 16)
+                        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(DiskMapTheme.accent.opacity(model.stagedItems.isEmpty || busy ? 0.45 : 1)))
+                        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.black.opacity(0.85), lineWidth: 1))
+                        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.black.opacity(0.88)).offset(x: 5, y: 5))
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(model.stagedItems.isEmpty || busy)
+                    .padding(.top, 28).padding(.trailing, 5)
+                    .help("Moves everything here to the Trash, after you confirm")
+                    .accessibilityLabel("Move \(model.stagedItems.count) items to Trash")
+                    lastCleanup.padding(.top, 24)
+                }
+                .padding(24)
+            }
+        }
     }
 
     /// "Verifying sizes… 3 of 12" then "Moving… 7 of 12" while a commit runs.
@@ -99,50 +166,49 @@ struct CleanupQueueView: View {
                 Text("Basket")
                     .font(DiskMapType.pageTitle)
                     .foregroundStyle(DiskMapTheme.ink)
-                Text(freeSummary)
-                    .font(DiskMapType.figure)
+                Text(model.stagedItems.isEmpty ? "Nothing in it yet" : "\(countLabel(model.stagedItems.count, "item")) · " + freeSummary)
+                    .font(DiskMapType.body)
                     .foregroundStyle(DiskMapTheme.ink2)
-                if model.reclaimEstimate.heldByUnqueuedCopies > 0 {
-                    Text("\(diskByteString(model.reclaimEstimate.heldByUnqueuedCopies)) stays in use by copies or links that aren’t queued")
-                        .font(DiskMapType.secondary)
-                        .foregroundStyle(DiskMapTheme.ink3)
-                }
             }
             Spacer()
             if model.reclaimEstimate.isCalculating {
                 ProgressView().controlSize(.small)
             }
+            // Committing finishes any measuring itself, with progress, so the
+            // Move button in the receipt never waits on it (MAC-FIXES-FROM-WINDOWS §2.3).
             Button("Done") { dismiss() }
                 .keyboardShortcut(.cancelAction)
                 .buttonStyle(SecondaryButtonStyle())
-            // Committing finishes any measuring itself, with progress, so the
-            // button never waits on it (MAC-FIXES-FROM-WINDOWS §2.3).
-            Button("Move to Trash…") { confirmingTrash = true }
-                .buttonStyle(AccentButtonStyle())
-                .disabled(model.stagedItems.isEmpty || model.commitProgress != nil)
-                .help("Moves everything here to the Trash, after you confirm")
         }
         .padding(.horizontal, 24)
-        .padding(.vertical, 18)
+        .padding(.top, 22)
+        .padding(.bottom, 16)
     }
 
     private var list: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
+            LazyVStack(alignment: .leading, spacing: 14) {
                 ForEach(grouped, id: \.source) { group in
-                    SectionHeader(label: group.source,
-                                  detail: countLabel(group.items.count, "item") + " · " + diskByteString(group.items.reduce(0) { $0 + (model.reclaimEstimate.perItem[$1.id] ?? $1.size) }))
-                        .padding(.horizontal, 10)
-                        .padding(.top, 16)
-                        .padding(.bottom, 2)
-                    ForEach(group.items) { item in
-                        row(item)
-                        RowSeparator(indent: 10 + 28 + 12)
+                    VStack(spacing: 0) {
+                        HStack {
+                            Text(group.source).font(DiskMapType.cardTitle).foregroundStyle(DiskMapTheme.ink)
+                            Text(countLabel(group.items.count, "item")).font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink3)
+                            Spacer()
+                            Text(diskByteString(group.items.reduce(0) { $0 + (model.reclaimEstimate.perItem[$1.id] ?? $1.size) }))
+                                .font(DiskMapType.figure).foregroundStyle(DiskMapTheme.ink)
+                        }
+                        .padding(.horizontal, 16)
+                        .frame(height: 44)
+                        .overlay(alignment: .bottom) { Rectangle().fill(DiskMapTheme.line).frame(height: 1) }
+                        ForEach(group.items) { item in row(item) }
                     }
+                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(DiskMapTheme.card))
+                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(DiskMapTheme.line, lineWidth: 1))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.bottom, 12)
+            .padding(.horizontal, 24)
+            .padding(.bottom, 24)
         }
     }
 
@@ -195,56 +261,49 @@ struct CleanupQueueView: View {
         }
     }
 
-    /// TASK-080: the last Move to Trash can be undone; its receipt folds in here.
+    /// TASK-080: the last Move to Trash can be undone, from right here.
     @ViewBuilder
     private var lastCleanup: some View {
         if let last = model.lastCleanup, !last.items.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
+                Text("Last cleanup").font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink2)
                 HStack(spacing: 10) {
-                    Button {
-                        withAnimation(.easeOut(duration: 0.15)) { showReceipt.toggle() }
-                    } label: {
-                        Label("Last cleanup", systemImage: showReceipt ? "chevron.down" : "chevron.right")
-                            .labelStyle(.titleAndIcon)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(countLabel(last.items.count, "item")) · \(ByteFormat.hero(last.items.reduce(0) { $0 + $1.bytes }))")
+                            .font(DiskMapType.body).foregroundStyle(DiskMapTheme.ink)
+                        Text(last.date.formatted(.relative(presentation: .named))).font(DiskMapType.figureSmall).foregroundStyle(DiskMapTheme.ink3)
                     }
-                    .buttonStyle(QuietButtonStyle())
-                    .disabled(model.lastCommitLines.isEmpty)
-                    Text("\(countLabel(last.items.count, "item")) moved \(last.date.formatted(.relative(presentation: .named)))")
-                        .font(DiskMapType.figureSmall)
-                        .foregroundStyle(DiskMapTheme.ink3)
-                    Spacer()
+                    Spacer(minLength: 6)
                     Button("Put Back") { Task { await model.putBackLastCleanup() } }
-                        .buttonStyle(LinkButtonStyle())
-                        .font(DiskMapType.secondary)
+                        .buttonStyle(SecondaryButtonStyle())
                         .help("Move them from the Trash back where they were. Nothing that is there now is replaced.")
                 }
-                if showReceipt, !model.lastCommitLines.isEmpty {
-                    // PR #16: one line per item — bounded so it can't push the list away.
-                    ScrollView {
-                        Text(model.lastCommitLines.joined(separator: "\n"))
-                            .font(DiskMapType.figureSmall)
-                            .foregroundStyle(DiskMapTheme.ink2)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14).padding(.vertical, 10)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(DiskMapTheme.card))
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(DiskMapTheme.line, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+                if !model.lastCommitLines.isEmpty {
+                    Button(showReceipt ? "Hide what moved" : "Show what moved") {
+                        withAnimation(.easeOut(duration: 0.15)) { showReceipt.toggle() }
                     }
-                    .frame(maxHeight: 140)
+                    .buttonStyle(.plain).font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.accentDeep)
+                    if showReceipt {
+                        // PR #16: one line per item — bounded so it can't push the column away.
+                        ScrollView {
+                            Text(model.lastCommitLines.joined(separator: "\n"))
+                                .font(DiskMapType.figureSmall).foregroundStyle(DiskMapTheme.ink2)
+                                .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(maxHeight: 140)
+                    }
                 }
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 10)
-            .overlay(alignment: .top) { Hairline() }
         } else if !model.lastCommitLines.isEmpty {
             ScrollView {
                 Text(model.lastCommitLines.joined(separator: "\n"))
-                    .font(DiskMapType.figureSmall)
-                    .foregroundStyle(DiskMapTheme.ink2)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .font(DiskMapType.figureSmall).foregroundStyle(DiskMapTheme.ink2)
+                    .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(maxHeight: 140)
-            .overlay(alignment: .top) { Hairline() }
         }
     }
 
@@ -328,8 +387,8 @@ private struct CleanupRow: View {
                 HStack(spacing: 0) {
                     Button(action: onQuickLook) { Label("Quick Look", systemImage: "eye") }
                         .help("Quick Look")
-                    Button(action: onRemove) { Label("Remove from Cleanup", systemImage: "minus.circle") }
-                        .help("Remove from Cleanup — the file stays where it is")
+                    Button(action: onRemove) { Label("Take out of the basket", systemImage: "xmark") }
+                        .help("Take out of the basket — the file stays where it is")
                 }
                 .buttonStyle(IconButtonStyle(size: 24))
             }
@@ -339,21 +398,23 @@ private struct CleanupRow: View {
                 .multilineTextAlignment(.trailing)
                 .frame(maxWidth: 220, alignment: .trailing)
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
         .frame(minHeight: DiskMapSpace.rowTwoLine + 4)
-        .background(RowBackground(selected: false, hovering: hovering))
+        .background(hovering ? DiskMapTheme.soft.opacity(0.6) : Color.clear)
+        .overlay(alignment: .bottom) { Rectangle().fill(DiskMapTheme.line.opacity(0.7)).frame(height: 1) }
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .help(detail ?? "")
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(item.url.lastPathComponent), \(caption)")
         .accessibilityAction(named: "Quick Look", onQuickLook)
-        .accessibilityAction(named: "Remove from Cleanup", onRemove)
+        .accessibilityAction(named: "Take out of the basket", onRemove)
         .contextMenu {
             Button("Quick Look", action: onQuickLook)
             Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
             Divider()
-            Button("Remove from Cleanup", action: onRemove)
+            Button("Take Out of the Basket", action: onRemove)
         }
     }
 }

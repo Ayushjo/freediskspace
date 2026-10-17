@@ -24,3 +24,15 @@ struct SettingsPageTests {
         #expect(throws: LoginItem.Unavailable.self) { try LoginItem.set(true) }
     }
 }
+
+@Suite("Sheets")
+struct SheetTests {
+    @Test func explainShortensHomePaths() {
+        #expect(ExplainStorageSheet.shortenPaths("51 GB at \(NSHomeDirectory())/Pictures/a.heic.") == "51 GB at ~/Pictures/a.heic.")
+        #expect(ExplainStorageSheet.shortenPaths("/Applications/X.app") == "/Applications/X.app")
+    }
+
+    @Test func confirmListIsCappedAndBiggestFirst() {
+        #expect(PathListConfirmSheet.rowLimit == 400)
+    }
+}
