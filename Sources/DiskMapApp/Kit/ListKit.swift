@@ -235,6 +235,9 @@ struct ListFileRow: View {
             Text("—").foregroundStyle(DiskMapTheme.ink3)
         case .accent(let text):
             Text(text).font(DiskMapType.body).foregroundStyle(DiskMapTheme.accentDeep).lineLimit(1)
+        case .plain(let text):
+            Text(text).font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink2).lineLimit(1).truncationMode(.tail)
+                .help(text)
         case .review(let instead):
             HStack(spacing: 8) {
                 BoardTag(text: "Review")
@@ -270,5 +273,17 @@ struct ListFileRow: View {
             .help("Add to basket")
             .accessibilityLabel("Add \(name) to basket")
         }
+    }
+}
+
+/// Folders | Files | Forgotten: the Explore list's three ways to look.
+struct ListPageSwitch: View {
+    @ObservedObject var model: ScanModel
+    var body: some View {
+        SegmentSwitch(items: [
+            .init(title: "Folders", isOn: model.destination == .biggestFolders) { model.destination = .biggestFolders },
+            .init(title: "Files", isOn: model.destination == .biggestFiles) { model.destination = .biggestFiles },
+            .init(title: "Forgotten", isOn: model.destination == .forgottenFiles) { model.destination = .forgottenFiles },
+        ])
     }
 }

@@ -93,56 +93,174 @@ struct ForgottenFilesView: View {
         visible.filter { model.multiSelection.contains($0.id) && $0.isReviewable && $0.safety.level != .protected }
     }
 
+    @Environment(\.widthClass) private var widthClass
+
     var body: some View {
-        AdaptiveInspectorSplit(windowWidth: contentWidth, inspectionToken: selectedID.map(String.init), main: mainColumn, inspector: inspectorColumn)
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 12) {
+                header
+                filterRow
+                searchRow
+            }
+            .padding(.horizontal, widthClass.pagePadding)
+            .padding(.top, widthClass == .compact ? 14 : 20)
+            .padding(.bottom, 10)
+            if visible.isEmpty {
+                emptyState
+            } else {
+                VStack(spacing: 0) {
+                    columnHeader
+                    list
+                    footer
+                }
+                .padding(.horizontal, widthClass.pagePadding)
+            }
+            NodeSelectionToolbar(model: model)
+        }
         .background(DiskMapTheme.page)
         .catalogGate(.forgotten, model: model, title: "Finding forgotten files…")
     }
 
-    private var mainColumn: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 18) {
-                PageHeader(eyebrow: "Find", title: "Forgotten Files",
-                           subtitle: "Personal files untouched for a year or more, by last-modified date. App and system data is left out.")
-                FigureStrip(figures: [
-                    Figure(label: "Reviewable", value: ByteFormat.string(summary.reviewableBytes), detail: countLabel(summary.reviewableCount, "file")),
-                    Figure(label: "Likely forgotten", value: ByteFormat.string(summary.likelyBytes), detail: countLabel(summary.likelyCount, "file")),
-                    Figure(label: "Worth reviewing", value: ByteFormat.string(summary.worthBytes), detail: countLabel(summary.worthCount, "file")),
-                ])
-                ageBar
-                KitTabs(tabs: [
-                    .init(id: FilterTab.all, title: "All", count: "\(summary.reviewableCount)"),
-                    .init(id: .likely, title: "Likely forgotten", count: "\(summary.likelyCount)"),
-                    .init(id: .worth, title: "Worth reviewing", count: "\(summary.worthCount)"),
-                    .init(id: .excluded, title: "Excluded", count: "\(summary.excludedCount)"),
-                ], selection: $filterTab)
-                filterBar
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text("Forgotten files").font(DiskMapType.pageTitle).foregroundStyle(DiskMapTheme.ink).fixedSize()
+            Text("\(summary.reviewableCount.formatted()) files · \(ByteFormat.hero(summary.reviewableBytes))")
+                .font(DiskMapType.figure).foregroundStyle(DiskMapTheme.ink).fixedSize()
+            if widthClass != .compact {
+                Text("Your own files, untouched for a year or more. App and system data is left out.")
+                    .font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink3).lineLimit(1).truncationMode(.tail)
             }
-            .padding(.horizontal, 28)
-            .padding(.top, DiskMapSpace.pageTop)
-            .padding(.bottom, 12)
-            Hairline()
-            if visible.isEmpty {
-                emptyState
-            } else {
-                // Only rows that can be cleaned are offered (as with ⌘A).
-                MultiSelectAllBar(model: model, ids: visible.filter(\.isReviewable).map(\.id))
-                list
+            Spacer(minLength: 8)
+            ExploreViewSwitch(model: model)
+        }
+    }
+
+    private var filterRow: some View {
+        HStack(spacing: 8) {
+            ListPageSwitch(model: model).padding(.trailing, 4)
+            ListChip(title: "All", count: summary.reviewableCount, isOn: filterTab == .all) { filterTab = .all }
+            ListChip(title: "Likely forgotten", count: summary.likelyCount, isOn: filterTab == .likely) { filterTab = filterTab == .likely ? .all : .likely }
+            if widthClass != .compact {
+                ListChip(title: "Worth a look", count: summary.worthCount, isOn: filterTab == .worth) { filterTab = filterTab == .worth ? .all : .worth }
             }
-            if !model.multiSelection.isEmpty {
-                SelectionToolbar(
-                    selectedCount: checkedReviewable.count,
-                    selectedBytes: checkedReviewable.reduce(0) { $0 + $1.bytes },
-                    primaryEnabled: !checkedReviewable.isEmpty,
-                    onPrimary: { Task { await stageSelected() } },
-                    onClear: { model.clearMultiSelection() },
-                    onReveal: {
-                        NSWorkspace.shared.activateFileViewerSelecting(checkedReviewable.map { URL(fileURLWithPath: $0.absolutePath) })
-                    },
-                    paths: checkedReviewable.map(\.absolutePath)
-                )
+            ListChip(title: "Over 1 GB", count: nil, isOn: onlyLarge) { onlyLarge.toggle() }
+            if widthClass == .wide {
+                ListChip(title: "Downloads", count: nil, isOn: onlyDownloads) { onlyDownloads.toggle() }
+                ListChip(title: "Media", count: nil, isOn: onlyMedia) { onlyMedia.toggle() }
+            }
+            Spacer(minLength: 8)
+            ListDropdown(label: "Untouched for", options: AgeChoice.all, selection: Binding(
+                get: { AgeChoice(bucket: ageFilter) }, set: { ageFilter = $0.bucket }), title: \.title)
+        }
+    }
+
+    /// The age dropdown's choices: any, or one bucket.
+    struct AgeChoice: Hashable, Identifiable {
+        var bucket: ForgottenAgeBucket?
+        var id: String { bucket?.rawValue ?? "any" }
+        var title: String { bucket?.title ?? "Any age" }
+        static var all: [AgeChoice] { [AgeChoice(bucket: nil)] + ForgottenAgeBucket.allCases.map { AgeChoice(bucket: $0) } }
+    }
+
+    private var searchRow: some View {
+        HStack(spacing: 12) {
+            ListSearchField(text: $query, tokens: [], matchCount: query.isEmpty ? nil : visible.count,
+                            placeholder: "Search forgotten files by name or folder", focused: $searchFocused)
+                .frame(maxWidth: widthClass == .compact ? .infinity : 520)
+            Spacer(minLength: 0)
+            if filterTab != .excluded, summary.excludedCount > 0 {
+                Button("\(summary.excludedCount) left out on purpose") { filterTab = .excluded }
+                    .buttonStyle(.plain).font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink3)
+                    .help("Old files that belong to apps, package managers or macOS. They are never suggested.")
+            } else if filterTab == .excluded {
+                Button("Back to suggestions") { filterTab = .all }.buttonStyle(.plain).font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.accentDeep)
+            }
+            ListDropdown(label: "Sort", options: SortMode.allCases, selection: $sortMode, title: \.title)
+        }
+    }
+
+    @FocusState private var searchFocused: Bool
+    private var columns: ListColumns { ListColumns(widthClass) }
+
+    private var columnHeader: some View {
+        HStack(spacing: 0) {
+            Text("Name").frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 12)
+            Text("Suggestion").frame(width: columns.kind, alignment: .leading)
+            Text(sortMode == .largest ? "Size ↓" : "Size").frame(width: columns.bar + columns.size, alignment: .trailing)
+            Text(sortMode == .oldest ? "Untouched ↓" : "Untouched").frame(width: columns.changed, alignment: .leading).padding(.leading, 24)
+            if columns.showFree { Text("Why").frame(minWidth: columns.free, maxWidth: columns.freeMax, alignment: .leading) }
+            Color.clear.frame(width: columns.add)
+        }
+        .font(DiskMapType.secondary)
+        .foregroundStyle(DiskMapTheme.ink3)
+        .frame(height: 30)
+        .overlay(alignment: .bottom) { Rectangle().fill(DiskMapTheme.ink.opacity(0.85)).frame(height: 1) }
+    }
+
+    private var list: some View {
+        let items = visible
+        let ids = items.map(\.id)
+        let largest = max(1, items.map(\.bytes).max() ?? 1)
+        let staged = Set(model.stagedItems.map { $0.url.standardizedFileURL.path })
+        return ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(items) { c in
+                    let stageable = c.isReviewable && c.safety.level != .protected
+                    ListFileRow(
+                        name: c.name, place: BiggestFilesView.trimmedPlace(relativeParent(of: c.absolutePath, root: rootURL)),
+                        badge: BiggestFilesView.badge(c.name, kind: c.kind), kind: Self.confidenceLabel(c.confidence),
+                        fraction: Double(c.bytes) / Double(largest), bytes: c.bytes,
+                        changed: ForgottenAgeFormat.string(c.ageDays),
+                        note: .plain(Self.why(c.reasons)),
+                        accent: c.confidence == .likelyForgotten,
+                        staged: staged.contains(URL(fileURLWithPath: c.absolutePath).standardizedFileURL.path),
+                        selected: c.id == selectedID || model.multiSelection.contains(c.id), columns: columns,
+                        select: {
+                            selectedID = c.id
+                            model.select(c.id, ordered: ids)
+                        },
+                        add: stageable ? { stageOne(c) } : nil
+                    )
+                    .rowActions(path: c.absolutePath, stage: stageable ? { stageOne(c) } : nil)
+                }
             }
         }
+        .listKeyboard(
+            ids: ids, selection: $selectedID,
+            path: { id in items.first { $0.id == id }?.absolutePath },
+            stage: { id in if let candidate = items.first(where: { $0.id == id }) { stageOne(candidate) } },
+            selectAll: { model.multiSelection = Set(items.filter(\.isReviewable).map(\.id)) },
+            clearSelection: { model.clearMultiSelection() }
+        )
+        .onChange(of: selectedID) { _, id in if let id { model.selectedNode = id } }
+    }
+
+    private var footer: some View {
+        let likely = visible.filter { $0.confidence == .likelyForgotten && $0.isReviewable && $0.safety.level != .protected }
+        let likelyBytes = likely.reduce(Int64(0)) { $0 + $1.bytes }
+        return HStack(spacing: 14) {
+            Text("\(visible.count.formatted()) shown · \(ByteFormat.hero(visible.reduce(0) { $0 + $1.bytes }))").lineLimit(1)
+            Spacer(minLength: 8)
+            if widthClass != .compact {
+                Text("By last-modified date: a file you only open may still look old.")
+                    .font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink3).lineLimit(1)
+            }
+            if !likely.isEmpty {
+                Button("Add \(likely.count) likely forgotten · \(ByteFormat.hero(likelyBytes))") {
+                    Task {
+                        _ = await model.confirmStageMany(likely.map {
+                            CleanupStageRequest(url: URL(fileURLWithPath: $0.absolutePath).standardizedFileURL, size: $0.bytes,
+                                                reason: "Forgotten: " + $0.confidence.title)
+                        }, title: "Forgotten files")
+                    }
+                }
+                .buttonStyle(SecondaryButtonStyle())
+            }
+        }
+        .font(DiskMapType.figure)
+        .foregroundStyle(DiskMapTheme.ink2)
+        .padding(.vertical, 10)
+        .overlay(alignment: .top) { Rectangle().fill(DiskMapTheme.ink.opacity(0.85)).frame(height: 1) }
     }
 
     static func ageTint(_ bucket: ForgottenAgeBucket) -> Color {
@@ -154,120 +272,16 @@ struct ForgottenFilesView: View {
         }
     }
 
-    /// One stacked bar by age; the legend entries filter.
-    private var ageBar: some View {
-        let dist = summary.ageDistribution
-        let total = max(1, ForgottenAgeBucket.allCases.reduce(Int64(0)) { $0 + (dist[$1] ?? 0) })
-        return VStack(alignment: .leading, spacing: 10) {
-            SegmentedStorageBar(segments: ForgottenAgeBucket.allCases.map { bucket in
-                (Self.ageTint(bucket).opacity(ageFilter == nil || ageFilter == bucket ? 1 : 0.3),
-                 Double(dist[bucket] ?? 0) / Double(total))
-            })
-            .accessibilityHidden(true)
-            FlowLayout(spacing: 16) {
-                ForEach(ForgottenAgeBucket.allCases) { bucket in
-                    let bytes = dist[bucket] ?? 0
-                    if bytes > 0 {
-                        let on = ageFilter == bucket
-                        Button { ageFilter = on ? nil : bucket } label: {
-                            HStack(spacing: 6) {
-                                Circle().fill(Self.ageTint(bucket)).frame(width: 7, height: 7)
-                                Text(bucket.title)
-                                    .font(on ? DiskMapType.bodyEmphasis : DiskMapType.secondary)
-                                    .foregroundStyle(on ? DiskMapTheme.ink : DiskMapTheme.ink2)
-                                Text(ByteFormat.string(bytes))
-                                    .font(DiskMapType.figureSmall)
-                                    .foregroundStyle(DiskMapTheme.ink3)
-                            }
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("\(bucket.title), \(ByteFormat.string(bytes))")
-                        .accessibilityAddTraits(on ? .isSelected : [])
-                    }
-                }
-                if ageFilter != nil {
-                    Button("Clear age") { ageFilter = nil }
-                        .buttonStyle(LinkButtonStyle())
-                        .font(DiskMapType.secondary)
-                }
-            }
-        }
-    }
-
-    private var filterBar: some View {
-        HStack(spacing: 10) {
-            DiskMapSearchField(placeholder: "Search forgotten files", text: $query)
-                .frame(maxWidth: 300)
-            HStack(spacing: 2) {
-                Chip(title: "Over 1 GB", isOn: onlyLarge) { onlyLarge.toggle() }
-                Chip(title: "Downloads", isOn: onlyDownloads) { onlyDownloads.toggle() }
-                Chip(title: "Media", isOn: onlyMedia) { onlyMedia.toggle() }
-            }
-            Spacer(minLength: 8)
-            DiskMapMenu(label: "Sort", options: SortMode.allCases, selection: $sortMode, title: { $0.title })
-        }
-    }
-
-    private var list: some View {
-        // Worked out once per draw, not once per row.
-        let items = visible
-        let activeID = active?.id
-        let ids = items.map(\.id)
-        return ScrollView {
-            LazyVStack(spacing: 0) {
-                ForEach(items) { c in
-                    row(c, ordered: ids, activeID: activeID)
-                    RowSeparator(indent: 10 + 14 + 12 + 24 + 12)
-                }
-            }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 4)
-        }
-        .listKeyboard(
-            ids: ids, selection: $selectedID,
-            path: { id in items.first { $0.id == id }?.absolutePath },
-            stage: { id in
-                if let candidate = items.first(where: { $0.id == id }) { stageOne(candidate) }
-            },
-            selectAll: { model.multiSelection = Set(items.filter(\.isReviewable).map(\.id)) },
-            clearSelection: { model.clearMultiSelection() }
-        )
-        .onChange(of: selectedID) { _, id in if let id { model.selectedNode = id } }
-    }
-
-    private func row(_ c: ForgottenCandidate, ordered: [Int32], activeID: Int32?) -> some View {
-        let inMulti = model.multiSelection.contains(c.id)
-        let stageable = c.isReviewable && c.safety.level != .protected
-        return Button {
-            selectedID = c.id
-            model.select(c.id, ordered: ordered)
-        } label: {
-            KitRow(title: c.name, subtitle: relativeParent(of: c.absolutePath, root: rootURL),
-                   selected: c.id == activeID || inMulti, path: c.absolutePath,
-                   onStage: stageable ? { stageOne(c) } : nil) {
-                MultiSelectMark(on: inMulti)
-                FileIdentityIcon(url: URL(fileURLWithPath: c.absolutePath), kind: c.kind, size: 24)
-            } trailing: {
-                SafetyLabel(level: nil, title: Self.confidenceLabel(c.confidence), tint: Self.confidenceTint(c.confidence))
-                    .frame(width: DiskMapType.scaled(128), alignment: .leading)
-                    .help(c.confidence == .oldImportant
-                          ? "Excluded from recommendations because this appears to be app-managed or important data."
-                          : c.confidence.title)
-                MonoColumn(text: ForgottenAgeFormat.short(c.ageDays), width: 74)
-                MonoColumn(text: ByteFormat.string(c.bytes), width: 74, emphasis: true)
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(c.name), \(ByteFormat.string(c.bytes)), \(ForgottenAgeFormat.string(c.ageDays)), \(Self.confidenceLabel(c.confidence))")
-        .rowActions(path: c.absolutePath, stage: stageable ? { stageOne(c) } : nil)
+    /// The Why column: the reasons, without the age (the Untouched column says it).
+    static func why(_ reasons: [String]) -> String {
+        reasons.filter { !$0.lowercased().hasPrefix("not modified") }.joined(separator: " · ")
     }
 
     static func confidenceLabel(_ confidence: ForgottenConfidence) -> String {
         switch confidence {
         case .likelyForgotten: return "Likely forgotten"
-        case .worthReviewing: return "Worth reviewing"
-        case .oldImportant: return "Excluded"
+        case .worthReviewing: return "Worth a look"
+        case .oldImportant: return "Left out"
         }
     }
 
@@ -295,32 +309,6 @@ struct ForgottenFilesView: View {
                               title: filterTab == .excluded ? "No excluded old files" : "No forgotten files found",
                               message: "Try another filter, or clear the search.")
         }
-    }
-
-    private var inspectorColumn: some View {
-        Group {
-            if let c = active {
-                FileInspector(
-                    model: model, tree: tree, rootURL: rootURL, id: c.id, size: c.bytes,
-                    reason: "Forgotten: " + c.confidence.title,
-                    extraFacts: [("Recommendation", c.confidence.title)],
-                    note: (label: "Why it was flagged", text: c.reasons.joined(separator: " · ")),
-                    allowStage: c.isReviewable
-                )
-            } else {
-                DiskMapEmptyState(symbol: "clock", title: "Select a file", message: "Its details and actions appear here.")
-            }
-        }
-        .background(DiskMapTheme.page)
-    }
-
-    private func stageSelected() async {
-        let items = checkedReviewable
-        guard let summary = await model.confirmStageMany(items.map {
-            CleanupStageRequest(url: URL(fileURLWithPath: $0.absolutePath).standardizedFileURL, size: $0.bytes,
-                                reason: "Forgotten: " + $0.confidence.title)
-        }, title: "Forgotten Files") else { return }
-        if summary.added > 0 { model.clearMultiSelection() }
     }
 
     private func stageOne(_ c: ForgottenCandidate) {

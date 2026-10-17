@@ -143,10 +143,7 @@ struct BiggestFilesView: View {
 
     private var filterRow: some View {
         HStack(spacing: 8) {
-            SegmentSwitch(items: [
-                .init(title: "Folders", isOn: false) { model.destination = .biggestFolders },
-                .init(title: "Files", isOn: true) {},
-            ])
+            ListPageSwitch(model: model)
             .padding(.trailing, 4)
             ListChip(title: "All", count: entries.count, isOn: kindFilter == nil) { kindFilter = nil }
             ForEach(shownKinds, id: \.self) { kind in
@@ -376,6 +373,8 @@ struct BiggestFilesView: View {
         /// Violet: "6.01 GB rebuilds by itself", "12 GB can be freed".
         case accent(String)
         case review(String?)
+        /// Quiet words, e.g. why a forgotten file was flagged.
+        case plain(String)
     }
 
     /// The "Can be freed" column: rebuilds by itself, look first (with what to do instead), or nothing.

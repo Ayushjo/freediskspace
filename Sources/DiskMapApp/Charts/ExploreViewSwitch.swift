@@ -5,7 +5,7 @@ import SwiftUI
 struct ExploreViewSwitch: View {
     @ObservedObject var model: ScanModel
 
-    static let listDestinations: Set<AppDestination> = [.biggestFiles, .biggestFolders]
+    static let listDestinations: Set<AppDestination> = [.biggestFiles, .biggestFolders, .forgottenFiles, .find]
     private static let moreModes: [ExploreViewMode] = [.flame, .bubbles, .mindMap, .ageMap]
 
     private var onList: Bool { Self.listDestinations.contains(model.destination) }

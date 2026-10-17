@@ -95,11 +95,37 @@ struct FindView: View {
         return rows.first?.id
     }
 
+    @Environment(\.widthClass) private var widthClass
+    @FocusState private var searchFocused: Bool
+
     var body: some View {
         // One layout whether or not there's a query: switching layouts on the
         // first keystroke rebuilt the field and dropped focus after one letter.
-        AdaptiveInspectorSplit(windowWidth: contentWidth, inspectionToken: selectedID.map(String.init),
-                               main: mainColumn, inspector: inspector)
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 12) {
+                header
+                searchRow
+                chipRow
+                if !trimmedQuery.isEmpty { meaning }
+            }
+            .padding(.horizontal, widthClass.pagePadding)
+            .padding(.top, widthClass == .compact ? 14 : 20)
+            .padding(.bottom, 10)
+            if trimmedQuery.isEmpty {
+                startState
+            } else if rows.isEmpty && !isRunning {
+                DiskMapEmptyState(symbol: "magnifyingglass", title: "Nothing matches",
+                                  message: "Remove a chip or loosen a size or age.")
+            } else {
+                VStack(spacing: 0) {
+                    columnHeader
+                    list
+                    footer
+                }
+                .padding(.horizontal, widthClass.pagePadding)
+            }
+            NodeSelectionToolbar(model: model)
+        }
         .background(DiskMapTheme.page)
         .task(id: runKey) { await run() }
         .task(id: model.scanID) {
@@ -116,104 +142,83 @@ struct FindView: View {
         }
     }
 
-    private var mainColumn: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 14) {
-                PageHeader(eyebrow: "Find", title: "Find",
-                           subtitle: "Type a name, or narrow by size, age, kind and place.") {
-                    if !trimmedQuery.isEmpty {
-                        HeaderSummary(parts: summaryParts)
-                    }
-                }
-                controls
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text("Find").font(DiskMapType.pageTitle).foregroundStyle(DiskMapTheme.ink).fixedSize()
+            if !trimmedQuery.isEmpty {
+                Text(summaryParts.joined(separator: " · ")).font(DiskMapType.figure).foregroundStyle(DiskMapTheme.ink).fixedSize()
+            } else if widthClass != .compact {
+                Text("Type a name, or narrow by size, age, kind and place.")
+                    .font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink3).lineLimit(1)
             }
-            .padding(.horizontal, 28)
-            .padding(.top, DiskMapSpace.pageTop)
-            .padding(.bottom, 12)
-            Hairline()
-            if trimmedQuery.isEmpty {
-                startState
-            } else if rows.isEmpty && !isRunning {
-                DiskMapEmptyState(symbol: "magnifyingglass", title: "Nothing matches",
-                                  message: "Remove a chip or loosen a size or age.")
-            } else {
-                MultiSelectAllBar(model: model, ids: rows.map(\.id))
-                list
-            }
-            NodeSelectionToolbar(model: model)
+            Spacer(minLength: 8)
+            ExploreViewSwitch(model: model)
         }
     }
 
     private var summaryParts: [String] {
         if isRunning && rows.isEmpty { return ["Searching…"] }
         var parts = ["\(matchCount.formatted()) match\(matchCount == 1 ? "" : "es")"]
-        if let matchedBytes, matchCount > 0 { parts.append(ByteFormat.string(matchedBytes)) }
+        if let matchedBytes, matchCount > 0 { parts.append(ByteFormat.hero(matchedBytes)) }
         return parts
     }
 
     // MARK: Controls
 
-    private var controls: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                DiskMapSearchField(placeholder: "Name, or ext:mp4 size>500MB age>1y in:downloads…",
-                                   text: $model.findQuery)
-                    .accessibilityLabel("Find query")
-                DiskMapMenu(label: "Sort", options: FileQuery.Sort.allCases, selection: $model.findSort, title: Self.sortTitle)
-                // TASK-081: keep this query in the sidebar (⌘S).
-                Button("Save…") { savingSearch = true }
-                    .buttonStyle(QuietButtonStyle())
-                    .keyboardShortcut("s", modifiers: .command)
-                    .disabled(trimmedQuery.isEmpty)
-                    .help("Keep this search in the sidebar, with its size kept up to date")
-            }
-            FlowLayout(spacing: 2) {
-                ForEach(Self.chips) { chip in
-                    let on = FileQuery.contains(chip.token, in: model.findQuery)
-                    Chip(title: chip.title, isOn: on) {
-                        if !on { Self.recordChipUse(chip.id) }
-                        model.findQuery = FileQuery.toggling(chip.token, in: model.findQuery)
-                    }
-                    .help(chip.token)
-                    .accessibilityLabel("\(chip.title), adds \(chip.token)")
+    /// Tokens the query understood, shown as violet tags in the field.
+    private var tokens: [String] {
+        model.findQuery.split(whereSeparator: \.isWhitespace).map(String.init)
+            .filter { $0.contains(":") || $0.contains(">") || $0.contains("<") }
+    }
+
+    private var searchRow: some View {
+        HStack(spacing: 10) {
+            ListSearchField(text: $model.findQuery, tokens: tokens, matchCount: trimmedQuery.isEmpty ? nil : matchCount,
+                            placeholder: "Name, or ext:mp4 size>500MB age>1y in:downloads", focused: $searchFocused)
+                .accessibilityLabel("Find query")
+            ListDropdown(label: "Sort", options: FileQuery.Sort.allCases, selection: $model.findSort, title: \.findTitle)
+            // TASK-081: keep this query in the sidebar (⌘S).
+            Button("Save…") { savingSearch = true }
+                .buttonStyle(SecondaryButtonStyle())
+                .keyboardShortcut("s", modifiers: .command)
+                .disabled(trimmedQuery.isEmpty)
+                .help("Keep this search in the sidebar, with its size kept up to date")
+        }
+        .onAppear { searchFocused = true }
+    }
+
+    private var chipRow: some View {
+        HStack(spacing: 8) {
+            ForEach(Self.chips.prefix(widthClass == .compact ? 5 : 7)) { chip in
+                let on = FileQuery.contains(chip.token, in: model.findQuery)
+                ListChip(title: chip.title, count: nil, isOn: on) {
+                    if !on { Self.recordChipUse(chip.id) }
+                    model.findQuery = FileQuery.toggling(chip.token, in: model.findQuery)
                 }
+                .help(chip.token)
+                .accessibilityLabel("\(chip.title), adds \(chip.token)")
             }
-            if !trimmedQuery.isEmpty {
-                meaning
-            }
+            Spacer(minLength: 0)
         }
     }
 
-    static func sortTitle(_ sort: FileQuery.Sort) -> String {
-        switch sort {
-        case .largest: return "Largest"
-        case .oldest: return "Oldest"
-        case .newest: return "Recently modified"
-        }
-    }
+    static func sortTitle(_ sort: FileQuery.Sort) -> String { sort.findTitle }
 
     /// What the query means, in words, plus anything it could not use.
     private var meaning: some View {
         let parsed = self.parsed
         return VStack(alignment: .leading, spacing: 4) {
             Text(parsed.query.describe(home: home).joined(separator: "  ·  "))
-                .font(DiskMapType.figureSmall)
-                .foregroundStyle(DiskMapTheme.ink3)
-                .lineLimit(2)
+                .font(DiskMapType.figureSmall).foregroundStyle(DiskMapTheme.ink3).lineLimit(2)
             ForEach(parsed.problems, id: \.token) { problem in
-                Text("Ignoring \(problem.token) — \(problem.message)")
-                    .font(DiskMapType.secondary)
-                    .foregroundStyle(DiskMapTheme.review)
+                Text("Ignoring \(problem.token) — \(problem.message)").font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.review)
             }
             ForEach(notes, id: \.self) { note in
                 HStack(spacing: 8) {
-                    Text(note)
-                        .font(DiskMapType.secondary)
-                        .foregroundStyle(DiskMapTheme.review)
+                    Text(note).font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.review)
                     if note.hasPrefix("Duplicates") {
-                        Button("Find Duplicates") { model.destination = .duplicates }
-                            .buttonStyle(LinkButtonStyle())
-                            .font(DiskMapType.secondary)
+                        Button("Find duplicates") { model.destination = .duplicates }
+                            .buttonStyle(.plain).font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.accentDeep)
                     }
                 }
             }
@@ -224,77 +229,128 @@ struct FindView: View {
 
     private var startState: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: DiskMapSpace.xl) {
-                VStack(alignment: .leading, spacing: 4) {
-                    SectionHeader(label: "Try")
+            let layout = widthClass == .compact ? AnyLayout(VStackLayout(alignment: .leading, spacing: 16)) : AnyLayout(HStackLayout(alignment: .top, spacing: 16))
+            layout {
+                startCard("Try") {
                     ForEach(Array(Self.examples.enumerated()), id: \.offset) { offset, example in
-                        ExampleRow(query: example, meaning: Self.exampleMeanings[offset]) {
-                            model.findQuery = example
-                        }
+                        ExampleRow(query: example, meaning: Self.exampleMeanings[offset]) { model.findQuery = example }
+                            .overlay(alignment: .top) { if offset > 0 { Rectangle().fill(DiskMapTheme.line).frame(height: 1) } }
                     }
                 }
-                VStack(alignment: .leading, spacing: 10) {
-                    SectionHeader(label: "Keep one in the sidebar")
-                    FlowLayout(spacing: 16) {
-                        ForEach(SavedSearches.starters, id: \.query) { starter in
-                            let saved = model.savedSearches.contains { $0.query == starter.query }
-                            Button {
-                                model.saveSearch(name: starter.name, query: starter.query, sort: .largest)
-                            } label: {
-                                Label(starter.name, systemImage: saved ? "checkmark" : "plus")
+                VStack(spacing: 16) {
+                    startCard("Keys") {
+                        Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 8) {
+                            ForEach(Self.keyReference, id: \.0) { key, detail in
+                                GridRow {
+                                    Text(key).font(DiskMapType.figure).foregroundStyle(DiskMapTheme.ink)
+                                    Text(detail).font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink2)
+                                }
                             }
-                            .buttonStyle(LinkButtonStyle())
-                            .font(DiskMapType.secondary)
-                            .disabled(saved)
-                            .opacity(saved ? 0.5 : 1)
-                            .help(starter.query)
                         }
+                        .padding(16)
                     }
-                }
-                VStack(alignment: .leading, spacing: 8) {
-                    SectionHeader(label: "Keys")
-                    Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 6) {
-                        ForEach(Self.keyReference, id: \.0) { key, detail in
-                            GridRow {
-                                Text(key)
-                                    .font(DiskMapType.figure)
-                                    .foregroundStyle(DiskMapTheme.ink)
-                                Text(detail)
-                                    .font(DiskMapType.secondary)
-                                    .foregroundStyle(DiskMapTheme.ink2)
+                    startCard("Keep one in the sidebar") {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(Array(SavedSearches.starters.enumerated()), id: \.element.query) { index, starter in
+                                let saved = model.savedSearches.contains { $0.query == starter.query }
+                                HStack {
+                                    Text(starter.name).font(DiskMapType.body).foregroundStyle(DiskMapTheme.ink)
+                                    Text(starter.query).font(DiskMapType.figureSmall).foregroundStyle(DiskMapTheme.ink3).lineLimit(1)
+                                    Spacer()
+                                    Button(saved ? "Kept" : "Keep") {
+                                        model.saveSearch(name: starter.name, query: starter.query, sort: .largest)
+                                    }
+                                    .buttonStyle(SecondaryButtonStyle())
+                                    .disabled(saved)
+                                }
+                                .padding(.horizontal, 16).frame(height: 48)
+                                .overlay(alignment: .top) { if index > 0 { Rectangle().fill(DiskMapTheme.line).frame(height: 1) } }
                             }
                         }
                     }
                 }
             }
-            .frame(maxWidth: 640, alignment: .leading)
-            .padding(.horizontal, 28)
-            .padding(.vertical, DiskMapSpace.lg)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, widthClass.pagePadding)
+            .padding(.bottom, widthClass.pagePadding)
         }
+    }
+
+    private func startCard<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(title).font(DiskMapType.cardTitle).foregroundStyle(DiskMapTheme.ink)
+                .padding(.horizontal, 16).frame(height: 44)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .overlay(alignment: .bottom) { Rectangle().fill(DiskMapTheme.line).frame(height: 1) }
+            content()
+        }
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(DiskMapTheme.card))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(DiskMapTheme.line, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
     // MARK: List
 
+    private var columns: ListColumns { ListColumns(widthClass) }
+
+    private var columnHeader: some View {
+        HStack(spacing: 0) {
+            Text("Name").frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 12)
+            Text("Kind").frame(width: columns.kind, alignment: .leading)
+            Text(model.findSort == .largest ? "Size ↓" : "Size").frame(width: columns.bar + columns.size, alignment: .trailing)
+            Text(model.findSort == .largest ? "Last changed" : "Last changed ↓").frame(width: columns.changed, alignment: .leading).padding(.leading, 24)
+            if columns.showFree { Text("Can be freed").frame(minWidth: columns.free, maxWidth: columns.freeMax, alignment: .leading) }
+            Color.clear.frame(width: columns.add)
+        }
+        .font(DiskMapType.secondary)
+        .foregroundStyle(DiskMapTheme.ink3)
+        .frame(height: 30)
+        .overlay(alignment: .bottom) { Rectangle().fill(DiskMapTheme.ink.opacity(0.85)).frame(height: 1) }
+    }
+
     private var list: some View {
         let ids = rows.map(\.id)
+        let index = model.freeableIndex
+        let staged = Set(model.stagedItems.map { $0.url.standardizedFileURL.path })
+        let largest = max(1, rows.map(\.bytes).max() ?? 1)
+        let today = AgeMap.today()
         return ScrollView {
             LazyVStack(spacing: 0) {
-                if matchCount > rows.count {
-                    Text("Showing the first \(rows.count.formatted()) of \(matchCount.formatted()) — narrow the query to see the rest.")
-                        .font(DiskMapType.secondary)
-                        .foregroundStyle(DiskMapTheme.ink3)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                }
                 ForEach(rows) { row in
-                    rowView(row, ordered: ids)
-                    RowSeparator(indent: 10 + 14 + 12 + 24 + 12)
+                    let freeable = index.contains(row.id, tree: tree)
+                    let verdict = StorageClassifier.classify(path: row.absolutePath, isDirectory: row.isDirectory)
+                    let stage = { model.stageRow(path: row.absolutePath, size: row.bytes, reason: "Find: \(trimmedQuery)") }
+                    ListFileRow(
+                        name: row.name, place: BiggestFilesView.trimmedPlace(relativeParent(of: row.absolutePath, root: rootURL)),
+                        badge: row.isDirectory ? "DIR" : BiggestFilesView.badge(row.name, kind: row.kind),
+                        kind: row.isDirectory ? BiggestFoldersView.folderKind(verdict.storageClass) : BiggestFilesView.kindText(row.kind, verdict.storageClass),
+                        fraction: Double(row.bytes) / Double(largest), bytes: row.bytes,
+                        changed: VisualizeView.lastUsed(row.modifiedDay, today: today),
+                        note: BiggestFilesView.freeNote(freeable: freeable, bytes: row.bytes, verdict: verdict),
+                        accent: freeable,
+                        staged: staged.contains(URL(fileURLWithPath: row.absolutePath).standardizedFileURL.path),
+                        selected: row.id == selectedID || model.multiSelection.contains(row.id), columns: columns,
+                        select: {
+                            selectedID = row.id
+                            model.select(row.id, ordered: ids)
+                        },
+                        add: stage,
+                        open: row.isDirectory ? {
+                            model.currentNode = row.id
+                            model.selectedNode = row.id
+                            model.destination = .biggestFolders
+                        } : nil
+                    )
+                    .rowActions(path: row.absolutePath, stage: stage)
+                    .contextMenu {
+                        Button("Show in Explore") {
+                            model.selectedNode = row.id
+                            model.currentNode = row.isDirectory ? row.id : max(0, tree.parent[Int(row.id)])
+                            model.destination = .visualize
+                        }
+                    }
                 }
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 4)
         }
         .listKeyboard(
             ids: ids, selection: $selectedID,
@@ -311,73 +367,22 @@ struct FindView: View {
         .opacity(isRunning ? 0.6 : 1)
     }
 
-    private func rowView(_ row: Row, ordered: [Int32]) -> some View {
-        let inMulti = model.multiSelection.contains(row.id)
-        let stage = { model.stageRow(path: row.absolutePath, size: row.bytes, reason: "Find: \(trimmedQuery)") }
-        return Button {
-            selectedID = row.id
-            model.select(row.id, ordered: ordered)
-        } label: {
-            KitRow(title: row.name, subtitle: relativeParent(of: row.absolutePath, root: rootURL),
-                   selected: row.id == activeSelection || inMulti, path: row.absolutePath, onStage: stage) {
-                MultiSelectMark(on: inMulti)
-                if row.isDirectory {
-                    Image(systemName: "folder")
-                        .font(.system(size: DiskMapType.scaled(14)))
-                        .foregroundStyle(DiskMapTheme.ink2)
-                        .frame(width: 24, height: 24)
-                } else {
-                    FileIdentityIcon(url: URL(fileURLWithPath: row.absolutePath), kind: row.kind, size: 24)
-                }
-            } trailing: {
-                TextColumn(text: row.isDirectory ? "Folder" : row.kind.title, width: 92)
-                MonoColumn(text: RelativeAge.short(day: row.modifiedDay), width: 74)
-                MonoColumn(text: ByteFormat.string(row.bytes), width: 74, emphasis: true)
+    private var footer: some View {
+        HStack(spacing: 14) {
+            Text(matchCount > rows.count
+                 ? "Showing the first \(rows.count.formatted()) of \(matchCount.formatted()) — narrow the query to see the rest."
+                 : "\(rows.count.formatted()) shown" + (matchedBytes.map { " · \(ByteFormat.hero($0))" } ?? ""))
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            if rows.count > 1 {
+                Button("Select all \(rows.count.formatted())") { model.multiSelection = Set(rows.map(\.id)) }
+                    .buttonStyle(SecondaryButtonStyle())
             }
         }
-        .buttonStyle(.plain)
-        .simultaneousGesture(TapGesture(count: 2).onEnded {
-            if row.isDirectory {
-                model.currentNode = row.id
-                model.selectedNode = row.id
-                model.destination = .fileBrowser
-            } else {
-                revealDownloadedFile(row.id, tree: tree, root: rootURL)
-            }
-        })
-        .accessibilityLabel("\(row.name), \(ByteFormat.string(row.bytes)), modified \(RelativeAge.long(day: row.modifiedDay))")
-        .rowActions(path: row.absolutePath, stage: stage)
-        .contextMenu {
-            Button("Show in Visualize") {
-                model.selectedNode = row.id
-                model.currentNode = row.isDirectory ? row.id : max(0, tree.parent[Int(row.id)])
-                model.destination = .visualize
-            }
-            Button("Show in File Browser") {
-                model.currentNode = row.isDirectory ? row.id : max(0, tree.parent[Int(row.id)])
-                model.selectedNode = row.id
-                model.destination = .fileBrowser
-            }
-        }
-    }
-
-    private var inspector: some View {
-        Group {
-            if let id = activeSelection, let row = rows.first(where: { $0.id == id }) {
-                if row.isDirectory {
-                    FolderInspector(model: model, tree: tree, rootURL: rootURL, id: id, reason: "Find: \(trimmedQuery)")
-                } else {
-                    FileInspector(model: model, tree: tree, rootURL: rootURL, id: id, size: row.bytes,
-                                  reason: "Find: \(trimmedQuery)")
-                }
-            } else if trimmedQuery.isEmpty {
-                DiskMapEmptyState(symbol: "magnifyingglass", title: "Search the scan",
-                                  message: "Type a name, or try an example. Results and their details appear here.")
-            } else {
-                DiskMapEmptyState(symbol: "magnifyingglass", title: "Select a result", message: "Its details and actions appear here.")
-            }
-        }
-        .background(DiskMapTheme.page)
+        .font(DiskMapType.figure)
+        .foregroundStyle(DiskMapTheme.ink2)
+        .padding(.vertical, 10)
+        .overlay(alignment: .top) { Rectangle().fill(DiskMapTheme.ink.opacity(0.85)).frame(height: 1) }
     }
 
     static func relativeModified(_ day: Int32) -> String { RelativeAge.long(day: day) }
@@ -498,14 +503,28 @@ private struct ExampleRow: View {
                     .font(.system(size: DiskMapType.scaled(10), weight: .semibold))
                     .foregroundStyle(hovering ? DiskMapTheme.accent : .clear)
             }
-            .padding(.horizontal, 10)
-            .frame(height: DiskMapSpace.row)
-            .background(RowBackground(selected: false, hovering: hovering))
+            .padding(.horizontal, 16)
+            .frame(height: 46)
+            .background(hovering ? DiskMapTheme.soft.opacity(0.6) : Color.clear)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .padding(.horizontal, -10)
         .accessibilityLabel("\(meaning): \(query)")
     }
+}
+
+extension FileQuery.Sort {
+    /// Find's sort menu.
+    var findTitle: String {
+        switch self {
+        case .largest: return "Largest"
+        case .oldest: return "Oldest"
+        case .newest: return "Recently changed"
+        }
+    }
+}
+
+extension FileQuery.Sort: Identifiable {
+    public var id: String { rawValue }
 }

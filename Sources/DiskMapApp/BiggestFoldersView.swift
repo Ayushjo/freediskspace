@@ -109,10 +109,7 @@ struct BiggestFoldersView: View {
 
     private var filterRow: some View {
         HStack(spacing: 8) {
-            SegmentSwitch(items: [
-                .init(title: "Folders", isOn: true) {},
-                .init(title: "Files", isOn: false) { model.destination = .biggestFiles },
-            ])
+            ListPageSwitch(model: model)
             .padding(.trailing, 4)
             Button(action: goBack) { Label("Up", systemImage: "chevron.left") }
                 .buttonStyle(IconButtonStyle())
