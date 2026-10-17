@@ -61,12 +61,13 @@ enum SnapshotHarness {
         // Optional mid-scan frame: `--snapshot-at 3` captures 3 s after launch.
         if let at = value(after: "--snapshot-at").flatMap(Double.init),
            let window = mainWindow() {
-            window.setContentSize(NSSize(width: 1280, height: 820))
+            window.setContentSize(snapshotSize())
             try? await Task.sleep(nanoseconds: UInt64(at * 1_000_000_000))
             write(window: window, to: dir.appendingPathComponent("scanning-\(appearanceName).png"))
         }
         // Wait for the launch scan (--scan) to finish, up to two minutes.
-        for _ in 0..<1_200 {
+        // No --scan: render the first-launch screen straight away.
+        for _ in 0..<1_200 where arguments.contains("--scan") {
             if model.tree != nil && !model.isScanning { break }
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
