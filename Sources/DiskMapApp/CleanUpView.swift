@@ -19,6 +19,15 @@ struct CleanUpView: View {
     enum CleanGroup: Int, CaseIterable, Identifiable {
         case rebuilds, reviewFirst, downloads, media
         var id: Int { rawValue }
+        /// The page with the full, filterable list behind this group.
+        var detailPage: AppDestination? {
+            switch self {
+            case .rebuilds: return .cleanCaches
+            case .reviewFirst: return nil
+            case .downloads: return .cleanDownloads
+            case .media: return .cleanMedia
+            }
+        }
         var title: String {
             switch self {
             case .rebuilds: return "Rebuilds by itself"
@@ -223,6 +232,11 @@ struct CleanUpView: View {
                 Text(group.title).font(.system(size: DiskMapType.scaled(15.5), weight: .semibold)).foregroundStyle(DiskMapTheme.ink)
                 Text(group.subtitle).font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink2).lineLimit(1)
                 Spacer(minLength: 8)
+                if let page = group.detailPage {
+                    Button("See every one →") { model.destination = page }
+                        .buttonStyle(.plain).font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.accentDeep)
+                        .help("The full list, with filters")
+                }
                 Text(ByteFormat.string(total)).font(.system(size: DiskMapType.scaled(13.5), weight: .semibold, design: .monospaced)).foregroundStyle(DiskMapTheme.ink)
             }
             .padding(.top, 22)
