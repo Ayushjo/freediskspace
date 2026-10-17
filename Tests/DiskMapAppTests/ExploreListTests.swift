@@ -118,3 +118,20 @@ struct ExploreListFolderTests {
         #expect(BiggestFoldersView.folderNote(contained: false, freeBytes: 0, size: 1, verdict: plain) == .none)
     }
 }
+
+@Suite("Find anything")
+struct FindAnythingTests {
+    @Test func paletteShowsTheRealShortcuts() {
+        #expect(CommandPalette.shortcut(for: .overview) == "⌘1")
+        #expect(CommandPalette.shortcut(for: .cleanSafe) == "⌘2")
+        #expect(CommandPalette.shortcut(for: .biggestFiles) == nil, "pages outside the sidebar have no number")
+    }
+
+    @Test func matchesAreMarkedAndPathsAreTheParent() {
+        let marked = CommandPalette.highlight("com.docker.docker", query: "dock")
+        let runs = marked.runs.filter { $0.foregroundColor != nil }
+        #expect(runs.count == 2, "every occurrence is marked")
+        #expect(CommandPalette.highlight("Docker", query: "size>1GB").runs.allSatisfy { $0.foregroundColor == nil }, "query tokens are not words")
+        #expect(CommandPalette.parentPath("~/Library/Containers/com.docker.docker") == "~/Library/Containers")
+    }
+}

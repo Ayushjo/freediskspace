@@ -355,9 +355,19 @@ struct BiggestFilesView: View {
         }
     }
 
+    /// "Disk image", "Video": the type in sentence case.
+    static func kindName(_ kind: FileKind) -> String {
+        switch kind {
+        case .diskImage: return "Disk image"
+        case .virtualDisk: return "Virtual disk"
+        case .deviceBackup: return "Device backup"
+        default: return kind.title
+        }
+    }
+
     /// The Kind column: the file type, or the storage class when the type says nothing.
     static func kindText(_ kind: FileKind, _ storageClass: StorageClass) -> String {
-        if kind != .other { return kind == .diskImage ? "Disk image" : kind == .virtualDisk ? "Virtual disk" : kind == .deviceBackup ? "Device backup" : kind.title }
+        if kind != .other { return kindName(kind) }
         return storageClass.id == "other" ? "File" : storageClass.title
     }
 

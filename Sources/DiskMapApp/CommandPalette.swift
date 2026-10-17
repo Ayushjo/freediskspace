@@ -24,7 +24,7 @@ struct CommandPalette: View {
         self.onExplain = onExplain
     }
 
-    private enum Category: String, CaseIterable { case actions = "Actions", files = "Files", folders = "Folders", applications = "Applications" }
+    private enum Category: String, CaseIterable { case folders = "Folders", applications = "Applications", files = "Files", actions = "Actions" }
 
     private struct SearchHit: Identifiable, Sendable {
         var id: Int32 { nodeID }
@@ -57,54 +57,45 @@ struct CommandPalette: View {
         var subtitle: String
         var symbol: String
         var category: Category = .actions
+        /// Right-hand figure or shortcut ("80.2 GB", "⌘R").
+        var trailing: String? = nil
+        var trailingAccent = false
+        /// File hits: the node, for Show in Finder and Add to basket.
+        var hit: SearchHit? = nil
+        var kindTag: String? = nil
         var run: () -> Void
     }
 
     private var commands: [Command] {
+        let safe = model.safeReclaimableBytes
+        let dev = model.cachedDeveloper.summary.totalBytes
         var list: [Command] = [
-            Command(title: "Go to Overview", subtitle: "Home", symbol: "square.grid.2x2") {
-                model.destination = .overview
+            Command(title: safe > 0 ? "Clean up \(ByteFormat.hero(safe))" : "Clean up", subtitle: "Caches and build files that rebuild by themselves",
+                    symbol: "trash", trailing: CommandPalette.shortcut(for: .cleanSafe), trailingAccent: true) { model.destination = .cleanSafe },
+            Command(title: "Open Developer", subtitle: "Xcode, simulators, Docker, node_modules", symbol: "chevron.left.forwardslash.chevron.right",
+                    trailing: dev > 0 ? ByteFormat.hero(dev) : CommandPalette.shortcut(for: .developerStorage)) { model.destination = .developerStorage },
+            Command(title: "Open Explore", subtitle: "Every folder drawn to its size", symbol: "square.grid.2x2") {
+                model.destination = .visualize
             },
-            Command(title: "Find files larger than 1 GB", subtitle: "Biggest Files", symbol: "doc.fill") {
-                model.destination = .biggestFiles
-            },
-            Command(title: "Open Find", subtitle: "ext:mp4 size>500MB age>1y in:downloads", symbol: "magnifyingglass") {
+            Command(title: "Biggest files", subtitle: "Explore · List", symbol: "doc") { model.destination = .biggestFiles },
+            Command(title: "Find with a query", subtitle: "ext:mp4 size>500MB age>1y in:downloads", symbol: "magnifyingglass") {
                 model.destination = .find
             },
-            Command(title: "Show biggest folders", subtitle: "Find", symbol: "folder.fill") {
-                model.destination = .biggestFolders
+            Command(title: "Duplicates", subtitle: "Files with exactly the same contents", symbol: "doc.on.doc") { model.destination = .duplicates },
+            Command(title: "Forgotten files", subtitle: "Not opened in over a year", symbol: "clock") { model.destination = .forgottenFiles },
+            Command(title: "What changed", subtitle: "Compare with a saved scan", symbol: "chart.line.uptrend.xyaxis") { model.destination = .snapshots },
+            Command(title: "History & Put Back", subtitle: "Every cleanup, and the way back", symbol: "clock.arrow.circlepath") {
+                model.destination = .history
             },
-            Command(title: "Show forgotten files", subtitle: "Files not modified in over a year", symbol: "clock") {
-                model.destination = .forgottenFiles
-            },
-            Command(title: "Show duplicates", subtitle: "Find", symbol: "doc.on.doc") {
-                model.destination = .duplicates
-            },
-            Command(title: "Show caches", subtitle: "Clean · review first", symbol: "internaldrive") {
-                model.destination = .cleanCaches
-            },
-            Command(title: "Show developer storage", subtitle: "Explore", symbol: "chevron.left.forwardslash.chevron.right") {
-                model.destination = .developerStorage
-            },
-            Command(title: "Open Visualize", subtitle: "Treemap and charts", symbol: "square.grid.3x3") {
-                model.destination = .visualize
-                model.exploreMode = .treemap
-            },
-            Command(title: "Explain my storage", subtitle: "Structured summary from scan facts", symbol: "sparkles") {
-                onExplain()
-            },
-            Command(title: "Review cleanup", subtitle: "Opens review queue — never deletes directly", symbol: "leaf") {
-                onReviewCleanup()
-            },
-            Command(title: "Scan again", subtitle: "Re-read what changed since the last scan", symbol: "arrow.clockwise") {
-                if let root = model.rootURL {
-                    Task { await model.scan(root) }
-                }
+            Command(title: "Review basket", subtitle: "Opens the review — never deletes directly", symbol: "basket") { onReviewCleanup() },
+            Command(title: "Explain my storage", subtitle: "A summary from this scan", symbol: "sparkles") { onExplain() },
+            Command(title: "Rescan " + (model.rootURL.map { CanonicalPath.displayPath(absolutePath: $0.path) } ?? ""),
+                    subtitle: model.lastScanFinishedAt.map { "Last scan " + RelativeTime.string(since: $0) } ?? "Re-read what changed",
+                    symbol: "arrow.clockwise", trailing: "⌘R") {
+                if let root = model.rootURL { Task { await model.scan(root) } }
             },
             Command(title: "Full rescan", subtitle: "Walk every folder again, ignoring the last scan", symbol: "arrow.clockwise.circle") {
-                if let root = model.rootURL {
-                    Task { await model.scan(root, mode: .full) }
-                }
+                if let root = model.rootURL { Task { await model.scan(root, mode: .full) } }
             },
         ]
         // TASK-081: saved searches are commands too.
@@ -118,11 +109,14 @@ struct CommandPalette: View {
         }
         if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             for hit in searchHits {
+                let kind = hit.isDirectory ? FileKind.other : FileKind.classify(fileName: hit.name, path: hit.path)
                 list.append(Command(
                     title: hit.name,
-                    subtitle: ByteFormat.string(hit.bytes) + " · " + hit.path,
-                    symbol: hit.isApplication ? "app" : (hit.isDirectory ? "folder" : "doc"),
-                    category: hit.isApplication ? .applications : (hit.isDirectory ? .folders : .files)
+                    subtitle: CommandPalette.parentPath(hit.path),
+                    symbol: hit.isApplication ? "square.grid.2x2" : (hit.isDirectory ? "folder" : "doc"),
+                    category: hit.isApplication ? .applications : (hit.isDirectory ? .folders : .files),
+                    trailing: ByteFormat.hero(hit.bytes), hit: hit,
+                    kindTag: kind == .other ? nil : BiggestFilesView.kindName(kind)
                 ) {
                     model.destination = .visualize
                     model.selectedNode = hit.nodeID
@@ -166,16 +160,25 @@ struct CommandPalette: View {
     var body: some View {
         let items = ordered
         let current = items.isEmpty ? nil : items[min(highlighted, items.count - 1)]
+        let resultCount = items.filter { $0.category != .actions }.count
         return VStack(spacing: 0) {
-            HStack(spacing: 10) {
+            HStack(spacing: 12) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: DiskMapType.scaled(13), weight: .medium))
-                    .foregroundStyle(DiskMapTheme.ink3)
+                    .font(.system(size: DiskMapType.scaled(17), weight: .medium))
+                    .foregroundStyle(DiskMapTheme.ink)
                     .accessibilityHidden(true)
-                TextField("Type a command, a file name, or a query like ext:mp4 size>1GB", text: $query)
+                TextField("", text: $query)
                     .textFieldStyle(.plain)
-                    .font(.system(size: DiskMapType.scaled(15)))
+                    .font(.system(size: DiskMapType.scaled(20), weight: .medium))
                     .focused($fieldFocused)
+                    .background(alignment: .leading) {
+                        if query.isEmpty {
+                            Text("Find a folder, a file, or type a command")
+                                .font(.system(size: DiskMapType.scaled(20)))
+                                .foregroundStyle(DiskMapTheme.ink3)
+                                .allowsHitTesting(false)
+                        }
+                    }
                     .onSubmit { if let current { run(current) } }
                     .onKeyPress(.downArrow) {
                         highlighted = min(max(0, items.count - 1), highlighted + 1)
@@ -185,14 +188,24 @@ struct CommandPalette: View {
                         highlighted = max(0, highlighted - 1)
                         return .handled
                     }
-                    .accessibilityLabel("Command palette search")
+                    .onKeyPress(phases: .down) { press in
+                        guard press.modifiers.contains(.command), let hit = current?.hit else { return .ignored }
+                        if press.key == .return { reveal(hit); return .handled }
+                        if press.characters.lowercased() == "b" { addToBasket(hit); return .handled }
+                        return .ignored
+                    }
+                    .accessibilityLabel("Find anything")
+                if !query.trimmingCharacters(in: .whitespaces).isEmpty {
+                    Text(isSearching ? "Searching…" : "\(resultCount) result\(resultCount == 1 ? "" : "s")")
+                        .font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink3)
+                }
                 Button { isPresented = false } label: { Kbd("esc") }
                     .buttonStyle(.plain)
                     .keyboardShortcut(.cancelAction)
-                    .accessibilityLabel("Close command palette")
+                    .accessibilityLabel("Close")
             }
-            .padding(.horizontal, 16)
-            .frame(height: 52)
+            .padding(.horizontal, 22)
+            .frame(height: 64)
             if isStructuredQuery, let problems = parsedQuery?.problems, !problems.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(problems, id: \.token) { problem in
@@ -202,89 +215,65 @@ struct CommandPalette: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 22)
                 .padding(.bottom, 8)
             }
-            Hairline()
+            Rectangle().fill(DiskMapTheme.line).frame(height: 1)
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 1) {
+                    LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(Category.allCases, id: \.self) { category in
                             let section = items.filter { $0.category == category }
                             if !section.isEmpty {
-                                MonoLabel(category.rawValue)
-                                    .padding(.horizontal, 10)
-                                    .padding(.top, 10)
-                                    .padding(.bottom, 4)
-                                ForEach(section) { cmd in
-                                    let on = cmd.id == current?.id
-                                    Button { run(cmd) } label: {
-                                        HStack(spacing: 12) {
-                                            Image(systemName: cmd.symbol)
-                                                .font(.system(size: DiskMapType.scaled(13)))
-                                                .frame(width: 20)
-                                                .foregroundStyle(on ? DiskMapTheme.accent : DiskMapTheme.ink2)
-                                                .accessibilityHidden(true)
-                                            VStack(alignment: .leading, spacing: 1) {
-                                                Text(cmd.title)
-                                                    .font(DiskMapType.bodyEmphasis)
-                                                    .foregroundStyle(DiskMapTheme.ink)
-                                                    .lineLimit(1)
-                                                Text(cmd.subtitle)
-                                                    .font(cmd.category == .actions ? DiskMapType.secondary : DiskMapType.figureSmall)
-                                                    .foregroundStyle(DiskMapTheme.ink3)
-                                                    .lineLimit(1)
-                                                    .truncationMode(.middle)
-                                            }
-                                            Spacer(minLength: 8)
-                                            if on { Kbd("↩") }
-                                        }
-                                        .padding(.horizontal, 10)
-                                        .frame(minHeight: 40)
-                                        .background(RowBackground(selected: on, hovering: false))
-                                        .contentShape(Rectangle())
-                                    }
-                                    .buttonStyle(.plain)
-                                    .id(cmd.id)
-                                    .onHover { if $0, let index = items.firstIndex(where: { $0.id == cmd.id }) { highlighted = index } }
-                                    .accessibilityLabel("\(cmd.title). \(cmd.subtitle)")
-                                    .accessibilityAddTraits(on ? .isSelected : [])
+                                HStack {
+                                    Text(category.rawValue.uppercased())
+                                    Spacer()
+                                    if category != .actions { Text("BY SIZE") }
+                                }
+                                .font(.system(size: DiskMapType.scaled(10.5), weight: .medium, design: .monospaced))
+                                .foregroundStyle(DiskMapTheme.ink3)
+                                .padding(.horizontal, 14)
+                                .padding(.top, 14)
+                                .padding(.bottom, 6)
+                                ForEach(section) { cmd in row(cmd, on: cmd.id == current?.id, items: items) }
+                                if category != Category.allCases.last {
+                                    Rectangle().fill(DiskMapTheme.line).frame(height: 1).padding(.top, 8).padding(.horizontal, -10)
                                 }
                             }
                         }
-                        if isSearching {
-                            ProgressView("Searching this scan…")
-                                .controlSize(.small)
-                                .padding(12)
+                        if isSearching && items.allSatisfy({ $0.category == .actions }) {
+                            ProgressView("Searching this scan…").controlSize(.small).padding(14)
                         }
                     }
-                    .padding(8)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 10)
                 }
                 .onChange(of: highlighted) { _, index in
                     guard items.indices.contains(index) else { return }
                     withAnimation(.easeOut(duration: 0.1)) { proxy.scrollTo(items[index].id) }
                 }
             }
-            Hairline()
-            HStack(spacing: 10) {
-                Kbd("↑↓"); Text("move").font(DiskMapType.figureSmall).foregroundStyle(DiskMapTheme.ink3)
-                Kbd("↩"); Text("run").font(DiskMapType.figureSmall).foregroundStyle(DiskMapTheme.ink3)
+            Rectangle().fill(DiskMapTheme.line).frame(height: 1)
+            HStack(spacing: 8) {
+                Kbd("↑"); Kbd("↓"); hint("move")
+                Kbd("↩"); hint("open")
+                if current?.hit != nil {
+                    Kbd("⌘"); Kbd("↩"); hint("show in Finder")
+                    Kbd("⌘"); Kbd("B"); hint("add to basket")
+                }
                 Spacer()
-                Text("Nothing here deletes — cleanup only opens review")
-                    .font(DiskMapType.figureSmall)
-                    .foregroundStyle(DiskMapTheme.ink3)
-                    .accessibilityLabel("Safety note: destructive actions never run from the command palette")
+                Kbd("esc"); hint("close")
             }
-            .padding(.horizontal, 16)
-            .frame(height: 34)
+            .padding(.horizontal, 22)
+            .frame(height: 46)
         }
-        .frame(width: 560, height: 440)
-        .background(DiskMapTheme.raised)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(DiskMapTheme.line, lineWidth: 1))
-        .shadow(color: .black.opacity(0.18), radius: 30, y: 12)
+        .frame(width: 760, height: 560)
+        .background(DiskMapTheme.card)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(DiskMapTheme.ink.opacity(0.85), lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.black).offset(x: 6, y: 6))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Command palette")
+        .accessibilityLabel("Find anything")
         .task(id: query) { await updateSearch() }
         .onChange(of: query) { _, _ in highlighted = 0 }
         .onAppear {
@@ -297,6 +286,101 @@ struct CommandPalette: View {
                 }
             }
         }
+    }
+
+    private func hint(_ text: String) -> some View {
+        Text(text).font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink2).padding(.trailing, 10)
+    }
+
+    private func row(_ cmd: Command, on: Bool, items: [Command]) -> some View {
+        Button { run(cmd) } label: {
+            HStack(spacing: 14) {
+                Image(systemName: cmd.symbol)
+                    .font(.system(size: DiskMapType.scaled(13)))
+                    .foregroundStyle(DiskMapTheme.ink)
+                    .frame(width: 32, height: 32)
+                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(DiskMapTheme.card))
+                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(DiskMapTheme.line, lineWidth: 1))
+                    .accessibilityHidden(true)
+                Text(Self.highlight(cmd.title, query: cmd.category == .actions ? "" : query))
+                    .font(.system(size: DiskMapType.scaled(15), weight: .medium))
+                    .foregroundStyle(DiskMapTheme.ink)
+                    .lineLimit(1)
+                    .layoutPriority(1)
+                if let tag = cmd.kindTag { BoardTag(text: tag) }
+                Text(cmd.subtitle)
+                    .font(.system(size: DiskMapType.scaled(12), design: .monospaced))
+                    .foregroundStyle(DiskMapTheme.ink3)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 8)
+                if let trailing = cmd.trailing {
+                    Text(trailing).font(.system(size: DiskMapType.scaled(13), weight: .medium, design: .monospaced))
+                        .foregroundStyle(cmd.trailingAccent ? DiskMapTheme.accentDeep : DiskMapTheme.ink)
+                        .fixedSize()
+                }
+                if on {
+                    HStack(spacing: 6) {
+                        Kbd("↩")
+                        Text(cmd.category == .actions ? "RUN" : "OPEN").font(.system(size: DiskMapType.scaled(11), weight: .medium, design: .monospaced))
+                            .foregroundStyle(DiskMapTheme.accentDeep)
+                    }
+                    .fixedSize()
+                }
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 52)
+            .background(on ? DiskMapTheme.accentWash : Color.clear)
+            .overlay(alignment: .leading) { if on { Rectangle().fill(DiskMapTheme.accent).frame(width: 2) } }
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .id(cmd.id)
+        .onHover { if $0, let index = items.firstIndex(where: { $0.id == cmd.id }) { highlighted = index } }
+        .accessibilityLabel("\(cmd.title). \(cmd.subtitle)\(cmd.trailing.map { ". " + $0 } ?? "")")
+        .accessibilityAddTraits(on ? .isSelected : [])
+    }
+
+    private func reveal(_ hit: SearchHit) {
+        guard let tree = model.tree, let root = model.rootURL else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([tree.path(of: hit.nodeID, root: root)])
+    }
+
+    /// Stages one item through the same single-item checks as everywhere else.
+    private func addToBasket(_ hit: SearchHit) {
+        guard let tree = model.tree, let root = model.rootURL else { return }
+        model.stageRow(path: tree.path(of: hit.nodeID, root: root).path, size: hit.bytes, reason: "Find: " + hit.name)
+    }
+
+    /// "⌘2": the Go menu's shortcut for a page, if it has one.
+    static func shortcut(for destination: AppDestination) -> String? {
+        KeyboardCommands.numberedDestinations.firstIndex(of: destination).map { "⌘\($0 + 1)" }
+    }
+
+    /// The folder a hit sits in ("~/Library/Containers").
+    static func parentPath(_ displayPath: String) -> String {
+        let parent = (displayPath as NSString).deletingLastPathComponent
+        return parent.isEmpty ? displayPath : parent
+    }
+
+    /// The name with every typed word marked.
+    static func highlight(_ text: String, query: String) -> AttributedString {
+        var result = AttributedString(text)
+        let words = query.lowercased().split(whereSeparator: \.isWhitespace).map(String.init).filter { !$0.contains(":") && !$0.contains(">") && !$0.contains("<") }
+        let lower = text.lowercased()
+        for word in words where !word.isEmpty {
+            var search = lower.startIndex
+            while let range = lower.range(of: word, range: search..<lower.endIndex) {
+                if let low = AttributedString.Index(range.lowerBound, within: result),
+                   let high = AttributedString.Index(range.upperBound, within: result) {
+                    result[low..<high].backgroundColor = DiskMapTheme.accentWash
+                    result[low..<high].foregroundColor = DiskMapTheme.accentDeep
+                }
+                search = range.upperBound
+            }
+        }
+        return result
     }
 
     @MainActor
