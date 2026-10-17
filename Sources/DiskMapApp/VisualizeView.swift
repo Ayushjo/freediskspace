@@ -116,50 +116,7 @@ struct VisualizeView: View {
         .buttonStyle(IconButtonStyle())
     }
 
-    /// Map | Rings | List, with the other views one click further.
-    private var modePicker: some View {
-        HStack(spacing: 8) {
-            HStack(spacing: 2) {
-                segment("Map", on: model.exploreMode == .treemap) { model.exploreMode = .treemap }
-                segment("Rings", on: model.exploreMode == .sunburst) { model.exploreMode = .sunburst }
-                segment("List", on: false) { model.destination = .biggestFiles }
-            }
-            .padding(2)
-            .fixedSize()
-            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(DiskMapTheme.soft))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(DiskMapTheme.line, lineWidth: 1))
-            Menu {
-                ForEach([ExploreViewMode.flame, .bubbles, .mindMap, .ageMap]) { mode in
-                    Button { model.exploreMode = mode } label: {
-                        if model.exploreMode == mode { Label(mode.rawValue, systemImage: "checkmark") } else { Text(mode.rawValue) }
-                    }
-                }
-            } label: {
-                Text([.flame, .bubbles, .mindMap, .ageMap].contains(model.exploreMode) ? model.exploreMode.rawValue : "More")
-                    .font(DiskMapType.bodyEmphasis)
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .help("Flame, Bubbles, Mind Map and Age Map")
-        }
-        .padding(.trailing, 6)
-    }
-
-    private func segment(_ title: String, on: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(DiskMapType.bodyEmphasis)
-                .lineLimit(1)
-                .foregroundStyle(on ? DiskMapTheme.ink : DiskMapTheme.ink2)
-                .padding(.horizontal, 11)
-                .frame(height: 24)
-                .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(on ? DiskMapTheme.segmentOn : .clear)
-                    .shadow(color: .black.opacity(on ? 0.06 : 0), radius: 1, y: 1))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(on ? .isSelected : [])
-    }
+    private var modePicker: some View { ExploreViewSwitch(model: model).padding(.trailing, 6) }
 
     private func titleRow(tree: FileTree) -> some View {
         let freeBytes = model.freeableIndex.bytes(under: currentID, tree: tree, totals: totals)

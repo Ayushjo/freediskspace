@@ -259,3 +259,37 @@ enum RelativeTime {
         return days == 1 ? "yesterday" : "\(days) days ago"
     }
 }
+
+/// A small segmented switch ("Map | Rings | List", "Folders | Files").
+struct SegmentSwitch: View {
+    struct Item: Identifiable {
+        var title: String
+        var isOn: Bool
+        var action: () -> Void
+        var id: String { title }
+    }
+    var items: [Item]
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(items) { item in
+                Button(action: item.action) {
+                    Text(item.title)
+                        .font(DiskMapType.bodyEmphasis)
+                        .lineLimit(1)
+                        .foregroundStyle(item.isOn ? DiskMapTheme.ink : DiskMapTheme.ink2)
+                        .padding(.horizontal, 11)
+                        .frame(height: 24)
+                        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(item.isOn ? DiskMapTheme.segmentOn : .clear)
+                            .shadow(color: .black.opacity(item.isOn ? 0.06 : 0), radius: 1, y: 1))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(item.isOn ? .isSelected : [])
+            }
+        }
+        .padding(2)
+        .fixedSize()
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(DiskMapTheme.soft))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(DiskMapTheme.line, lineWidth: 1))
+    }
+}
