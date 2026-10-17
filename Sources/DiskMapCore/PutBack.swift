@@ -99,3 +99,96 @@ extension CleanupQueue {
         return report
     }
 }
+
+/// Every cleanup freedisk.space made, newest first, numbered, with what was
+/// put back since (redesign board 10). Only a record of moves to the Trash:
+/// nothing here deletes, and Put Back still goes through `CleanupQueue.putBack`.
+public struct CleanupHistory: Codable, Sendable, Equatable {
+    public struct Entry: Codable, Sendable, Equatable, Identifiable {
+        public var number: Int
+        public var record: CleanupRecord
+        /// Trashed paths of the items already put back.
+        public var restored: [String]
+
+        public var id: Int { number }
+
+        public init(number: Int, record: CleanupRecord, restored: [String] = []) {
+            self.number = number
+            self.record = record
+            self.restored = restored
+        }
+    }
+
+    /// Where an item is now.
+    public enum ItemState: Sendable, Equatable {
+        case inTrash, putBack, trashEmptied
+    }
+
+    public var entries: [Entry]
+
+    public init(entries: [Entry] = []) { self.entries = entries }
+
+    /// Kept to a few hundred cleanups; the oldest drop off.
+    public static let limit = 300
+
+    public static func defaultURL() -> URL {
+        CleanupRecord.defaultURL().deletingLastPathComponent().appendingPathComponent("cleanup-history.json")
+    }
+
+    public static func load(from url: URL) -> CleanupHistory? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try? decoder.decode(CleanupHistory.self, from: data)
+    }
+
+    public func save(to url: URL) throws {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(self).write(to: url, options: .atomic)
+    }
+
+    /// Adds a cleanup at the top with the next number. Empty records are not history.
+    public mutating func append(_ record: CleanupRecord) {
+        guard !record.items.isEmpty else { return }
+        let next = (entries.map(\.number).max() ?? 0) + 1
+        entries.insert(Entry(number: next, record: record), at: 0)
+        if entries.count > Self.limit { entries.removeLast(entries.count - Self.limit) }
+    }
+
+    /// Notes items that came back, so they read "Put back" from now on.
+    public mutating func markRestored(_ items: [CleanupRecord.Item], in number: Int) {
+        guard let index = entries.firstIndex(where: { $0.number == number }) else { return }
+        let new = items.map(\.trashedPath).filter { !entries[index].restored.contains($0) }
+        entries[index].restored.append(contentsOf: new)
+    }
+
+    /// Put back wins; otherwise the Trash copy decides.
+    public static func state(of item: CleanupRecord.Item, in entry: Entry, existsInTrash: (String) -> Bool) -> ItemState {
+        if entry.restored.contains(item.trashedPath) { return .putBack }
+        return existsInTrash(item.trashedPath) ? .inTrash : .trashEmptied
+    }
+
+    /// Bytes moved to the Trash and not put back, over every cleanup.
+    public var freedBytes: Int64 {
+        entries.reduce(0) { total, entry in
+            total + entry.record.items.filter { !entry.restored.contains($0.trashedPath) }.reduce(0) { $0 + $1.bytes }
+        }
+    }
+
+    /// Bytes still in the Trash that Put Back can return.
+    public func bytesInTrash(existsInTrash: (String) -> Bool) -> Int64 {
+        entries.reduce(0) { total, entry in
+            total + entry.record.items.filter { Self.state(of: $0, in: entry, existsInTrash: existsInTrash) == .inTrash }
+                .reduce(0) { $0 + $1.bytes }
+        }
+    }
+
+    /// The first run after updating: the one cleanup the app already knew about.
+    public static func seeded(from last: CleanupRecord?) -> CleanupHistory {
+        var history = CleanupHistory()
+        if let last { history.append(last) }
+        return history
+    }
+}

@@ -109,6 +109,12 @@ enum SnapshotHarness {
            let tree = model.tree, let root = model.rootURL {
             try? seedHistory(tree: tree, root: root, count: count, into: dir)
         }
+        // `--seed-cleanups <dir>`: an in-memory history of five cleanups for
+        // History & Put Back. Items "in the Trash" are small real files under
+        // <dir>; the rest point nowhere, so they read as emptied. Never saved.
+        if let dir = value(after: "--seed-cleanups") {
+            model.cleanupHistory = seedCleanups(in: URL(fileURLWithPath: dir, isDirectory: true))
+        }
         // `--size-basis logical`: show logical sizes (demo trees use sparse
         // files, which report their size but allocate almost nothing).
         if value(after: "--size-basis") == "logical" {
@@ -461,6 +467,33 @@ enum SnapshotHarness {
             let meta = SnapshotMeta(name: SnapshotMeta.defaultName(for: date), scannedBytes: total)
             _ = try SnapshotStore.save(DiskSnapshot(rootPath: root.path, capturedAt: date, tree: copy), meta: meta, in: dir)
         }
+    }
+
+    static func seedCleanups(in dir: URL) -> CleanupHistory {
+        let trash = dir.appendingPathComponent("Trash", isDirectory: true)
+        try? FileManager.default.createDirectory(at: trash, withIntermediateDirectories: true)
+        let home = NSHomeDirectory()
+        func item(_ original: String, _ gb: Double, inTrash: Bool) -> CleanupRecord.Item {
+            let name = (original as NSString).lastPathComponent
+            let trashed = trash.appendingPathComponent(inTrash ? name : "emptied-" + name)
+            if inTrash { FileManager.default.createFile(atPath: trashed.path, contents: Data("fixture".utf8)) }
+            return .init(originalPath: home + "/" + original, trashedPath: trashed.path, bytes: Int64(gb * 1e9))
+        }
+        let day: TimeInterval = 86_400
+        let now = Date()
+        let cleanups: [(TimeInterval, [CleanupRecord.Item])] = [
+            (-44 * day, [item("Library/Caches/old-a", 2.1, inTrash: false), item("Downloads/old.dmg", 4.1, inTrash: false)]),
+            (-29 * day, [item("Library/Caches/com.old.b", 3.0, inTrash: false), item("Movies/Export/render.mov", 5.1, inTrash: false)]),
+            (-15 * day, [item("Downloads/installers.zip", 9.4, inTrash: false)]),
+            (-3 * day, [item("Downloads/AirDrop", 5.5, inTrash: true), item("Projects/site/node_modules", 3.6, inTrash: false),
+                        item("Library/Caches/Homebrew", 2.4, inTrash: false), item("Pictures/Export", 0.5, inTrash: true)]),
+            (-2 * 3_600, [item("Library/Developer/Xcode/DerivedData", 12.1, inTrash: true),
+                          item("Library/Developer/CoreSimulator/Devices", 10.4, inTrash: true),
+                          item("Library/Caches/com.spotify.client", 5.6, inTrash: true)]),
+        ]
+        var history = CleanupHistory()
+        for (offset, items) in cleanups { history.append(CleanupRecord(date: now.addingTimeInterval(offset), items: items)) }
+        return history
     }
 
     /// `--tab projects`: the tab a page with tabs opens on (Developer for now).

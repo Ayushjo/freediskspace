@@ -84,6 +84,11 @@ final class ScanModel: ObservableObject {
         if recordsLastScan, let record = CleanupRecord.load(from: CleanupRecord.defaultURL()), !record.items.isEmpty {
             lastCleanup = record
         }
+        // Every cleanup, for History & Put Back; the first run after updating
+        // starts from the one cleanup the app already remembered.
+        if recordsLastScan {
+            cleanupHistory = CleanupHistory.load(from: CleanupHistory.defaultURL()) ?? CleanupHistory.seeded(from: lastCleanup)
+        }
         if recordsLastScan {
             savedSearches = SavedSearches.decode(UserDefaults.standard.string(forKey: Self.savedSearchesKey))
         }
@@ -91,6 +96,40 @@ final class ScanModel: ObservableObject {
 
     /// What the last Move to Trash moved, and where to, for Put Back (TASK-080).
     @Published var lastCleanup: CleanupRecord?
+
+    /// Every cleanup and what has been put back since (History & Put Back).
+    @Published var cleanupHistory = CleanupHistory()
+
+    private func persistHistory() {
+        guard recordsLastScan else { return }
+        do { try cleanupHistory.save(to: CleanupHistory.defaultURL()) } catch {
+            ScanModel.appendLog("cleanup history write failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Puts some items of one cleanup back from the Trash, with the same rules
+    /// as Put Back for the last cleanup: skipped, with the reason, when they
+    /// are gone from the Trash or something new sits at the old path.
+    func putBack(_ items: [CleanupRecord.Item], fromCleanup number: Int) async {
+        guard !items.isEmpty, let entry = cleanupHistory.entries.first(where: { $0.number == number }) else { return }
+        let record = CleanupRecord(date: entry.record.date, items: items)
+        let report = await Task.detached(priority: .userInitiated) { CleanupQueue.putBack(record) }.value
+        cleanupHistory.markRestored(report.restored, in: number)
+        persistHistory()
+        // The last cleanup's Put Back no longer offers what came back.
+        if let last = lastCleanup, last.date == entry.record.date {
+            let back = Set(report.restored.map(\.trashedPath))
+            let rest = last.items.filter { !back.contains($0.trashedPath) }
+            lastCleanup = rest.isEmpty ? nil : CleanupRecord(date: last.date, items: rest)
+            persistLastCleanup()
+        }
+        showToast(report.skipped.isEmpty
+                  ? "Put back \(report.restored.count) item\(report.restored.count == 1 ? "" : "s")"
+                  : "Put back \(report.restored.count) of \(items.count) — \(report.skipped.first?.reason ?? "")")
+        if !report.restored.isEmpty, let root = rootURL, !isScanning {
+            await scan(root, mode: .quick)
+        }
+    }
 
     /// Find queries kept in the sidebar, and their live totals (TASK-081).
     @Published var savedSearches: [SavedSearch] = []
@@ -113,6 +152,10 @@ final class ScanModel: ObservableObject {
         let report = await Task.detached(priority: .userInitiated) { CleanupQueue.putBack(record) }.value
         lastCleanup = nil
         persistLastCleanup()
+        if let entry = cleanupHistory.entries.first(where: { $0.record.date == record.date }) {
+            cleanupHistory.markRestored(report.restored, in: entry.number)
+            persistHistory()
+        }
         let total = record.items.count
         showToast(report.skipped.isEmpty
                   ? "Put back \(report.restored.count) item\(report.restored.count == 1 ? "" : "s")"
@@ -876,6 +919,8 @@ final class ScanModel: ObservableObject {
         if !record.items.isEmpty {
             lastCleanup = record
             persistLastCleanup()
+            cleanupHistory.append(record)
+            persistHistory()
         }
         let log = CleanupPreflight.logEntries(from: report)
         lastCommitLines = log.map { entry in
