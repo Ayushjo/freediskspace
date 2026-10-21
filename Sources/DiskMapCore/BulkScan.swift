@@ -28,6 +28,18 @@ public enum SharingMode: String, Sendable, CaseIterable {
 }
 
 enum BulkScan {
+    /// The allocated size the tree records for one entry. Some volumes
+    /// report 0 allocated bytes for a non-empty file; the logical size is
+    /// used then and the entry is marked estimated (TASK-082). A dataless
+    /// (evicted iCloud / File Provider) file truly takes 0 bytes here, so it
+    /// keeps 0: before 2026-10-21 it fell into that fallback and every
+    /// cloud-only file counted its full cloud size as "on disk".
+    static func recordedAllocation(logical: Int64, allocated: Int64, isDirectory: Bool,
+                                   dataless: Bool) -> (allocated: Int64, estimated: Bool) {
+        if isDirectory || dataless || allocated > 0 { return (max(0, allocated), false) }
+        return (logical, logical > 0)
+    }
+
     struct Result: Sendable {
         var tree: FileTree
         var itemCount: Int
@@ -371,6 +383,8 @@ enum BulkScan {
                 logical = firstSize
                 allocated = secondSize
             }
+            let recorded = BulkScan.recordedAllocation(logical: logical, allocated: allocated,
+                                                   isDirectory: isDirectory, dataless: dataless)
             let start = names.count
             names.append(contentsOf: rawName)
             entries.append(Entry(
@@ -379,8 +393,8 @@ enum BulkScan {
                 include: !isLink,
                 isDirectory: isDirectory,
                 logical: logical,
-                allocated: allocated > 0 ? allocated : logical,
-                allocatedEstimated: !isDirectory && allocated <= 0 && logical > 0,
+                allocated: recorded.allocated,
+                allocatedEstimated: recorded.estimated,
                 day: dayFromEpochSeconds(modified),
                 createdDay: dayFromEpochSeconds(created),
                 notDownloaded: dataless,
