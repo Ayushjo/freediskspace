@@ -186,7 +186,14 @@ public enum AppLeftoverFinder {
         return item == name || fileSuffixes.contains { item == name + "." + $0 }
     }
 
+    /// On-disk size of a file or a folder's contents. A plain file used to
+    /// come back as 0 (the enumerator yields nothing for a non-directory),
+    /// so every .plist leftover showed 0 bytes.
     public static func allocatedSize(of url: URL) -> Int64 {
+        let keys: Set<URLResourceKey> = [.isDirectoryKey, .totalFileAllocatedSizeKey, .fileAllocatedSizeKey]
+        if let values = try? url.resourceValues(forKeys: keys), values.isDirectory != true {
+            return Int64(values.totalFileAllocatedSize ?? values.fileAllocatedSize ?? 0)
+        }
         guard let enumerator = FileManager.default.enumerator(
             at: url, includingPropertiesForKeys: [.totalFileAllocatedSizeKey]
         ) else { return 0 }

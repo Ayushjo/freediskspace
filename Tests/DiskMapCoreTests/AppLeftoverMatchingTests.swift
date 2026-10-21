@@ -58,4 +58,19 @@ struct AppLeftoverMatchingTests {
         #expect(!matches("Obsidian Helper", nil, name: "Obsidian"))
         #expect(!matches("Mail", nil, name: "Mail"))
     }
+
+    /// A single-file leftover (a .plist) has a real size, not 0.
+    @Test func singleFileLeftoverHasItsSize() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("leftover-size-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let plist = dir.appendingPathComponent("com.example.app.plist")
+        try Data(repeating: 7, count: 40_000).write(to: plist)
+        let folder = dir.appendingPathComponent("com.example.app")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try Data(repeating: 7, count: 40_000).write(to: folder.appendingPathComponent("a.bin"))
+        #expect(AppLeftoverFinder.allocatedSize(of: plist) >= 40_000)
+        #expect(AppLeftoverFinder.allocatedSize(of: folder) >= 40_000)
+        #expect(AppLeftoverFinder.allocatedSize(of: dir.appendingPathComponent("missing")) == 0)
+    }
 }
