@@ -285,15 +285,29 @@ public sealed class ScanEngine
     /// <summary>
     /// FILE_ATTRIBUTE_* → the decide() inputs. Shared by both scanners.
     /// </summary>
+    /// <param name="fromDirectoryEnumeration">
+    /// True when the attributes came from a directory listing (FindFirstFile
+    /// and friends). The MFT scanner reads NTFS's on-disk
+    /// $STANDARD_INFORMATION flags instead, where 0x40000 is
+    /// FILE_ATTRIBUTE_EA ("has extended attributes", common on files WSL
+    /// touched), not RECALL_ON_OPEN — Microsoft documents RECALL_ON_OPEN as
+    /// appearing only in directory enumeration classes. Treating it as cloud
+    /// there marked EA files "not downloaded" and skipped EA folders.
+    /// </param>
     internal static ItemDecision DecideFromAttributes(
-        uint attributes, long logicalSize, long allocatedSize)
+        uint attributes, long logicalSize, long allocatedSize, bool fromDirectoryEnumeration = true)
     {
         bool isDir = (attributes & Win32.FILE_ATTRIBUTE_DIRECTORY) != 0;
         bool isReparse = (attributes & Win32.FILE_ATTRIBUTE_REPARSE_POINT) != 0;
-        bool isCloud = (attributes & (Win32.FILE_ATTRIBUTE_OFFLINE
-            | Win32.FILE_ATTRIBUTE_RECALL_ON_OPEN
-            | Win32.FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS)) != 0;
-        return Decide(isDir, isReparse, isCloud, logicalSize, allocatedSize);
+        return Decide(isDir, isReparse, IsCloudPlaceholder(attributes, fromDirectoryEnumeration), logicalSize, allocatedSize);
+    }
+
+    /// <summary>OneDrive / cloud-files placeholder bits, read the same way by every scan path.</summary>
+    internal static bool IsCloudPlaceholder(uint attributes, bool fromDirectoryEnumeration)
+    {
+        uint mask = Win32.FILE_ATTRIBUTE_OFFLINE | Win32.FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS;
+        if (fromDirectoryEnumeration) mask |= Win32.FILE_ATTRIBUTE_RECALL_ON_OPEN;
+        return (attributes & mask) != 0;
     }
 
     private static void LogSummary(Result result)
