@@ -186,6 +186,50 @@ struct DeveloperCatalogTests {
         #expect(hit?.safety.level == .safe)
     }
 
+    /// ~/Library/Developer/Xcode is an umbrella: before 2026-10-21 the
+    /// "Xcode" rule (keep), being the bigger outer folder, swallowed
+    /// DerivedData and DeviceSupport in the dedup, so the Developer view
+    /// showed one unremovable "Xcode" item instead of 20 GB of rebuildable
+    /// build output.
+    @Test func xcodeFolderDoesNotSwallowItsChildren() {
+        var tree = FileTree()
+        func dir(_ name: String, _ parent: Int32) -> Int32 {
+            tree.addNode(name: name, parent: parent, isDirectory: true, logicalSize: 0, allocatedSize: 0, modifiedDaysSinceEpoch: 10)
+        }
+        func file(_ parent: Int32, _ bytes: Int64) {
+            _ = tree.addNode(name: "f", parent: parent, isDirectory: false, logicalSize: bytes, allocatedSize: bytes, modifiedDaysSinceEpoch: 10)
+        }
+        let users = dir("Users", -1)
+        let developer = dir("Developer", dir("Library", dir("me", users)))
+        let xcode = dir("Xcode", developer)
+        let derived = dir("DerivedData", xcode)
+        file(derived, 12_000_000_000)
+        let support = dir("iOS DeviceSupport", xcode)
+        file(dir("17.5 (21F79)", support), 6_000_000_000)
+        file(dir("UserData", xcode), 50_000_000)
+        let built = DeveloperCatalog.build(tree: tree, root: URL(fileURLWithPath: "/Users", isDirectory: true),
+                                           totals: tree.rollUpBoth().allocated)
+        let ids = Set(built.items.map(\.nodeID))
+        #expect(ids.contains(derived))
+        #expect(ids.contains(support))
+        #expect(!ids.contains(xcode))
+        #expect(built.items.first { $0.nodeID == derived }?.reclaimability == .reclaimable)
+        // Nothing is counted twice.
+        #expect(built.summary.totalBytes == 18_000_000_000)
+    }
+
+    /// An Xcode folder with no specific finding inside still shows up.
+    @Test func loneXcodeFolderIsStillListed() {
+        var tree = FileTree()
+        let users = tree.addNode(name: "Users", parent: -1, isDirectory: true, logicalSize: 0, allocatedSize: 0, modifiedDaysSinceEpoch: 10)
+        let developer = tree.addNode(name: "Developer", parent: users, isDirectory: true, logicalSize: 0, allocatedSize: 0, modifiedDaysSinceEpoch: 10)
+        let xcode = tree.addNode(name: "Xcode", parent: developer, isDirectory: true, logicalSize: 0, allocatedSize: 0, modifiedDaysSinceEpoch: 10)
+        _ = tree.addNode(name: "UserData", parent: xcode, isDirectory: false, logicalSize: 900_000_000, allocatedSize: 900_000_000, modifiedDaysSinceEpoch: 10)
+        let built = DeveloperCatalog.build(tree: tree, root: URL(fileURLWithPath: "/Users", isDirectory: true),
+                                           totals: tree.rollUpBoth().allocated)
+        #expect(built.items.map(\.nodeID) == [xcode])
+    }
+
     /// The rules are data now (developer-rules.json). A typo in a category
     /// or ecosystem name would silently drop that rule, so every entry must
     /// decode.
