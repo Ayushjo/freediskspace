@@ -136,7 +136,7 @@ struct DuplicatesView: View {
                     .font(DiskMapType.pageTitle)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
-                Text("Files with exactly the same contents. We keep the \(policy == .shortestPath ? "copy with the shortest path" : policy.title.lowercased() + " copy") and tick the others.")
+                Text("Files with exactly the same contents. We keep the \(policy == .shortestPath ? "copy with the shortest path" : policy.title.lowercased() + " copy") and tick the rest, but never files inside projects or apps.")
                     .font(DiskMapType.body).foregroundStyle(DiskMapTheme.ink2).lineLimit(1)
             }
             Spacer(minLength: 8)
@@ -494,9 +494,11 @@ struct DuplicatesView: View {
         var next: Set<Int32> = []
         for group in model.duplicateGroups where !group.sharesStorage {
             let keep = keeper(group)
-            // Copies already in the basket stay as they are.
-            for id in group.fileIDs where id != keep && !model.isStaged(tree.path(of: id, root: rootURL)) {
-                next.insert(id)
+            // Copies already in the basket stay as they are; copies a project
+            // or app owns (node_modules, .git, bundles…) are never pre-ticked.
+            for id in group.fileIDs where id != keep {
+                let url = tree.path(of: id, root: rootURL)
+                if !model.isStaged(url), !DuplicatePreTick.isToolOwned(path: url.path) { next.insert(id) }
             }
         }
         checked = next

@@ -268,7 +268,7 @@ struct AppShellView: View {
         case .snapshots:
             guard let c = model.weekComparison, abs(c.freeDelta) >= OverviewView.growthNoise else { return nil }
             let used = -c.freeDelta
-            return ((used >= 0 ? "+" : "−") + Self.compactBytes(abs(used)).dropLast(), false)
+            return ((used >= 0 ? "+" : "−") + Self.compactBytes(abs(used)), false)
         default: return nil
         }
     }

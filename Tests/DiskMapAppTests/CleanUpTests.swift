@@ -122,3 +122,25 @@ struct CleanUpPreferenceTests {
         #expect(CleanUpView.defaultTicks(items, isStaged: { _ in false }, tickRebuilds: false).isEmpty)
     }
 }
+
+extension CleanUpTests {
+    @Test func oldDownloadsGroupOnlyHoldsFilesOlderThanThirtyDays() {
+        func dl(_ id: Int32, _ name: String, age: Int32) -> OldDownloadsCandidate {
+            OldDownloadsCandidate(nodeID: id, name: name, absolutePath: "/Users/me/Downloads/\(name)", displayPath: "~/Downloads/\(name)",
+                                  bytes: 5_000, modifiedDay: 0, ageDays: age, kind: .video, status: .reviewFirst,
+                                  safety: SafetyAssessment(level: .review, reason: "r", title: "t"), whyHere: "", recommendation: "", score: 1)
+        }
+        let items = CleanUpView.buildItems(reviewables: [], downloads: [dl(1, "new.mp4", age: 10), dl(2, "old.mp4", age: 90)],
+                                           media: [], totals: [], rootPath: "/Users/me")
+        #expect(items.filter { $0.group == .downloads }.map(\.title) == ["old.mp4"])
+    }
+
+    @MainActor @Test func overviewNamesUntickedBuildFilesInsteadOfSayingNothingRebuilds() {
+        let model = ScanModel()
+        model.cachedReviewables = [target("deps", .review, 5_000_000_000)]
+        #expect(model.safeReclaimableBytes == 0)
+        #expect(model.nothingTickedLine.contains("5 GB"))
+        model.cachedReviewables = []
+        #expect(model.nothingTickedLine.hasPrefix("Nothing here rebuilds by itself"))
+    }
+}

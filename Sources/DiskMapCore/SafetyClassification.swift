@@ -35,7 +35,10 @@ public struct SafetyAssessment: Sendable, Equatable {
         self.recommendedAction = recommendedAction.isEmpty ? Self.defaultAction(level) : recommendedAction
     }
 
-    private static func defaultConsequences(_ level: SafetyLevel) -> String {
+    /// True when a rule wrote its own consequences rather than the level's generic line.
+    public var hasSpecificConsequences: Bool { consequences != Self.defaultConsequences(level) }
+
+    static func defaultConsequences(_ level: SafetyLevel) -> String {
         switch level {
         case .safe: return "Apps or tools can usually recreate this data. You may see slower first runs."
         case .review: return "Removing the wrong item could delete personal files or break a project until you restore it."

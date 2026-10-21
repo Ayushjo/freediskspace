@@ -380,9 +380,9 @@ public enum ReviewableCatalog {
         let n = name.lowercased()
         let p = path.lowercased()
         if n == "caches" || p.contains("/library/caches") || n == "deriveddata" { return .caches }
-        if n == "node_modules" || n == "build" || n == "dist" || n == "target" || n == ".next" || n == ".venv" || n == "venv" {
-            return .buildArtifacts
-        }
+        let buildNames: Set<String> = ["node_modules", "build", "dist", "target", ".next", ".venv", "venv", ".build", ".nuxt",
+                                       ".turbo", ".parcel-cache", ".svelte-kit", ".expo", "pods", "__pycache__", ".dart_tool"]
+        if buildNames.contains(n) { return .buildArtifacts }
         if n == ".npm" || n == ".pnpm-store" || n == ".cargo" || n == ".gradle" || n == ".pub-cache" || p.contains("/.cargo/registry") {
             return .packageCaches
         }
@@ -400,6 +400,7 @@ public enum ReviewableCatalog {
             if name == "node_modules" { return "Node modules" }
             if name == "target" { return "Rust target" }
             if name == "build" { return "Build output" }
+            if name == ".build" { return "Swift build" }
             if name == "DerivedData" { return "Xcode DerivedData" }
             return name
         case .packageCaches:
@@ -425,7 +426,9 @@ public enum ReviewableCatalog {
     }
 
     private static func consequence(for category: ReviewableCategory, name: String, safety: SafetyAssessment) -> String {
-        if !safety.consequences.isEmpty { return safety.consequences }
+        // A rule's own line wins; the level's generic "could delete personal
+        // files" line must not replace what we know about build output.
+        if safety.hasSpecificConsequences || category == .other { return safety.consequences }
         switch category {
         case .caches:
             return "Apps can recreate this. First launch afterward may be slower or re-download data."

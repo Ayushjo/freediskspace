@@ -115,13 +115,16 @@ struct CleanUpView: View {
                                  bytes: t.bytes, tag: nil, requests: reqs,
                                  revealURL: URL(fileURLWithPath: t.primaryPath)))
         }
-        for c in downloads where c.safety.level != .protected {
+        // Same default as the Old downloads page (older than 30 days), so the
+        // group's "Not opened in a long time" holds and its count matches the page.
+        let oldEnough = OldDownloadsCatalog.filter(downloads, age: .days30, size: .any, type: .all, query: "")
+        for c in oldEnough where c.safety.level != .protected {
             out.append(CleanItem(id: "d-\(c.nodeID)", group: .downloads, title: c.name,
                                  why: "\(age(c.ageDays)) · \(place(c.absolutePath, rootPath: rootPath))", bytes: c.bytes, tag: nil,
                                  requests: [CleanupStageRequest(url: URL(fileURLWithPath: c.absolutePath), size: c.bytes, reason: "Old download: " + c.name)],
                                  revealURL: URL(fileURLWithPath: c.absolutePath)))
         }
-        let downloadIDs = Set(downloads.map(\.nodeID))
+        let downloadIDs = Set(oldEnough.map(\.nodeID))
         for m in media where m.safety.level != .protected && !downloadIDs.contains(m.nodeID) {
             out.append(CleanItem(id: "m-\(m.nodeID)", group: .media, title: m.name,
                                  why: "\(age(m.ageDays)) · \(place(m.absolutePath, rootPath: rootPath))", bytes: m.bytes, tag: nil,

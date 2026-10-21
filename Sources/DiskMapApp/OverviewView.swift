@@ -11,6 +11,20 @@ extension ScanModel {
     var safeReclaimables: [ReviewableTarget] {
         cachedReviewables.filter(\.isGenerallySafe).sorted { $0.bytes > $1.bytes }
     }
+
+    /// Build output and dependencies that come back with a rebuild or
+    /// reinstall, but are left unticked (Clean up's "check first" group).
+    var reviewFirstReclaimableBytes: Int64 {
+        cachedReviewables.reduce(0) { $0 + ($1.isReviewFirst ? $1.bytes : 0) }
+    }
+
+    /// Overview's line when nothing is ticked for you.
+    var nothingTickedLine: String {
+        let review = reviewFirstReclaimableBytes
+        return review > 0
+            ? "Nothing is ticked for you here. \(ByteFormat.string(review)) of build files and dependencies comes back with a rebuild or reinstall — check it in Clean up."
+            : "Nothing here rebuilds by itself right now. Clean up still lists old downloads and big files to review."
+    }
 }
 
 /// Home — answer "Why is my Mac full?" in ~5 seconds: free space, what you
@@ -223,7 +237,7 @@ struct OverviewView: View {
                 .accessibilityIdentifier("overview-can-free")
                 Text(bytes > 0 || !ready
                      ? "Caches and build files that rebuild by themselves. They go to the Trash first, so you can always put them back."
-                     : "Nothing here rebuilds by itself right now. Clean up still lists old downloads and big files to review.")
+                     : model.nothingTickedLine)
                     .font(DiskMapType.body)
                     .foregroundStyle(Color.white.opacity(0.82))
                     .lineSpacing(2)
@@ -389,7 +403,7 @@ struct OverviewView: View {
                     HStack(spacing: 8) { ProgressView().controlSize(.small); Text("Looking for things that rebuild by themselves…").font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink2) }
                         .frame(maxWidth: .infinity, minHeight: 120)
                 } else if items.isEmpty {
-                    Text("Nothing here rebuilds by itself. Open Clean up for old downloads and big files to review.")
+                    Text(model.nothingTickedLine)
                         .font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink2)
                         .frame(maxWidth: .infinity, minHeight: 120).padding(.horizontal, 18)
                 } else {
