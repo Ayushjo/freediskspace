@@ -50,7 +50,11 @@ struct LocalSnapshotsTests {
     }
 
     /// Live: diskutil lists the System volume's snapshots without root.
-    @Test func listsThisMacsSnapshotsWithoutRoot() {
+    /// Opt-in (DISKMAP_LIVE_TESTS=1): running diskutil during the parallel
+    /// suite delayed FSEvents enough to time out the seeded-staging tests'
+    /// 5 s barrier (2 failures in ~9 full runs; 0 in 6 without it).
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["DISKMAP_LIVE_TESTS"] == "1"))
+    func listsThisMacsSnapshotsWithoutRoot() {
         let snapshots = LocalSnapshots.read(volumes: ["/"])
         // Every sealed-system Mac has macOS's own update snapshot on "/".
         #expect(snapshots.contains { $0.kind == .osUpdate })
