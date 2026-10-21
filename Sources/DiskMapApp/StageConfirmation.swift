@@ -216,7 +216,7 @@ struct PathListConfirmSheet: View {
                 Spacer()
                 // Cancel is the default: Return never adds or moves anything by accident.
                 Button("Cancel", action: onCancel)
-                    .buttonStyle(SecondaryButtonStyle())
+                    .buttonStyle(SecondaryButtonStyle(large: true))
                     .keyboardShortcut(.defaultAction)
                 Button(confirmTitle, action: onConfirm)
                     .buttonStyle(AccentButtonStyle(large: true, hard: destructive))
@@ -279,7 +279,7 @@ struct RiskyStageSheet: View {
                     .buttonStyle(AccentButtonStyle(large: true))
                     .keyboardShortcut(.defaultAction)
                 Button("Add anyway") { proposal.resolve(true) }
-                    .buttonStyle(SecondaryButtonStyle())
+                    .buttonStyle(SecondaryButtonStyle(large: true))
             }
         }
         .padding(26)

@@ -333,3 +333,11 @@ struct LeaderLine: View {
         .accessibilityHidden(true)
     }
 }
+
+/// Tightly kerned display text. SwiftUI applies kerning after the last glyph
+/// too, which narrows the frame past the glyph's edge and clips it (the "B"
+/// of "112 GB" lost its right side). Kern every character but the last.
+func tightText(_ string: String, kerning: CGFloat) -> Text {
+    guard let last = string.last else { return Text(verbatim: "") }
+    return Text(verbatim: String(string.dropLast())).kerning(kerning) + Text(verbatim: String(last))
+}

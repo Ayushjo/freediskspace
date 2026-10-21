@@ -732,7 +732,7 @@ struct SaveScanSheet: View {
             HStack(spacing: 10) {
                 Text("Kept on this Mac only.").font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink3)
                 Spacer()
-                Button("Cancel", action: onCancel).buttonStyle(SecondaryButtonStyle()).keyboardShortcut(.cancelAction)
+                Button("Cancel", action: onCancel).buttonStyle(SecondaryButtonStyle(large: true)).keyboardShortcut(.cancelAction)
                 Button("Save", action: onSave).buttonStyle(AccentButtonStyle(large: true)).keyboardShortcut(.defaultAction)
             }
         }

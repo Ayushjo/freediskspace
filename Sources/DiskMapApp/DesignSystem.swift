@@ -368,20 +368,22 @@ struct PrimaryButtonStyle: ButtonStyle {
 /// Hairline outline — a secondary action that still needs a label.
 struct SecondaryButtonStyle: ButtonStyle {
     var fullWidth: Bool = false
+    /// Same size as `AccentButtonStyle(large: true)`, for a pair side by side.
+    var large: Bool = false
     @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(DiskMapType.bodyEmphasis)
+            .font(large ? .system(size: DiskMapType.scaled(14), weight: .semibold) : DiskMapType.bodyEmphasis)
             .lineLimit(1)
             .frame(maxWidth: fullWidth ? .infinity : nil)
-            .padding(.horizontal, 12)
-            .frame(height: DiskMapMetric.controlHeight)
+            .padding(.horizontal, large ? 18 : 12)
+            .frame(height: large ? 40 : DiskMapMetric.controlHeight)
             .foregroundStyle(DiskMapTheme.ink.opacity(isEnabled ? 1 : 0.35))
             .background(
-                RoundedRectangle(cornerRadius: DiskMapRadius.control, style: .continuous)
+                RoundedRectangle(cornerRadius: large ? 8 : DiskMapRadius.control, style: .continuous)
                     .fill(configuration.isPressed ? DiskMapTheme.ink.opacity(0.08) : DiskMapTheme.raised.opacity(0.6))
                     .overlay(
-                        RoundedRectangle(cornerRadius: DiskMapRadius.control, style: .continuous)
+                        RoundedRectangle(cornerRadius: large ? 8 : DiskMapRadius.control, style: .continuous)
                             .stroke(DiskMapTheme.line, lineWidth: 1)
                     )
             )

@@ -108,9 +108,8 @@ struct OverviewView: View {
                 if let vol = snap.volume {
                     Text("Free space").font(DiskMapType.body).foregroundStyle(DiskMapTheme.ink2)
                     HStack(alignment: .lastTextBaseline, spacing: heroSize * 0.1) {
-                        Text(ByteFormat.hero(Int64(vol.freeBytes)))
+                        tightText(ByteFormat.hero(Int64(vol.freeBytes)), kerning: -heroSize * 0.05)
                             .font(DiskMapType.hero(heroSize))
-                            .kerning(-heroSize * 0.05)
                             .foregroundStyle(DiskMapTheme.ink)
                             .contentTransition(reduceMotion ? .identity : .numericText())
                             .accessibilityIdentifier("overview-free")
@@ -128,8 +127,8 @@ struct OverviewView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
                     Text((model.rootURL?.lastPathComponent ?? "This scan")).font(DiskMapType.body).foregroundStyle(DiskMapTheme.ink2)
-                    Text(ByteFormat.string(snap.scannedBytes))
-                        .font(DiskMapType.hero(heroSize)).kerning(-heroSize * 0.05)
+                    tightText(ByteFormat.string(snap.scannedBytes), kerning: -heroSize * 0.05)
+                        .font(DiskMapType.hero(heroSize))
                         .foregroundStyle(DiskMapTheme.ink)
                         .lineLimit(1).minimumScaleFactor(0.5)
                         .padding(.top, 6)
@@ -222,14 +221,13 @@ struct OverviewView: View {
                 Text("You can free").font(DiskMapType.body).foregroundStyle(Color.white.opacity(0.62))
                 Group {
                     if ready {
-                        Text(bytes > 0 ? ByteFormat.hero(bytes) : "Nothing yet")
+                        tightText(bytes > 0 ? ByteFormat.hero(bytes) : "Nothing yet", kerning: -heroSize * 0.02)
                             .contentTransition(reduceMotion ? .identity : .numericText())
                     } else {
                         Text("Checking…")
                     }
                 }
                 .font(DiskMapType.hero(bytes > 0 || !ready ? heroSize * 0.43 : heroSize * 0.3))
-                .kerning(-heroSize * 0.02)
                 .foregroundStyle(ready && bytes > 0 ? DiskMapTheme.accentBright : Color.white.opacity(0.7))
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)

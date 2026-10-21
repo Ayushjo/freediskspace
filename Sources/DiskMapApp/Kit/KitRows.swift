@@ -353,9 +353,8 @@ struct FolderInspector: View {
                     .lineLimit(2).truncationMode(.middle)
                     .textSelection(.enabled)
             }
-            Text(ByteFormat.hero(insight.bytes))
+            tightText(ByteFormat.hero(insight.bytes), kerning: -1.6)
                 .font(.system(size: DiskMapType.scaled(40), weight: .semibold).monospacedDigit())
-                .kerning(-1.6)
                 .foregroundStyle(DiskMapTheme.ink)
                 .lineLimit(1).minimumScaleFactor(0.6)
             VStack(spacing: 7) {
