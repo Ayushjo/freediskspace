@@ -228,6 +228,11 @@ final class ScanModel: ObservableObject {
     @Published var multiSelection: Set<Int32> = []
     var selectionAnchor: Int32?
     @Published var analysis: AnalysisSnapshot = .empty
+    /// "Where's the rest?" for the last scan: the disk's used space split
+    /// into parts that add up. Nil until read (it runs diskutil, off the
+    /// main thread) and on disks that aren't APFS.
+    @Published var spaceAccount: SpaceAccount?
+    @Published var isSpaceAccountPresented = false
     /// With clone accounting off (the default): where cloned copies probably
     /// inflate the totals, sampled after each scan. Allocated bytes.
     @Published var cloneSurvey: CloneSurvey = .empty
@@ -456,6 +461,7 @@ final class ScanModel: ObservableObject {
             }
         }
         deniedDirectoryIDs = result.deniedDirectoryIDs
+        startSpaceAccount(root: url, generation: generation)
         // Staging a folder from this tree can skip the walk when exact (TASK-082).
         let context = StorageSharing.ScanContext(
             tree: scannedTree, rootPath: url.path, eventID: result.eventIDAtStart,
@@ -711,6 +717,31 @@ final class ScanModel: ObservableObject {
         UserDefaults.standard.set(SharingMode.refcount.rawValue, forKey: CloneAccounting.key)
         guard let root = rootURL, !isScanning else { return }
         Task { await scan(root, mode: .full) }
+    }
+
+    /// Reads the volume split and local snapshots for the scan just
+    /// finished. A newer scan discards the result.
+    private func startSpaceAccount(root: URL, generation: Int) {
+        spaceAccount = nil
+        isSpaceAccountPresented = false
+        let scanned = analysis.scannedOnDiskBytes
+        let purgeable = Int64(clamping: analysis.volume?.purgeableBytes ?? 0)
+        let denied = deniedDirectoryIDs.count
+        if SnapshotHarness.isDeterministic {
+            spaceAccount = SpaceAccount.build(
+                breakdown: SnapshotHarness.fixedBreakdown, scanRootPath: root.path,
+                scanRootMountPoint: "/System/Volumes/Data", scannedOnDiskBytes: scanned,
+                purgeableBytes: 6_400_000_000, snapshots: [], unreadableFolders: denied)
+            return
+        }
+        Task {
+            let account = await Task.detached(priority: .utility) {
+                SpaceAccount.read(scanRootPath: root.path, scannedOnDiskBytes: scanned,
+                                  purgeableBytes: purgeable, unreadableFolders: denied)
+            }.value
+            guard generation == scanGeneration else { return }
+            spaceAccount = account
+        }
     }
 
     func rebuildAnalysis() {

@@ -30,6 +30,16 @@ enum SnapshotHarness {
     static let fixedVolume = VolumeStats(volumeName: "Macintosh HD", totalBytes: 500_000_000_000,
                                          freeBytes: 120_000_000_000, usedBytes: 380_000_000_000)
 
+    /// The container behind `fixedVolume`, so "Where's the rest?" renders
+    /// the same parts every time (sums to its 380 GB used).
+    static let fixedBreakdown = ContainerBreakdown(
+        containerTotalBytes: 500_000_000_000, containerFreeBytes: 120_000_000_000,
+        volumes: [.init(mountPoint: "/System/Volumes/Data", role: .data, usedBytes: 330_000_000_000),
+                  .init(mountPoint: "/", role: .system, usedBytes: 12_600_000_000),
+                  .init(mountPoint: "/System/Volumes/Preboot", role: .preboot, usedBytes: 10_700_000_000),
+                  .init(mountPoint: "/System/Volumes/VM", role: .swap, usedBytes: 4_300_000_000)],
+        swapInUseBytes: 2_100_000_000)
+
     /// The modifiers of the synthetic click being delivered. A synthetic
     /// event cannot hold a real key down, so selection code asks here first.
     static var clickModifiers: NSEvent.ModifierFlags?
@@ -254,14 +264,16 @@ enum SnapshotHarness {
             }
             // `--sheet cleanup`: also open the Cleanup sheet and capture it
             // (sheets are their own windows, outside the content view).
-            if let sheetName = value(after: "--sheet"), ["cleanup", "explain"].contains(sheetName) {
+            if let sheetName = value(after: "--sheet"), ["cleanup", "explain", "rest"].contains(sheetName) {
                 if sheetName == "cleanup" { model.isCleanupQueuePresented = true }
+                else if sheetName == "rest" { model.isSpaceAccountPresented = true }
                 else { NotificationCenter.default.post(name: .diskMapOpenExplain, object: nil) }
                 try? await Task.sleep(nanoseconds: UInt64(settle * 1_000_000_000))
                 if let sheet = window.attachedSheet {
                     write(window: sheet, to: dir.appendingPathComponent("\(sheetName)-\(appearanceName).png"))
                 }
                 model.isCleanupQueuePresented = false
+                model.isSpaceAccountPresented = false
                 NotificationCenter.default.post(name: .diskMapOpenExplain, object: false)
                 try? await Task.sleep(nanoseconds: 400_000_000)
             }

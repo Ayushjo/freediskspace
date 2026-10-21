@@ -74,8 +74,15 @@ public struct SpaceAccount: Sendable, Equatable {
         let rootIsVolumeRoot = wholeDisk || scanRootPath == scanRootMountPoint
             || (scanRootMountPoint == "/System/Volumes/Data" && scanRootPath == "/System/Volumes/Data")
 
-        var rows: [Row] = [Row(part: .scanned, title: "Found by this scan", bytes: scanned,
-                               confidence: .exact, detail: "Every folder and file the scan could read.")]
+        // Clones (and hard links read twice) make a walk count shared blocks
+        // once per copy, so the scan can exceed what its volumes use. The
+        // row is capped so the parts still add up, and says why.
+        let exceeds = scanned > coveredUsed
+        let scannedDetail = exceeds
+            ? "The scan listed \(ByteCountFormatter.string(fromByteCount: scanned, countStyle: .file)), more than this: cloned files share space on disk but are listed once per copy."
+            : "Every folder and file the scan could read."
+        var rows: [Row] = [Row(part: .scanned, title: "Found by this scan", bytes: min(scanned, coveredUsed),
+                               confidence: .exact, detail: scannedDetail)]
         for volume in breakdown.volumes where !covered(volume) && volume.usedBytes > 0 {
             rows.append(Row(part: .volume(volume.role), title: volume.role.title, bytes: volume.usedBytes,
                             confidence: .exact, detail: detail(for: volume, swap: breakdown.swapInUseBytes)))
@@ -97,7 +104,34 @@ public struct SpaceAccount: Sendable, Equatable {
                             bytes: notSeen, confidence: .remainder, detail: notSeenDetail(reasons)))
         }
         return SpaceAccount(usedBytes: breakdown.containerUsedBytes, rows: rows, reasons: reasons,
-                            purgeableBytes: max(0, purgeableBytes), scanExceedsCovered: scanned > coveredUsed)
+                            purgeableBytes: max(0, purgeableBytes), scanExceedsCovered: exceeds)
+    }
+
+    /// Live: reads the container, the volumes the scan covered and their
+    /// local snapshots (`diskutil`, no root). Slow enough (up to `timeout`)
+    /// to call off the main thread. Nil off APFS.
+    public static func read(scanRootPath: String, scannedOnDiskBytes: Int64, purgeableBytes: Int64,
+                            unreadableFolders: Int, snapshotTimeout: TimeInterval = 10) -> SpaceAccount? {
+        guard let breakdown = ContainerBreakdown.read(forPath: scanRootPath),
+              let mountPoint = mountPoint(of: scanRootPath) else { return nil }
+        let wholeDisk = scanRootPath == "/"
+        let volumes = breakdown.volumes
+            .filter { wholeDisk ? ($0.role == .system || $0.role == .data) : $0.mountPoint == mountPoint }
+            .map(\.mountPoint)
+        let snapshots = LocalSnapshots.read(volumes: volumes, timeout: snapshotTimeout)
+        return build(breakdown: breakdown, scanRootPath: scanRootPath, scanRootMountPoint: mountPoint,
+                     scannedOnDiskBytes: scannedOnDiskBytes, purgeableBytes: purgeableBytes,
+                     snapshots: snapshots, unreadableFolders: unreadableFolders)
+    }
+
+    /// The mount point holding `path` ("/System/Volumes/Data" for anything
+    /// under the home folder on a boot disk).
+    static func mountPoint(of path: String) -> String? {
+        var fs = statfs()
+        guard path.withCString({ statfs($0, &fs) }) == 0 else { return nil }
+        return withUnsafePointer(to: &fs.f_mntonname) { ptr in
+            ptr.withMemoryRebound(to: CChar.self, capacity: Int(MAXPATHLEN)) { String(cString: $0) }
+        }
     }
 
     static func detail(for volume: ContainerBreakdown.Volume, swap: Int64?) -> String {
@@ -129,6 +163,8 @@ public struct SpaceAccount: Sendable, Equatable {
         if parts.isEmpty {
             return "Space no folder accounts for — often cached or deleted data macOS still holds, or files only it can read."
         }
-        return "Likely " + parts.joined(separator: ", ") + ". Snapshot sizes can't be measured, so this is what's left over."
+        let hasSnapshots = reasons.timeMachineSnapshots > 0 || !reasons.otherSnapshots.isEmpty
+        let tail = hasSnapshots ? " Snapshot sizes can't be measured, so this is what's left over." : ""
+        return "Likely " + parts.joined(separator: ", ") + "." + tail
     }
 }

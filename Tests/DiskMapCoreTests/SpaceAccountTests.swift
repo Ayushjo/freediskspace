@@ -74,6 +74,10 @@ struct SpaceAccountTests {
         #expect(account.scanExceedsCovered)
         #expect(!account.rows.contains { $0.part == .notSeen })
         #expect(account.rows.allSatisfy { $0.bytes >= 0 })
+        // Capped, so the parts still add up to used, and the row says why.
+        #expect(account.total == account.usedBytes)
+        let found = try! #require(account.rows.first { $0.part == .scanned })
+        #expect(found.detail.contains("once per copy"))
     }
 
     /// Live on this Mac: the home folder's account adds up to used.
@@ -83,5 +87,34 @@ struct SpaceAccountTests {
                                          scanRootMountPoint: "/System/Volumes/Data", scannedOnDiskBytes: 1 * gb,
                                          purgeableBytes: 0, snapshots: [], unreadableFolders: 0)
         #expect(account.total == account.usedBytes)
+    }
+
+    /// The home folder lives on the Data volume of the boot container.
+    @Test func homeFolderMountsOnTheDataVolume() throws {
+        #expect(SpaceAccount.mountPoint(of: NSHomeDirectory()) == "/System/Volumes/Data")
+        #expect(SpaceAccount.mountPoint(of: "/") == "/")
+        #expect(SpaceAccount.mountPoint(of: "/no/such/path/\(UUID().uuidString)") == nil)
+    }
+
+    /// Opt-in (DISKMAP_LIVE_TESTS=1, runs diskutil): the full live read
+    /// for a home scan adds up and names the home folder as partial.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["DISKMAP_LIVE_TESTS"] == "1"))
+    func liveReadOfTheHomeFolderAddsUp() throws {
+        let account = try #require(SpaceAccount.read(scanRootPath: NSHomeDirectory(), scannedOnDiskBytes: 1 * gb,
+                                                     purgeableBytes: 0, unreadableFolders: 2))
+        #expect(account.total == account.usedBytes)
+        #expect(account.reasons.outsideScannedFolder)
+        #expect(account.reasons.unreadableFolders == 2)
+    }
+
+    /// The snapshot caveat appears only when there are snapshots.
+    @Test func snapshotCaveatOnlyWithSnapshots() {
+        let plain = SpaceAccount.notSeenDetail(.init(outsideScannedFolder: true))
+        #expect(plain == "Likely files outside the folder you scanned.")
+        let withTM = SpaceAccount.notSeenDetail(.init(timeMachineSnapshots: 2))
+        #expect(withTM.contains("2 Time Machine snapshots"))
+        #expect(withTM.contains("can't be measured"))
+        let none = SpaceAccount.notSeenDetail(.init())
+        #expect(none.hasPrefix("Space no folder accounts for"))
     }
 }

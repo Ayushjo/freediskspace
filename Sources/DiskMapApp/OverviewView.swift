@@ -174,10 +174,19 @@ struct OverviewView: View {
                 .lineLimit(2)
                 .accessibilityIdentifier("volume-reconciliation")
             if hasWhyDetail {
-                Button("Why?") { showWhy.toggle() }
+                Button(showsAccount ? "Where's the rest?" : "Why?") {
+                    if showsAccount { model.isSpaceAccountPresented = true } else { showWhy.toggle() }
+                }
                     .buttonStyle(LinkButtonStyle())
                     .font(DiskMapType.secondary)
                     .popover(isPresented: $showWhy, arrowEdge: .bottom) { whyPopover }
+                    .sheet(isPresented: Binding(
+                        get: { model.isSpaceAccountPresented && model.spaceAccount != nil },
+                        set: { model.isSpaceAccountPresented = $0 })) {
+                        if let account = model.spaceAccount {
+                            SpaceAccountSheet(account: account) { model.isSpaceAccountPresented = false }
+                        }
+                    }
                     .accessibilityHint("Explains the gap between this scan and the disk")
             }
         }
@@ -188,7 +197,15 @@ struct OverviewView: View {
         return "\(ByteFormat.string(snap.scannedBytes)) found in this scan."
     }
 
+    /// The full account replaces the one-line "Why?" once it was read (APFS
+    /// only). Its parts always add up to what the disk has in use.
+    private var showsAccount: Bool {
+        guard let account = model.spaceAccount else { return false }
+        return account.rows.count > 1 && account.total == account.usedBytes
+    }
+
     private var hasWhyDetail: Bool {
+        if showsAccount { return true }
         if let rec = snap.reconciliation, reconciliationDetail(rec) != nil { return true }
         if snap.hasSharingInfo { return Self.cloneText(snap.sharingCorrection) != nil }
         return model.rootURL.map { StorageSharing.isAPFS($0.path) } == true
@@ -196,8 +213,8 @@ struct OverviewView: View {
 
     private var whyPopover: some View {
         VStack(alignment: .leading, spacing: DiskMapSpace.md) {
-            MonoLabel("Why the numbers differ")
             if let rec = snap.reconciliation, let detail = reconciliationDetail(rec) {
+                MonoLabel("Why the numbers differ")
                 Text(detail)
                     .font(DiskMapType.body)
                     .foregroundStyle(DiskMapTheme.ink)
@@ -568,7 +585,7 @@ struct OverviewView: View {
                 : "“\(URL(fileURLWithPath: snap.scanRootPath).lastPathComponent)”"
             causes.append("outside \(place) (macOS, apps and other users)")
         }
-        causes.append("held by local Time Machine snapshots or purgeable space")
+        causes.append("used by macOS itself (the system, swap and startup files), local snapshots or purgeable space")
         let denied = model.deniedDirectoryIDs.count
         if denied > 0 {
             causes.append("inside \(denied.formatted()) folder\(denied == 1 ? "" : "s") freedisk.space couldn’t read")
