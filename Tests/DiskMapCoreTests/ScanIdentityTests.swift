@@ -134,6 +134,33 @@ struct ScanIdentityTests {
         #expect(CanonicalPath.mayContainFirmlinkTwins(scanRootPath: "/Volumes/External") == false)
     }
 
+    /// /usr/share/firmlinks is "<path on />\t<path on Data>" per line.
+    @Test func firmlinksFileBecomesDataVolumeTwins() {
+        let text = "/Applications\tApplications\n/System/Library/AssetsV2\tSystem/Library/AssetsV2\n\n/usr/local\tusr/local\n"
+        #expect(CanonicalPath.dataVolumeTwins(firmlinksFile: text) == [
+            "/System/Volumes/Data/Applications",
+            "/System/Volumes/Data/System/Library/AssetsV2",
+            "/System/Volumes/Data/usr/local",
+        ])
+        #expect(CanonicalPath.dataVolumeTwins(firmlinksFile: "garbage\n\t\n/\tx\n").isEmpty)
+    }
+
+    /// Apple Intelligence models and simulator runtimes sit under AssetsV2;
+    /// the built-in list missed its twin, so a "/" scan could count them twice.
+    @Test func assetsV2TwinIsSkippedOnThisMac() throws {
+        try #require(FileManager.default.fileExists(atPath: "/usr/share/firmlinks"))
+        #expect(CanonicalPath.shouldSkipDescend(absolutePath: "/System/Volumes/Data/System/Library/AssetsV2", scanRootPath: "/"))
+        #expect(!CanonicalPath.shouldSkipDescend(absolutePath: "/System/Library/AssetsV2", scanRootPath: "/"))
+    }
+
+    /// Every firmlink macOS declares on this machine is skipped on its Data side.
+    @Test func everySystemFirmlinkTwinIsSkipped() throws {
+        let text = try String(contentsOfFile: "/usr/share/firmlinks", encoding: .utf8)
+        for twin in CanonicalPath.dataVolumeTwins(firmlinksFile: text) {
+            #expect(CanonicalPath.shouldSkipDescend(absolutePath: twin, scanRootPath: "/"), "\(twin)")
+        }
+    }
+
     /// The optimisation must not change behaviour: wherever the cheap gate
     /// says "possible", the real check still decides.
     @Test func firmlinkGateNeverHidesARealSkip() {

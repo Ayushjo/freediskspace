@@ -7,7 +7,30 @@ public enum CanonicalPath {
     /// Paths under `/System/Volumes/Data/...` that mirror firmlinks from `/`.
     /// Prefer the firmlink (`/Users`, `/Applications`, …) and skip descending
     /// these when the scan root is the system volume root.
-    public static let dataVolumeFirmlinkSuffixes: [String] = [
+    public static let dataVolumeFirmlinkSuffixes: [String] = {
+        // macOS lists its firmlinks in /usr/share/firmlinks. The built-in
+        // list missed /System/Library/AssetsV2 (Apple Intelligence models,
+        // simulator runtimes), /usr/local, /cores and others, so a "/" scan
+        // could count those twice; reading the file keeps up with new
+        // macOS versions. The built-in list stays as a fallback and adds a
+        // few Data-only twins the file doesn't name.
+        let fromSystem = (try? String(contentsOfFile: "/usr/share/firmlinks", encoding: .utf8))
+            .map(dataVolumeTwins(firmlinksFile:)) ?? []
+        var seen = Set<String>()
+        return (builtInFirmlinkSuffixes + fromSystem).filter { seen.insert($0).inserted }
+    }()
+
+    /// `/usr/share/firmlinks` lines are "<path on />\t<path on Data>". Each
+    /// becomes the Data-volume twin to skip.
+    static func dataVolumeTwins(firmlinksFile text: String) -> [String] {
+        text.split(whereSeparator: \.isNewline).compactMap { line in
+            guard let firstField = line.split(separator: "\t").first?.trimmingCharacters(in: .whitespaces),
+                  firstField.hasPrefix("/"), firstField.count > 1 else { return nil }
+            return "/System/Volumes/Data" + firstField
+        }
+    }
+
+    static let builtInFirmlinkSuffixes: [String] = [
         "/System/Volumes/Data/Users",
         "/System/Volumes/Data/Applications",
         "/System/Volumes/Data/Library",
