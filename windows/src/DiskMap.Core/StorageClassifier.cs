@@ -105,8 +105,12 @@ public static class StorageClassifier
 
     private const string WslNote =
         "This is a whole Linux distribution (WSL). Recycling it deletes the distro and every file inside it.";
+    // Not `--set-sparse` as the first advice: WSL 2.5 required
+    // --allow-unsafe for it after data-corruption reports (microsoft/WSL
+    // #13075, Jun 2025). Compacting the disk is the documented route.
     private const string WslInstead =
-        "Remove a distro with `wsl --unregister <name>`, or shrink it: `wsl --manage <name> --set-sparse true`.";
+        "Remove a distro with `wsl --unregister <name>`. To shrink its disk: run `wsl --shutdown`, then compact the .vhdx "
+        + "(as admin: `Optimize-VHD -Path <file> -Mode Full`, or diskpart `compact vdisk`). Avoid `--set-sparse`: WSL has warned it can corrupt data.";
     private const string DockerNote =
         "Docker Desktop's disk — holds every image, container and volume. Recycling it wipes Docker's data.";
     private const string DockerInstead =
@@ -236,6 +240,9 @@ public static class StorageClassifier
         Claim("appdata/local/programs", Apps, CleanupAdvice.Warn, AppNote, AppInstead),
         Claim("appdata/local/microsoft/windowsapps", Apps, CleanupAdvice.Never, AppNote, AppInstead),
         Claim("appdata/local/microsoft/windows", System, CleanupAdvice.Never, SystemNote, SystemInstead),
+        Claim("appdata/local/coreaiplatform.00", System, CleanupAdvice.Never,
+            "Recall's encrypted snapshot store — removing its files breaks Recall instead of freeing space cleanly.",
+            "Delete snapshots or lower the limit in Settings → Privacy & security → Recall & snapshots."),
         Claim("appdata/local/temp", Caches),
         Claim("appdata/local/crashdumps", Caches),
         Claim("appdata/local/npm-cache", PackageCaches),
