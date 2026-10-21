@@ -273,40 +273,13 @@ struct CleanUpView: View {
 
     private func receiptColumn(_ picked: [CleanItem]) -> some View {
         let bytes = picked.reduce(Int64(0)) { $0 + $1.bytes }
-        let vol = model.analysis.volume
-        let skipped = ScanModel.splitForBulkStage(picked.flatMap(\.requests)).skipped
         return ZStack(alignment: .top) {
             DiskMapTheme.sidebar
             BoardGrid().opacity(0.8)
             ScrollView {
                 VStack(spacing: 0) {
-                    Receipt(lines: picked.map { ($0.title, $0.bytes) }, total: bytes,
-                            freeBefore: vol.map { Int64($0.freeBytes) }, volumeName: vol?.volumeName ?? model.rootURL?.lastPathComponent ?? "This Mac",
-                            skippedCount: skipped.count, compact: widthClass == .compact)
-                    Button {
-                        Task { await moveTicked(picked) }
-                    } label: {
-                        VStack(alignment: .leading, spacing: widthClass == .compact ? 10 : 18) {
-                            Text("⏎ ENTER").font(.system(size: DiskMapType.scaled(10.5), weight: .medium, design: .monospaced)).opacity(0.85)
-                            Text(picked.isEmpty ? "Tick something to free" : "Move \(picked.count) item\(picked.count == 1 ? "" : "s") to Trash")
-                                .font(.system(size: DiskMapType.scaled(widthClass == .compact ? 19 : 23), weight: .semibold))
-                                .kerning(-0.4)
-                        }
-                        .foregroundStyle(DiskMapTheme.onAccent)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 16)
-                        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(DiskMapTheme.accent.opacity(picked.isEmpty ? 0.45 : 1)))
-                        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.black.opacity(0.85), lineWidth: 1))
-                        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.black.opacity(0.88)).offset(x: 5, y: 5))
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(picked.isEmpty || isMoving)
-                    .padding(.top, widthClass == .compact ? 22 : 32)
-                    .padding(.trailing, 5)
-                    .accessibilityLabel(picked.isEmpty ? "Nothing ticked" : "Move \(picked.count) items to Trash, \(ByteFormat.string(bytes))")
+                    receipt(picked, bytes: bytes)
+                    moveButton(picked, bytes: bytes)
                     Text("You’ll see the full list once more before anything moves.")
                         .font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink2)
                         .multilineTextAlignment(.center)
@@ -319,6 +292,49 @@ struct CleanUpView: View {
                 .padding(.vertical, widthClass.pagePadding)
             }
         }
+    }
+
+    // Split out of receiptColumn: as one expression it timed out the type
+    // checker on CI's compiler.
+    private func receipt(_ picked: [CleanItem], bytes: Int64) -> some View {
+        let vol = model.analysis.volume
+        let skipped = ScanModel.splitForBulkStage(picked.flatMap(\.requests)).skipped
+        let name: String = vol?.volumeName ?? model.rootURL?.lastPathComponent ?? "This Mac"
+        let lines: [(String, Int64)] = picked.map { ($0.title, $0.bytes) }
+        let freeBefore: Int64? = vol.map { Int64($0.freeBytes) }
+        return Receipt(lines: lines, total: bytes, freeBefore: freeBefore, volumeName: name,
+                       skippedCount: skipped.count, compact: widthClass == .compact)
+    }
+
+    private func moveButton(_ picked: [CleanItem], bytes: Int64) -> some View {
+        let compact = widthClass == .compact
+        let title = picked.isEmpty ? "Tick something to free" : "Move \(picked.count) item\(picked.count == 1 ? "" : "s") to Trash"
+        let label = picked.isEmpty ? "Nothing ticked" : "Move \(picked.count) items to Trash, \(ByteFormat.string(bytes))"
+        let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+        return Button {
+            Task { await moveTicked(picked) }
+        } label: {
+            VStack(alignment: .leading, spacing: compact ? 10 : 18) {
+                Text("⏎ ENTER").font(.system(size: DiskMapType.scaled(10.5), weight: .medium, design: .monospaced)).opacity(0.85)
+                Text(title)
+                    .font(.system(size: DiskMapType.scaled(compact ? 19 : 23), weight: .semibold))
+                    .kerning(-0.4)
+            }
+            .foregroundStyle(DiskMapTheme.onAccent)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+            .background(shape.fill(DiskMapTheme.accent.opacity(picked.isEmpty ? 0.45 : 1)))
+            .overlay(shape.stroke(Color.black.opacity(0.85), lineWidth: 1))
+            .background(shape.fill(Color.black.opacity(0.88)).offset(x: 5, y: 5))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .keyboardShortcut(.defaultAction)
+        .disabled(picked.isEmpty || isMoving)
+        .padding(.top, compact ? 22 : 32)
+        .padding(.trailing, 5)
+        .accessibilityLabel(label)
     }
 
     private func lastCleanupCard(_ record: CleanupRecord) -> some View {

@@ -152,21 +152,25 @@ struct AccentButtonStyle: ButtonStyle {
     var hard = false
     @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(large ? .system(size: DiskMapType.scaled(14), weight: .semibold) : DiskMapType.bodyEmphasis)
+        // Plain lets keep this cheap to type-check (CI's compiler timed out on
+        // long view expressions).
+        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        let fillOpacity: Double = !isEnabled ? 0.4 : configuration.isPressed ? 0.85 : 1
+        let font: Font = large ? .system(size: DiskMapType.scaled(14), weight: .semibold) : DiskMapType.bodyEmphasis
+        let height: CGFloat = large ? 40 : DiskMapMetric.controlHeight
+        let pressOffset: CGFloat = configuration.isPressed && hard ? 2 : 0
+        let outline = shape.stroke(Color.black, lineWidth: hard ? 1 : 0)
+        // Black, not ink: ink turns white in dark mode and the shadow would glow.
+        let shadow = shape.fill(Color.black.opacity(hard ? 1 : 0)).offset(x: 3, y: 3)
+        return configuration.label
+            .font(font)
             .lineLimit(1)
             .frame(maxWidth: fullWidth ? .infinity : nil)
             .padding(.horizontal, large ? 18 : 12)
-            .frame(height: large ? 40 : DiskMapMetric.controlHeight)
+            .frame(height: height)
             .foregroundStyle(DiskMapTheme.onAccent)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(DiskMapTheme.accent.opacity(!isEnabled ? 0.4 : configuration.isPressed ? 0.85 : 1))
-                    .overlay(hard ? RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color.black, lineWidth: 1) : nil)
-                    // Black, not ink: ink turns white in dark mode and the shadow would glow.
-                    .background(hard ? RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.black).offset(x: 3, y: 3) : nil)
-            )
-            .offset(x: configuration.isPressed && hard ? 2 : 0, y: configuration.isPressed && hard ? 2 : 0)
+            .background(shape.fill(DiskMapTheme.accent.opacity(fillOpacity)).overlay(outline).background(shadow))
+            .offset(x: pressOffset, y: pressOffset)
             .contentShape(Rectangle())
     }
 }
@@ -177,19 +181,23 @@ struct BoardTag: View {
     var text: String
     var tone: Tone = .neutral
     var body: some View {
-        Text(text.uppercased())
+        let shape = RoundedRectangle(cornerRadius: 5, style: .continuous)
+        let ink: Color
+        let fill: Color
+        let stroke: Color
+        switch tone {
+        case .accent: ink = DiskMapTheme.accentDeep; fill = DiskMapTheme.accentWash; stroke = DiskMapTheme.accent.opacity(0.35)
+        case .ink: ink = DiskMapTheme.onInk; fill = DiskMapTheme.ink; stroke = .clear
+        case .neutral: ink = DiskMapTheme.ink2; fill = .clear; stroke = DiskMapTheme.line
+        }
+        return Text(text.uppercased())
             .font(.system(size: DiskMapType.scaled(10), weight: .medium, design: .monospaced))
             .tracking(0.2)
             .lineLimit(1)
             .padding(.horizontal, 6)
             .frame(height: 18)
-            .foregroundStyle(tone == .accent ? DiskMapTheme.accentDeep : tone == .ink ? DiskMapTheme.onInk : DiskMapTheme.ink2)
-            .background(
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(tone == .accent ? DiskMapTheme.accentWash : tone == .ink ? DiskMapTheme.ink : Color.clear)
-                    .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .stroke(tone == .accent ? DiskMapTheme.accent.opacity(0.35) : tone == .ink ? Color.clear : DiskMapTheme.line, lineWidth: 1))
-            )
+            .foregroundStyle(ink)
+            .background(shape.fill(fill).overlay(shape.stroke(stroke, lineWidth: 1)))
             .fixedSize()
     }
 }

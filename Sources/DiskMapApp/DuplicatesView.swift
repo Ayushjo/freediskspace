@@ -125,14 +125,17 @@ struct DuplicatesView: View {
         .frame(maxWidth: .infinity)
     }
 
+    private var headerTitle: Text {
+        let lead: Text = Text("Duplicates").foregroundColor(DiskMapTheme.ink) + Text(" · ").foregroundColor(DiskMapTheme.ink3)
+        guard extraCopiesBytes > 0 else { return lead + Text("nothing to free").foregroundColor(DiskMapTheme.ink3) }
+        let amount: Text = Text(ByteFormat.hero(extraCopiesBytes)).foregroundColor(DiskMapTheme.accent)
+        return lead + amount + Text(" you can free").foregroundColor(DiskMapTheme.ink)
+    }
+
     private var header: some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 6) {
-                (Text("Duplicates").foregroundColor(DiskMapTheme.ink)
-                 + Text(" · ").foregroundColor(DiskMapTheme.ink3)
-                 + (extraCopiesBytes > 0
-                    ? Text(ByteFormat.hero(extraCopiesBytes)).foregroundColor(DiskMapTheme.accent) + Text(" you can free").foregroundColor(DiskMapTheme.ink)
-                    : Text("nothing to free").foregroundColor(DiskMapTheme.ink3)))
+                headerTitle
                     .font(DiskMapType.pageTitle)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
