@@ -67,7 +67,8 @@ enum BulkScan {
         crossMounts: Bool = false,
         sharing: SharingMode = .off,
         progress: (@Sendable (Int) -> Void)?,
-        live: (@Sendable (ScanProgress) -> Void)? = nil
+        live: (@Sendable (ScanProgress) -> Void)? = nil,
+        foreignMounts: Set<String>? = nil
     ) -> Result {
         var tree = FileTree()
         // Home scans land near 1.7–2M nodes; reserve once so appends stay O(1).
@@ -95,6 +96,14 @@ enum BulkScan {
         if hasRootStat {
             state.scanRootDevID = Int32(rootStat.st_dev)
             state.hasRootDevID = true
+            // The device check above can't see mount points (see
+            // ForeignMounts), so stop at the mount table's list too.
+            if !crossMounts {
+                state.foreignMountsUTF8 = Set(
+                    (foreignMounts ?? ForeignMounts.paths(under: root.path, rootDevice: Int32(rootStat.st_dev),
+                                                          mounts: ForeignMounts.current()))
+                        .map { nulTerminatedUTF8($0) })
+            }
         }
         // Clone accounting (TASK-077): APFS only, and only for the root's
         // own volume — another filesystem may claim the extended attributes
@@ -462,6 +471,9 @@ enum BulkScan {
         var scanRootDevID: Int32 = 0
         var hasRootDevID = false
         var crossMounts = false
+        /// NUL-terminated paths of mount points under the root that belong
+        /// to another volume. Empty for most scans, so the check is skipped.
+        var foreignMountsUTF8: Set<[UInt8]> = []
         /// Read APFS sharing facts (TASK-077); trusted on the root's device only.
         var readsSharing: Bool { sharingLayout != nil }
         var sharingLayout: SharingLayout?
@@ -637,6 +649,10 @@ enum BulkScan {
                             parentPathUTF8: batch.parentPathUTF8,
                             name: bytes
                         )
+                        if !self.foreignMountsUTF8.isEmpty, self.foreignMountsUTF8.contains(childPathUTF8) {
+                            crossMountSkipDelta += 1
+                            continue
+                        }
                         if self.mayHitFirmlinkTwins {
                             // Only a "/" (or /System/Volumes) scan can reach the
                             // Data-volume twin of a firmlink already reachable via

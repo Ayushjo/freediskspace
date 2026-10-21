@@ -47,6 +47,7 @@ These come before any new feature, because they make today's numbers or matches 
 | B9 | Windows: Recall's store `%LOCALAPPDATA%\CoreAIPlatform.00` can be staged for the Recycle Bin. | Missing from `CleanupQueue.cs:303-320` | **[verified in code]**; the path itself is **[weak]** (third-party) | **Rule 3 change, needs maintainer sign-off:** add it to the excluded prefixes and classify it Never, with Recall's Settings path. |
 | B10 | WSL advice recommends `--set-sparse true` without a warning. | `StorageClassifier.cs:108-109` | **[verified]** WSL 2.5.x required `--allow-unsafe` because of a data-corruption warning (WSL #13075, Jun 2025) | Add the warning, and lead with compaction steps instead (§4). |
 | B11 | `CanonicalPath` doesn't list the `/System/Volumes/Data/System/Library/AssetsV2` firmlink twin. | `CanonicalPath.swift:10-26` | **[weak]**, might double-count on a "/" scan with cross-mount on | Add a `ScanIdentityTests` case first; fix if it reproduces. |
+| B12 | A "/" scan walked into other volumes: swap (`/System/Volumes/VM`, 24.7 GB here), Preboot and every drive under `/Volumes`. | `BulkScan.swift` descent check uses `ATTR_CMN_DEVID`, which `getattrlistbulk` reports with the parent's device for a mount point | **[verified]** found 2026-10-22 while testing §1: "/" totalled 427.84 GB and `/System` 41.31 GB; after the fix 400.43 GB and 16.6 GB, and `/Volumes` stops at all 3 drives | **Fixed:** `ForeignMounts` reads the mount table once (devices via `lstat`; remote/autofs never touched) and the walk and quick rescan stop there. |
 
 ---
 
