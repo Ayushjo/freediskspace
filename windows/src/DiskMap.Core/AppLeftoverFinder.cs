@@ -198,6 +198,7 @@ public static class AppLeftoverFinder
     private static readonly HashSet<string> CompanySuffixes = new(StringComparer.OrdinalIgnoreCase)
     {
         "inc", "llc", "ltd", "limited", "corporation", "corp", "co", "gmbh", "software", "technologies", "ag", "sa", "bv",
+        "ab", "as", "oy", "pty", "plc", "srl", "spa", "kk", "llp", "sarl", "sas", "nv", "pte", "pvt",
     };
 
     /// <summary>Lower-case words of a name: letters and digits only.</summary>
