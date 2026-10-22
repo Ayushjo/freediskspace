@@ -620,12 +620,16 @@ public sealed class ScanModel : ViewModelBase
     /// need a deliberate single add, with the warning), and says so in one
     /// toast. Returns how many were added.
     /// </summary>
-    public int StageMany(IEnumerable<int> nodeIds, string reason)
+    public int StageMany(IEnumerable<int> nodeIds, string reason) =>
+        StageRequests(nodeIds.Select(id => (id, reason)));
+
+    /// <summary><see cref="StageMany"/> with a reason per item ("Developer: node_modules").</summary>
+    private int StageRequests(IEnumerable<(int NodeId, string Reason)> requests)
     {
         if (Tree is null) return 0;
         int added = 0, already = 0;
         var skipped = new List<string>();
-        foreach (int id in nodeIds)
+        foreach (var (id, reason) in requests)
         {
             if (id < 0 || id >= Tree.Count) continue;
             var advice = VerdictOf(id).Advice;
@@ -663,10 +667,19 @@ public sealed class ScanModel : ViewModelBase
     /// <see cref="StageMany"/> behind a confirmation that lists exactly what
     /// will be added — folder by folder, with full paths and sizes.
     /// </summary>
-    public int ConfirmStageMany(IEnumerable<int> nodeIds, string reason, string title)
+    public int ConfirmStageMany(IEnumerable<int> nodeIds, string reason, string title) =>
+        ConfirmStageRequests(nodeIds.Select(id => (id, reason)).ToList(), title);
+
+    /// <summary>
+    /// <see cref="ConfirmStageMany"/> with a reason per item, so each keeps its own name in
+    /// the basket (Mac: confirmStageMany with CleanupStageRequest reasons).
+    /// </summary>
+    public int ConfirmStageRequests(IReadOnlyList<(int NodeId, string Reason)> requests, string title)
     {
         if (Tree is null) return 0;
-        var ids = nodeIds.Distinct().Where(id => id >= 0 && id < Tree.Count).ToList();
+        var seen = new HashSet<int>();
+        var unique = requests.Where(r => r.NodeId >= 0 && r.NodeId < Tree.Count && seen.Add(r.NodeId)).ToList();
+        var ids = unique.Select(r => r.NodeId).ToList();
         if (ids.Count == 0) return 0;
         var safe = ids.Where(id => VerdictOf(id).Advice is not (CleanupAdvice.Warn or CleanupAdvice.Never)).ToList();
         int risky = ids.Count - safe.Count;
@@ -685,7 +698,7 @@ public sealed class ScanModel : ViewModelBase
                 items, footnote) == true;
             if (!ok) return 0;
         }
-        return StageMany(ids, reason);
+        return StageRequests(unique);
     }
 
     /// <summary>Stage a raw path (leftovers, staged folders).</summary>

@@ -252,7 +252,7 @@ public partial class MainWindow : Window
         _pageFactories["Large Media"] = () => new LargeMediaPage();
         _pageFactories["File Browser"] = () => new BiggestFoldersExplorePage("File Browser");   // Mac shows BiggestFoldersView here
         _pageFactories["Visualize"] = () => new ExplorePage();   // Mac: Explore → Map
-        _pageFactories["Developer Storage"] = () => new DeveloperStoragePage();
+        _pageFactories["Developer Storage"] = () => new DeveloperBoardPage();
         _pageFactories["Applications"] = () => new ApplicationsPage();
         _pageFactories["Snapshots"] = () => new SnapshotsPage();
         _pageFactories["Cleanup"] = () => new HistoryPage();   // Mac: History & Put Back (the basket is its own window)

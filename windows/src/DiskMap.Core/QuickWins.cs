@@ -18,11 +18,31 @@ public static class QuickWins
     public sealed record Patterns(
         List<string> DirectoryNames,
         List<string> PathSuffixes,
-        Dictionary<string, string>? Categories = null);
+        Dictionary<string, string>? Categories = null,
+        List<CategoryNote>? CategoryNotes = null);
+
+    /// <summary>A category's order and its one-line note (Mac: Category.title / note), as data.</summary>
+    public sealed record CategoryNote(string Title, string Note);
 
     public sealed record Hit(int Id, string Name, string Category);
 
     public const string DefaultCategory = "Regenerable folders";
+
+    /// <summary>
+    /// The categories that have hits, in the file's order (Developer › By tool's sections),
+    /// each with its note; a category the notes don't list follows, alphabetically, with none.
+    /// </summary>
+    public static List<CategoryNote> Sections(Patterns patterns, IEnumerable<Hit> hits)
+    {
+        var present = hits.Select(h => h.Category).ToHashSet(StringComparer.Ordinal);
+        var output = new List<CategoryNote>();
+        foreach (var note in patterns.CategoryNotes ?? [])
+        {
+            if (present.Remove(note.Title)) output.Add(note);
+        }
+        output.AddRange(present.OrderBy(t => t, StringComparer.Ordinal).Select(t => new CategoryNote(t, "")));
+        return output;
+    }
 
     public static Patterns BundledPatterns()
     {

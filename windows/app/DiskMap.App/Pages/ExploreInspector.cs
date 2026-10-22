@@ -657,7 +657,7 @@ internal static class ExploreInspector
     }
 
     /// <summary>SafetyLine: the dot and its word (SafetyLabel), then why and what removing it means (spacing 4).</summary>
-    private static FrameworkElement SafetyLine(SafetyAssessment assessment)
+    internal static FrameworkElement SafetyLine(SafetyAssessment assessment)
     {
         var stack = new StackPanel();
         var label = new StackPanel { Orientation = Orientation.Horizontal };
@@ -744,7 +744,7 @@ internal static class ExploreInspector
     }
 
     /// <summary>DiskMapEmptyState: glyph (20, ink3), title, message, centered with 32 pt padding (spacing 12).</summary>
-    private static FrameworkElement EmptyState(string icon, string title, string message, string background)
+    internal static FrameworkElement EmptyState(string icon, string title, string message, string background)
     {
         var stack = new StackPanel { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center };
         var glyph = Ui.Glyph(icon, 20, Ui.Brush("RdInk3"));
@@ -765,7 +765,7 @@ internal static class ExploreInspector
     }
 
     /// <summary>DiskMapLoadingState: an indeterminate bar, the title, the detail (spacing 16).</summary>
-    private static FrameworkElement LoadingState(string title, string detail)
+    internal static FrameworkElement LoadingState(string title, string detail)
     {
         var stack = new StackPanel { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center };
         stack.Children.Add(new ProgressBar { IsIndeterminate = true, Width = 120, Height = 4 });
@@ -909,7 +909,7 @@ internal static class ExploreInspector
     /// SwiftUI's minimumScaleFactor: the figure shrinks to fit, down to <paramref name="minimum"/>,
     /// and clips past that (OverviewPage.Shrinkable).
     /// </summary>
-    private static FrameworkElement Shrinkable(FrameworkElement content, double minimum)
+    internal static FrameworkElement Shrinkable(FrameworkElement content, double minimum)
     {
         var box = new Viewbox
         {
