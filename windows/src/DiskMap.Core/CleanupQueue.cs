@@ -739,6 +739,7 @@ public sealed class CleanupQueue
         progress?.Report(new CommitProgress("Deleting permanently", done, chosen.Length));
         var succeeded = outcomes.Where(o => o.Error is null).Select(o => o.Item).ToList();
         var freed = Estimate(succeeded);
+        CleanupHistory.RecordPermanentDelete(succeeded.Count, freed.Bytes);
         lock (_gate)
         {
             var deleted = succeeded.Select(i => i.Id).ToHashSet();
@@ -806,7 +807,9 @@ public sealed class CleanupQueue
                 if (resolved.TryGetValue(Path.GetFullPath(entry.Item.Path).TrimEnd('\\'), out var bin))
                     items.Add(new CleanupRecord.Item(entry.Item.Path, bin.DataPath, entry.FreedBytes));
             }
-            new CleanupRecord(DateTimeOffset.Now, items).Save();
+            var record = new CleanupRecord(DateTimeOffset.Now, items);
+            record.Save();
+            CleanupHistory.RecordCommit(record);
         }
         catch { /* a failed receipt write never fails the commit */ }
     }

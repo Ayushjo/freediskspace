@@ -126,7 +126,7 @@ public class ExploreTests
         var videos = BiggestFilesExplorePage.Filter(entries, ListQuery.Parse(""), FileKind.Video, BiggestFilesExplorePage.AgeFilter.Any, null, today);
         Assert.Equal([2, 1], videos.Select(e => e.Id));
         var old = BiggestFilesExplorePage.Filter(entries, ListQuery.Parse(""), null, BiggestFilesExplorePage.AgeFilter.ThreeMonths, null, today);
-        Assert.Equal([3, 1], old.Select(e => e.Id));            // unknown dates never count as old
+        Assert.Equal([2, 3, 1], old.Select(e => e.Id));         // 100+ days old; the unknown date never counts as old
         var category = BiggestFilesExplorePage.Filter(entries, ListQuery.Parse(""), null, BiggestFilesExplorePage.AgeFilter.Any, "downloads", today);
         Assert.Equal([3], category.Select(e => e.Id));
         var searched = BiggestFilesExplorePage.Filter(entries, ListQuery.Parse("in:videos size>15"), null, BiggestFilesExplorePage.AgeFilter.Any, null, today);

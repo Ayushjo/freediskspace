@@ -255,7 +255,7 @@ public partial class MainWindow : Window
         _pageFactories["Developer Storage"] = () => new DeveloperStoragePage();
         _pageFactories["Applications"] = () => new ApplicationsPage();
         _pageFactories["Snapshots"] = () => new SnapshotsPage();
-        _pageFactories["Cleanup"] = () => new CleanupQueuePage();
+        _pageFactories["Cleanup"] = () => new HistoryPage();   // Mac: History & Put Back (the basket is its own window)
 
         NavPanel.Children.Clear();
         _navItems.Clear();
