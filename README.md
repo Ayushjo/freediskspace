@@ -35,7 +35,7 @@ See what's filling your disk, learn what each thing is, and free space without t
 <table>
   <tr>
     <td width="33%" valign="top"><b>Free, for real</b><br>No trial, no subscription, no account. MIT licensed.</td>
-    <td width="33%" valign="top"><b>Trash first</b><br>Cleanup moves things to the Trash, never straight to deletion. Put Back returns them.</td>
+    <td width="33%" valign="top"><b>Trash first</b><br>Cleanup goes to the Trash first, so Put Back can return it.</td>
     <td width="33%" valign="top"><b>Offline</b><br>Scans never leave your computer. No analytics, no telemetry.</td>
   </tr>
   <tr>
