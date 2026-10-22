@@ -259,20 +259,23 @@ public static class Rd
     public static Button PrimaryButton(string text, Action? onClick = null, bool fullWidth = false) =>
         PlainButton(text, onClick, fullWidth, B("RdInk"), B("RdOnInk"), null, 6);
 
-    /// <summary>SecondaryButtonStyle: raised @ 60% fill, 1 px line, ink 13 medium text, radius 6, 28 tall.</summary>
-    public static Button SecondaryButton(string text, Action? onClick = null, bool fullWidth = false) =>
-        PlainButton(text, onClick, fullWidth, WithOpacity(B("RdCard"), 0.6), B("RdInk"), B("RdLine"), 6);
+    /// <summary>
+    /// SecondaryButtonStyle: raised @ 60% fill, 1 px line, ink 13 medium text, radius 6, 28 tall;
+    /// <paramref name="large"/> matches AccentButton(large): 40 tall, 18 side padding, 14 semibold, radius 8.
+    /// </summary>
+    public static Button SecondaryButton(string text, Action? onClick = null, bool fullWidth = false, bool large = false) =>
+        PlainButton(text, onClick, fullWidth, WithOpacity(B("RdCard"), 0.6), B("RdInk"), B("RdLine"), large ? 8 : 6, large);
 
     private static Button PlainButton(string text, Action? onClick, bool fullWidth, Brush fill, Brush ink,
-        Brush? stroke, double radius)
+        Brush? stroke, double radius, bool large = false)
     {
         var button = new Button
         {
-            Content = Label(text, ink, 13, FontWeights.Medium),
-            Height = 28,
-            Padding = new Thickness(12, 0, 12, 0),
-            FontSize = Ui.Scaled(13),
-            FontWeight = FontWeights.Medium,
+            Content = Label(text, ink, large ? 14 : 13, large ? FontWeights.SemiBold : FontWeights.Medium),
+            Height = large ? 40 : 28,
+            Padding = new Thickness(large ? 18 : 12, 0, large ? 18 : 12, 0),
+            FontSize = Ui.Scaled(large ? 14 : 13),
+            FontWeight = large ? FontWeights.SemiBold : FontWeights.Medium,
             Foreground = ink,
             Background = fill,
             BorderBrush = stroke ?? Brushes.Transparent,

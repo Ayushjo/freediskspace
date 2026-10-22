@@ -254,7 +254,7 @@ public partial class MainWindow : Window
         _pageFactories["Visualize"] = () => new ExplorePage();   // Mac: Explore → Map
         _pageFactories["Developer Storage"] = () => new DeveloperBoardPage();
         _pageFactories["Applications"] = () => new ApplicationsPage();
-        _pageFactories["Snapshots"] = () => new SnapshotsPage();
+        _pageFactories["Snapshots"] = () => new WhatChangedPage();   // Mac: What changed
         _pageFactories["Cleanup"] = () => new HistoryPage();   // Mac: History & Put Back (the basket is its own window)
 
         NavPanel.Children.Clear();
