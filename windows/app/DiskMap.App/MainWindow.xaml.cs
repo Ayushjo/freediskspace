@@ -253,9 +253,9 @@ public partial class MainWindow : Window
         _pageFactories["Forgotten Files"] = () => new ForgottenExplorePage();   // Mac: Explore → List → Forgotten
         _pageFactories["Duplicates"] = () => new DuplicatesBoardPage();   // Mac: DuplicatesView
         _pageFactories["Safe to Review"] = () => new CleanUpPage();   // Mac cleanSafe: Clean up
-        _pageFactories["Caches"] = () => new CachesPage();
-        _pageFactories["Old Downloads"] = () => new OldDownloadsPage();
-        _pageFactories["Large Media"] = () => new LargeMediaPage();
+        _pageFactories["Caches"] = () => new CleanCachesPage();   // Mac cleanCaches: CachesReviewView
+        _pageFactories["Old Downloads"] = () => new CleanDownloadsPage();   // Mac cleanDownloads: OldDownloadsView
+        _pageFactories["Large Media"] = () => new CleanMediaPage();   // Mac cleanMedia: LargeMediaView
         _pageFactories["File Browser"] = () => new BiggestFoldersExplorePage("File Browser");   // Mac shows BiggestFoldersView here
         _pageFactories["Visualize"] = () => new ExplorePage();   // Mac: Explore → Map
         _pageFactories["Developer Storage"] = () => new DeveloperBoardPage();
