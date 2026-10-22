@@ -948,7 +948,7 @@ public sealed class AppsBoardPage : UserControl
         foreach (var r in picked)
             if (Model.StagePath(r.Path, r.Bytes, "Application: " + app.Name, notify: false)) added++;
         if (added > 0) Model.ToastAdded(added);
-        else Model.Toast("Already in Cleanup");
+        else Model.Toast("Already in the basket");
     }
 
     private static void Reveal(ApplicationEntry app)

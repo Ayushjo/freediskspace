@@ -122,8 +122,8 @@ public sealed class DeveloperBoardPage : UserControl
     {
         string size = ByteFormat.Format(item.SuggestedBytes);
         if (item.Entry.PerChild)
-            return count == 1 ? $"Add the older version to Cleanup · {size}" : $"Add {count} older versions to Cleanup · {size}";
-        return $"Add to Cleanup · {size}";
+            return count == 1 ? $"Add the older version to the basket · {size}" : $"Add {count} older versions to the basket · {size}";
+        return $"Add to the basket · {size}";
     }
 
     /// <summary>What a tool-storage row stages: only <c>trash</c> entries, never a kept version.</summary>
@@ -889,7 +889,7 @@ public sealed class DeveloperBoardPage : UserControl
             _ => "BsTrash3Fill",
         }, 11, Ui.Brush(trash ? "AppAccent" : "RdInk3"));
         var iconBox = new Border { Width = 12, Child = icon, Margin = new Thickness(0, 0, 10, 0) };
-        iconBox.ToolTip = trash ? "The tool rebuilds this; it can go to Cleanup." : "Removed with a command or in the tool.";
+        iconBox.ToolTip = trash ? "The tool rebuilds this; it can go in the basket." : "Removed with a command or in the tool.";
         DockPanel.SetDock(iconBox, Dock.Left);
         head.Children.Add(iconBox);
         head.Children.Add(Rd.Text(item.Entry.Title, 13));
@@ -1140,7 +1140,7 @@ public sealed class DeveloperBoardPage : UserControl
         {
             var button = Rd.AccentButton(staged ? "In the basket" : $"Add {ShellFormat.HeroBytes(item.Bytes)} to basket", () =>
             {
-                if (staged) Model.ShowPage("Cleanup");
+                if (staged) Model.OpenBasket();
                 else Stage([item], confirm: false);
             }, large: true, fullWidth: true, hard: !staged);
             button.Margin = new Thickness(0, 10, 3, 0);

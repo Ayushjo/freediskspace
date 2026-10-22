@@ -417,7 +417,7 @@ internal sealed class ExploreMap : FrameworkElement
         }
         if (tree.IsDirectory[id]) item("Open", () => Model.DrillTo(id));
         item("Show in File Explorer", () => Explorer.Reveal(path));
-        item("Add to Cleanup", () => Model.Stage(id, "Explore: " + tree.NameOf(id)));
+        item("Add to basket", () => Model.Stage(id, "Explore: " + tree.NameOf(id)));
         menu.PlacementTarget = this;
         menu.IsOpen = true;
         e.Handled = true;

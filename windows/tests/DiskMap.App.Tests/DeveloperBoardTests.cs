@@ -60,11 +60,11 @@ public class DeveloperBoardTests
             false, new HashSet<string> { @"C:\v\2.0" });
         var targets = ToolStageTargets(item);
         Assert.Equal([1, 3], targets.Select(t => t.NodeId));
-        Assert.Equal("Add 2 older versions to Cleanup · 4 GB", ToolStageTitle(item, targets.Count));
+        Assert.Equal("Add 2 older versions to the basket · 4 GB", ToolStageTitle(item, targets.Count));
 
         var guide = item with { Entry = entry with { Action = SystemStorageCatalog.Action.Guide } };
         Assert.Empty(ToolStageTargets(guide));
         var single = item with { Entry = entry with { PerChild = false } };
-        Assert.Equal("Add to Cleanup · 4 GB", ToolStageTitle(single, 2));
+        Assert.Equal("Add to basket · 4 GB", ToolStageTitle(single, 2));
     }
 }

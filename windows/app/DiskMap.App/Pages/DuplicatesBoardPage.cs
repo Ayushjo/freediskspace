@@ -767,7 +767,7 @@ public sealed class DuplicatesBoardPage : UserControl
                     ? $"{risky.Count} risky item{(risky.Count == 1 ? "" : "s")} (WSL/Docker disks, apps, browser data…) won't be added — add those one at a time to see the warning."
                     : null;
                 bool ok = Model.ConfirmBulk?.Invoke("Duplicates",
-                    "These will be added to Cleanup. Nothing is deleted yet — you review the list on the Cleanup page and confirm again before anything moves to the Recycle Bin.",
+                    "Nothing is deleted yet — you review the basket and confirm again before anything moves to the Recycle Bin.",
                     items, footnote) == true;
                 if (!ok) return;
             }
@@ -781,12 +781,12 @@ public sealed class DuplicatesBoardPage : UserControl
             }
             if (risky.Count > 0)
             {
-                string addedText = added == 1 ? "Added 1 item to Cleanup" : $"Added {added:N0} items to Cleanup";
+                string addedText = added == 1 ? "Added 1 item to the basket" : $"Added {added:N0} items to the basket";
                 string names = string.Join(", ", risky.Take(2)) + (risky.Count > 2 ? $" +{risky.Count - 2}" : "");
                 Model.Toast($"{(added > 0 ? addedText + " · " : "")}skipped {risky.Count} risky item{(risky.Count == 1 ? "" : "s")} ({names}) — add those one at a time to see the warning");
             }
             else if (added > 0) Model.ToastAdded(added);
-            else if (already > 0) Model.Toast("Already in Cleanup");
+            else if (already > 0) Model.Toast("Already in the basket");
             // What went in leaves the ticks; what was refused stays ticked.
             _checked = _checked.Where(rejected.Contains).ToHashSet();
         }
