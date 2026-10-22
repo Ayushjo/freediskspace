@@ -166,6 +166,21 @@ public sealed class ScanModel : ViewModelBase
         if (RootPath == path) SpaceAccount = account;
     }
 
+    private IReadOnlyList<SystemStorageCatalog.Item>? _systemStorage;
+    /// <summary>"What Windows keeps" (WIN-116, P2; Mac: systemStorage). Null until measured.</summary>
+    public IReadOnlyList<SystemStorageCatalog.Item>? SystemStorage { get => _systemStorage; private set { if (Set(ref _systemStorage, value)) Changed(); } }
+
+    /// <summary>
+    /// Measures "What Windows keeps" off the UI thread: from this scan where it covers the path
+    /// (allocated sizes), else by a bounded walk of the path itself. Kept only while the scan
+    /// it was measured for is still the current one.
+    /// </summary>
+    private async Task ReadSystemStorageAsync(string path, FileTree tree, long[] allocated, IReadOnlyList<int> denied)
+    {
+        var items = await Task.Run(() => Harness.SystemStorageFor(tree, path, allocated, denied));
+        if (RootPath == path && ReferenceEquals(Tree, tree)) SystemStorage = items;
+    }
+
     /// <summary>WIN-066: non-null when the opt-in ReFS block-clone pass ran on the last scan.</summary>
     public BlockClones.Report? CloneProfile { get; private set; }
 
@@ -458,9 +473,11 @@ public sealed class ScanModel : ViewModelBase
             // The harness pins "Scanned 2 minutes ago", as the Mac's --deterministic does.
             LastScanFinishedAt = Harness.Deterministic ? DateTimeOffset.Now.AddSeconds(-120) : DateTimeOffset.Now;
             SpaceAccount = null;
+            SystemStorage = null;
             Tree = scanned.Tree;
             PrewarmDeveloper();
             _ = ReadSpaceAccountAsync(path, snapshot.ScannedOnDiskBytes, scanned.DeniedDirectoryIds.Count);
+            _ = ReadSystemStorageAsync(path, scanned.Tree, allocated, scanned.DeniedDirectoryIds);
             // WIN-013: let staging measure from this tree when the journal
             // proves a staged folder's subtree is unchanged since the scan.
             Cleanup.SetScanContext(scanned.Tree, path, scanned.ScanMarker,
@@ -524,9 +541,11 @@ public sealed class ScanModel : ViewModelBase
         RootPath = snapshot.RootPath;
         Volume = Harness.VolumeFor(snapshot.RootPath);
         SpaceAccount = null;
+        SystemStorage = null;
         Tree = snapshot.Tree;
         PrewarmDeveloper();
         _ = ReadSpaceAccountAsync(snapshot.RootPath, snap.ScannedOnDiskBytes, 0);
+        _ = ReadSystemStorageAsync(snapshot.RootPath, snapshot.Tree, allocated, []);
     }
 
     // Zoom navigation history for the breadcrumb ‹ › buttons.

@@ -279,12 +279,13 @@ public static class Dialogs
 
     /// <summary>
     /// The sheet Overview opens from "Where's the rest?": the drive's used space as one stacked
-    /// bar, then a folding row per part, then Done.
+    /// bar, then a folding row per part, then "What Windows keeps" when it was measured, then Done.
     /// </summary>
-    public static void ShowSpaceAccount(Window? owner, SpaceAccount account) => SpaceAccountWindow(owner, account).ShowDialog();
+    public static void ShowSpaceAccount(Window? owner, SpaceAccount account, IReadOnlyList<SystemStorageCatalog.Item>? system = null) =>
+        SpaceAccountWindow(owner, account, system).ShowDialog();
 
     /// <summary>The "Where's the rest?" sheet, not yet shown (the harness renders it to a file).</summary>
-    public static Window SpaceAccountWindow(Window? owner, SpaceAccount account)
+    public static Window SpaceAccountWindow(Window? owner, SpaceAccount account, IReadOnlyList<SystemStorageCatalog.Item>? system = null)
     {
         var body = new StackPanel();
         var head = new DockPanel();
@@ -301,10 +302,19 @@ public static class Dialogs
         head.Children.Add(titles);
         body.Children.Add(head);
 
+        // The breakdown, then "What Windows keeps", 24 apart in one scroller (Mac: DiskMapSpace.lg).
+        var content = new StackPanel();
+        content.Children.Add(SpaceAccountBreakdown(account));
+        if (system is { Count: > 0 })
+        {
+            var keeps = SystemStorageList(system, StageSystemStorage);
+            keeps.Margin = new Thickness(0, 24, 0, 0);
+            content.Children.Add(keeps);
+        }
         var scroller = new ScrollViewer
         {
             MaxHeight = 520, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false,
-            Content = SpaceAccountBreakdown(account), Margin = new Thickness(0, 18, 0, 0),
+            Content = content, Margin = new Thickness(0, 18, 0, 0),
         };
         body.Children.Add(scroller);
 
@@ -383,6 +393,122 @@ public static class Dialogs
         // Skips the palette's lilac (index 1), too close to the accent.
         _ => Ui.Data(new[] { 0, 2, 3, 5, 4, 6 }[index % 6]),
     };
+
+    // ---- "What Windows keeps" (Mac: SystemStorageList, P2) ----
+
+    /// <summary>
+    /// Storage Windows fills by itself, with how to free it through Windows' own Settings: a mono
+    /// label over a card of folding rows. Only <c>trash</c> entries can go to the basket.
+    /// </summary>
+    public static FrameworkElement SystemStorageList(IReadOnlyList<SystemStorageCatalog.Item> items,
+        Action<SystemStorageCatalog.Item, SystemStorageCatalog.Found>? stage)
+    {
+        var section = new StackPanel();
+        section.Children.Add(Rd.MonoLabel("What Windows keeps"));
+        var rows = new StackPanel();
+        for (int i = 0; i < items.Count; i++)
+        {
+            var row = SystemStorageRow(items[i], stage);
+            if (i > 0) row.Margin = new Thickness(0, 10, 0, 0);
+            rows.Children.Add(row);
+        }
+        var card = Rd.Surface(rows, "RdCard", 12);
+        card.Padding = new Thickness(16);
+        card.Margin = new Thickness(0, 10, 0, 0);
+        section.Children.Add(card);
+        System.Windows.Automation.AutomationProperties.SetAutomationId(section, "system-storage");
+        return section;
+    }
+
+    private static FrameworkElement SystemStorageRow(SystemStorageCatalog.Item item,
+        Action<SystemStorageCatalog.Item, SystemStorageCatalog.Found>? stage)
+    {
+        var action = item.Entry.Action;
+        var icon = Ui.Glyph(SystemStorageIcon(action), 11,
+            Ui.Brush(action == SystemStorageCatalog.Action.Trash ? "AppAccent" : "RdInk3"));
+        var leading = new Border { Width = 12, Child = icon, ToolTip = SystemStorageHelp(action) };
+        var size = item.SizeUnknown || (item.IsPartial && item.Bytes == 0)
+            ? Rd.Text(SystemStorageSize(item), 12, null, "RdInk3")
+            : Rd.Figure(SystemStorageSize(item), 12, FontWeights.SemiBold);
+        if (SystemStorageSizeHelp(item) is { } help) size.ToolTip = help;
+
+        var detail = new StackPanel();
+        void Add(FrameworkElement element)
+        {
+            if (detail.Children.Count > 0) element.Margin = new Thickness(0, 6, 0, 0);
+            detail.Children.Add(element);
+        }
+        Add(Rd.Text(item.Entry.Why, 12, null, "RdInk2", wrap: true));
+        foreach (var step in item.Entry.Steps) Add(Rd.Text(step, 12, null, "RdInk", wrap: true));
+        var links = new WrapPanel();
+        void AddLink(FrameworkElement link, string automationId)
+        {
+            if (links.Children.Count > 0) link.Margin = new Thickness(14, 0, 0, 0);
+            System.Windows.Automation.AutomationProperties.SetAutomationId(link, automationId);
+            links.Children.Add(link);
+        }
+        if (item.Entry.SettingsUri is { } uri)
+            AddLink(Rd.Link("Open Settings", () => OpenSettings(uri), 12), $"system-storage-settings-{item.Id}");
+        if (stage is not null)
+        {
+            var targets = SystemStorageCatalog.StageTargets(item);
+            foreach (var found in targets)
+                AddLink(Rd.Link(SystemStorageStageTitle(found, targets.Count), () => stage(item, found), 12), "system-storage-stage");
+        }
+        if (links.Children.Count > 0) Add(links);
+
+        var row = FoldingRow(item.Entry.Title, leading, size, detail);
+        System.Windows.Automation.AutomationProperties.SetAutomationId(row, $"system-storage-row-{item.Id}");
+        return row;
+    }
+
+    /// <summary>Lock: Windows manages it. Gear: freed in Settings. Trash: can go to the basket.</summary>
+    internal static string SystemStorageIcon(SystemStorageCatalog.Action action) => action switch
+    {
+        SystemStorageCatalog.Action.Never => "BsLockFill",
+        SystemStorageCatalog.Action.Guide => "BsGearFill",
+        _ => "BsTrash3Fill",
+    };
+
+    internal static string SystemStorageHelp(SystemStorageCatalog.Action action) => action switch
+    {
+        SystemStorageCatalog.Action.Never => "Windows manages this; nothing to do.",
+        SystemStorageCatalog.Action.Guide => "Freed through Windows' own settings.",
+        _ => "Can go in the basket (Recycle Bin first).",
+    };
+
+    /// <summary>The row's figure: bytes, "+" when some folder inside couldn't be read; words when nothing could.</summary>
+    internal static string SystemStorageSize(SystemStorageCatalog.Item item) =>
+        item.SizeUnknown ? "Not measured"
+        : item.IsPartial && item.Bytes == 0 ? "Can't read"
+        : ShellFormat.Bytes(item.Bytes) + (item.IsPartial ? "+" : "");
+
+    internal static string? SystemStorageSizeHelp(SystemStorageCatalog.Item item) =>
+        !item.Entry.Measured ? "Not measured on purpose: the explanation says why."
+        : item.SizeUnknown ? "Measuring this folder took too long."
+        : item.IsPartial && item.Bytes == 0 ? "Windows didn't let freedisk.space read inside this folder."
+        : item.IsPartial ? "At least this much: Windows didn't let freedisk.space read some folders inside."
+        : null;
+
+    /// <summary>"Add to the basket", or with the folder's name when an entry found several.</summary>
+    internal static string SystemStorageStageTitle(SystemStorageCatalog.Found found, int count) =>
+        count == 1 ? "Add to the basket" : $"Add {System.IO.Path.GetFileName(found.Path.TrimEnd('\\', '/'))} to the basket";
+
+    /// <summary>Opens a Windows Settings page. Launching a local Settings page, not networking; only ms-settings: is allowed.</summary>
+    private static void OpenSettings(string uri)
+    {
+        if (!SystemStorageCatalog.IsSettingsUri(uri)) return;
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(uri) { UseShellExecute = true }); }
+        catch { ScanModel.Shared.Toast("Couldn't open Settings"); }
+    }
+
+    /// <summary>One trash entry's path to the basket, through the model's single stage path (Mac: stageRow).</summary>
+    private static void StageSystemStorage(SystemStorageCatalog.Item item, SystemStorageCatalog.Found found)
+    {
+        var model = ScanModel.Shared;
+        if (model.IsStaged(found.Path)) { model.Toast("Already in the basket"); return; }
+        if (!model.StagePath(found.Path, found.Bytes, item.Entry.Title)) model.Toast("This can't go in the basket");
+    }
 
     /// <summary>
     /// FoldingRow: a name and a figure that fold their explanation away until clicked, so the

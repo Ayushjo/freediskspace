@@ -105,7 +105,7 @@ public partial class MainWindow : Window
                         risky.Close();
                         if (_model.SpaceAccount is { } account)
                         {
-                            var rest = Dialogs.SpaceAccountWindow(this, account);
+                            var rest = Dialogs.SpaceAccountWindow(this, account, _model.SystemStorage);
                             SaveWindowShot(rest, stem + "-rest.png");
                             rest.Close();
                         }

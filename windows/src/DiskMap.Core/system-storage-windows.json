@@ -1,0 +1,91 @@
+{
+  "_comment": "Storage Windows fills by itself (AGENTS.md: patterns are data). The Windows twin of the Mac's system-storage.json, shown as 'What Windows keeps' in the Where's the rest? sheet. Research and sources: docs/STORAGE-RESEARCH-PLAN.md section 2. Paths take %SystemDrive%, %SystemRoot%, %LOCALAPPDATA% and the other variables UserFolders.Expand knows; a trailing * in the last component matches by prefix. action: never = Windows manages it, nothing to do; guide = free it through Windows' own settings (steps); trash = may be added to the basket (the Recycle Bin), and only when the path is outside CleanupQueue's excluded list. settingsUri: an ms-settings: page, opened by the shell (anything else is dropped when the file loads). measure: false = never sized (WinSxS: hard links make any folder walk over-count; only DISM /AnalyzeComponentStore, run as administrator, measures it, and the app never runs it). The Delivery Optimization cache path is from third-party sources (plan section 10): if it's wrong it's simply not found.",
+  "entries": [
+    {
+      "id": "windows-old",
+      "title": "Previous Windows installation",
+      "paths": ["%SystemDrive%\\Windows.old"],
+      "action": "guide",
+      "why": "The Windows you had before the last upgrade, kept so you can go back to it. Windows removes it by itself about 10 days after the upgrade.",
+      "steps": [
+        "Open Settings › System › Storage › Temporary files.",
+        "Tick Previous Windows installation(s) and choose Remove files. You can't go back to the earlier version afterwards."
+      ],
+      "settingsUri": "ms-settings:storagesense",
+      "regrows": false
+    },
+    {
+      "id": "upgrade-files",
+      "title": "Windows upgrade files",
+      "paths": ["%SystemDrive%\\$WINDOWS.~BT", "%SystemDrive%\\$Windows.~WS"],
+      "action": "guide",
+      "why": "Files Windows Setup downloads and unpacks to upgrade Windows. Windows protects them, so freedisk.space leaves them to Windows' own cleanup.",
+      "steps": [
+        "Open Settings › System › Storage › Temporary files.",
+        "Tick Temporary Windows installation files and choose Remove files."
+      ],
+      "settingsUri": "ms-settings:storagesense",
+      "regrows": true
+    },
+    {
+      "id": "update-downloads",
+      "title": "Windows Update downloads",
+      "paths": [
+        "%SystemRoot%\\SoftwareDistribution\\Download",
+        "%SystemRoot%\\ServiceProfiles\\NetworkService\\AppData\\Local\\Microsoft\\Windows\\DeliveryOptimization\\Cache"
+      ],
+      "action": "guide",
+      "why": "Updates Windows has downloaded, and Delivery Optimization's cache of update files it can share with other PCs. Windows clears the cache by itself and caps it at a share of the disk.",
+      "steps": [
+        "Open Settings › System › Storage › Temporary files.",
+        "Tick Windows Update Cleanup and Delivery Optimization Files and choose Remove files."
+      ],
+      "settingsUri": "ms-settings:storagesense",
+      "regrows": true
+    },
+    {
+      "id": "recall-snapshots",
+      "title": "Recall snapshots",
+      "paths": ["%LOCALAPPDATA%\\CoreAIPlatform.00"],
+      "action": "guide",
+      "why": "The snapshots Recall saves of your screen, encrypted on this PC. Removing its files by hand breaks Recall instead of freeing space cleanly, so they never go to the basket.",
+      "steps": [
+        "Open Settings › Privacy & security › Recall & snapshots.",
+        "Delete snapshots there, or lower how much storage Recall may use."
+      ],
+      "settingsUri": "ms-settings:privacy",
+      "regrows": true
+    },
+    {
+      "id": "component-store",
+      "title": "Component store (WinSxS)",
+      "paths": ["%SystemRoot%\\WinSxS"],
+      "action": "never",
+      "measure": false,
+      "why": "The files Windows needs to install updates and turn features on or off. Explorer shows it much bigger than it is: most files here are hard links to the same data in Windows' own folders, so they're counted twice. Only DISM /AnalyzeComponentStore, run as administrator, measures it.",
+      "steps": [
+        "Never delete files here: Windows can stop updating or starting.",
+        "Windows cleans it up on a schedule. To do it now, open Disk Cleanup, choose Clean up system files and tick Windows Update Cleanup."
+      ],
+      "regrows": true
+    },
+    {
+      "id": "installer-cache",
+      "title": "Windows Installer cache",
+      "paths": ["%SystemRoot%\\Installer"],
+      "action": "never",
+      "why": "Copies of the installers (.msi and .msp) of your programs and their updates. Windows Installer needs them to repair, update or uninstall those programs.",
+      "steps": ["Nothing to do: uninstalling a program you no longer use removes its copies too."],
+      "regrows": false
+    },
+    {
+      "id": "windows-logs",
+      "title": "Windows logs",
+      "paths": ["%SystemRoot%\\Logs"],
+      "action": "never",
+      "why": "Logs Windows writes while it installs updates, features and drivers (CBS, DISM and others). They're how a failed update gets diagnosed.",
+      "steps": ["Nothing to do: leave them to Windows."],
+      "regrows": true
+    }
+  ]
+}

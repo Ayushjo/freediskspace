@@ -250,7 +250,7 @@ public sealed class OverviewPage : UserControl
         {
             // The full account replaces the one-line "Why?" once it was read; its parts always
             // add up to what the drive has in use.
-            var rest = Rd.Link("Where's the rest?", () => Dialogs.ShowSpaceAccount(Window.GetWindow(this), account), 12);
+            var rest = Rd.Link("Where's the rest?", () => Dialogs.ShowSpaceAccount(Window.GetWindow(this), account, Model.SystemStorage), 12);
             rest.Margin = new Thickness(6, 0, 0, 0);
             rest.ToolTip = "Explains the gap between this scan and the drive";
             System.Windows.Automation.AutomationProperties.SetAutomationId(rest, "space-account-link");

@@ -136,4 +136,32 @@ internal static class Harness
             [new("pagefile.sys", 12_884_901_888), new("hiberfil.sys", 6_817_349_632), new("swapfile.sys", 268_435_456)],
             unreadableFolders, isElevated: false);
     }
+
+    /// <summary>
+    /// "What Windows keeps" for the scan. Deterministic runs show the bundled entries with fixed
+    /// demo figures (Mac: SnapshotHarness.fixedSystemStorage), so renders never show this PC's own
+    /// folders: logs partial, WinSxS unmeasured, as the live card can be.
+    /// </summary>
+    public static List<SystemStorageCatalog.Item> SystemStorageFor(FileTree tree, string path, long[] allocated, IReadOnlyList<int> denied)
+    {
+        if (!Deterministic)
+            return SystemStorageCatalog.Measure(SystemStorageCatalog.SystemEntries, tree, path, allocated, denied,
+                sizer: SystemStorageCatalog.WalkSizer);
+        var sizes = new Dictionary<string, long>
+        {
+            ["windows-old"] = 21_400_000_000, ["upgrade-files"] = 6_120_000_000, ["update-downloads"] = 3_380_000_000,
+            ["recall-snapshots"] = 4_870_000_000, ["installer-cache"] = 5_260_000_000, ["windows-logs"] = 1_140_000_000,
+            ["component-store"] = 0,
+        };
+        static string Demo(string pattern) => pattern
+            .Replace("%SystemDrive%", "C:", StringComparison.OrdinalIgnoreCase)
+            .Replace("%SystemRoot%", @"C:\Windows", StringComparison.OrdinalIgnoreCase)
+            .Replace("%LOCALAPPDATA%", @"C:\Users\you\AppData\Local", StringComparison.OrdinalIgnoreCase);
+        return SystemStorageCatalog.SystemEntries
+            .Where(e => sizes.ContainsKey(e.Id))
+            .Select(e => new SystemStorageCatalog.Item(e, [new(Demo(e.Paths[0]), -1, sizes[e.Id])],
+                IsPartial: e.Id == "windows-logs", new HashSet<string>(), SizeUnknown: !e.Measured))
+            .OrderByDescending(i => i.Bytes).ThenBy(i => i.Id, StringComparer.Ordinal)
+            .ToList();
+    }
 }
