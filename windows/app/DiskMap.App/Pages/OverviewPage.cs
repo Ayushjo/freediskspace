@@ -248,11 +248,12 @@ public sealed class OverviewPage : UserControl
         row.Children.Add(text);
         if (WhyDetail() is { Count: > 0 } detail)
         {
-            var why = Rd.Link("Why?", () => { }, 12);
+            System.Windows.Controls.Primitives.Popup? popup = null;
+            // The link handles its own click, so the toggle must be its action (a second
+            // MouseLeftButtonUp handler never runs once the link marks the event handled).
+            var why = Rd.Link("Why?", () => { if (popup is not null) popup.IsOpen = !popup.IsOpen; }, 12);
             why.Margin = new Thickness(6, 0, 0, 0);
-            var popup = WhyPopover(why, detail);
-            why.MouseLeftButtonUp += (_, _) => popup.IsOpen = !popup.IsOpen;
-            why.KeyDown += (_, e) => { if (e.Key is Key.Enter or Key.Space) popup.IsOpen = !popup.IsOpen; };
+            popup = WhyPopover(why, detail);
             row.Children.Add(why);
             row.Children.Add(popup);
         }
