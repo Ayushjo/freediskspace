@@ -7,4 +7,4 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 DISKMAP_LIVE_TESTS=1 exec scripts/test.sh \
-  --filter "LocalSnapshotsTests|SpaceAccountTests|TimeMachineSnapshotRemovalTests|ForeignMountsTests" "$@"
+  --filter "LocalSnapshotsTests|SpaceAccountTests|TimeMachineSnapshotRemovalTests|ForeignMountsTests|SystemStorageCatalogTests" "$@"

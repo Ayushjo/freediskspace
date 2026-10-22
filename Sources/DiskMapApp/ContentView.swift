@@ -233,6 +233,9 @@ final class ScanModel: ObservableObject {
     /// main thread) and on disks that aren't APFS.
     @Published var spaceAccount: SpaceAccount?
     @Published var isSpaceAccountPresented = false
+    /// Storage macOS fills by itself (P2), measured where it lives. Nil
+    /// until read; read with the space account after each scan.
+    @Published var systemStorage: [SystemStorageCatalog.Item]?
     /// Time Machine snapshot deletion from "Where's the rest?" (decision D1).
     enum SnapshotDeletion: Equatable {
         case idle, running
@@ -729,6 +732,7 @@ final class ScanModel: ObservableObject {
     /// finished. A newer scan discards the result.
     private func startSpaceAccount(root: URL, generation: Int) {
         spaceAccount = nil
+        systemStorage = nil
         isSpaceAccountPresented = false
         if snapshotDeletion != .running { snapshotDeletion = .idle }
         let scanned = analysis.scannedOnDiskBytes
@@ -739,6 +743,7 @@ final class ScanModel: ObservableObject {
                 breakdown: SnapshotHarness.fixedBreakdown, scanRootPath: root.path,
                 scanRootMountPoint: "/System/Volumes/Data", scannedOnDiskBytes: scanned,
                 purgeableBytes: 6_400_000_000, snapshots: SnapshotHarness.fixedSnapshots, unreadableFolders: denied)
+            systemStorage = SnapshotHarness.fixedSystemStorage
             switch SnapshotHarness.restState {
             case "running": snapshotDeletion = .running
             case "deleted": snapshotDeletion = .finished(deleted: 2, failed: [])
@@ -754,6 +759,9 @@ final class ScanModel: ObservableObject {
             }.value
             guard generation == scanGeneration else { return }
             spaceAccount = account
+            let system = await Task.detached(priority: .utility) { SystemStorageCatalog.measure() }.value
+            guard generation == scanGeneration else { return }
+            systemStorage = system
         }
     }
 

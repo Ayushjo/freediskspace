@@ -1,3 +1,4 @@
+import AppKit
 import DiskMapCore
 import SwiftUI
 
@@ -87,10 +88,21 @@ struct SpaceAccountSheet: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            ScrollView {
-                SpaceAccountBreakdown(account: account)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: DiskMapSpace.lg) {
+                        SpaceAccountBreakdown(account: account)
+                        if let items = model.systemStorage, !items.isEmpty {
+                            SystemStorageList(items: items, model: model).id("system-storage")
+                        }
+                    }
+                }
+                .onAppear {
+                    // Snapshot harness: `--rest-state system` shows this part.
+                    if SnapshotHarness.restState == "system" { proxy.scrollTo("system-storage", anchor: .top) }
+                }
             }
-            .frame(maxHeight: account.timeMachineSnapshotNames.isEmpty && model.snapshotDeletion == .idle ? 460 : 300)
+            .frame(maxHeight: account.timeMachineSnapshotNames.isEmpty && model.snapshotDeletion == .idle ? 520 : 380)
             snapshotSection
             HStack {
                 Spacer()
@@ -206,5 +218,76 @@ struct SpaceAccountSheet: View {
         }
         if parts.isEmpty { parts.append("Nothing was deleted.") }
         return parts.joined(separator: " ")
+    }
+}
+
+/// "What macOS keeps" (P2): storage macOS fills by itself, with how to free
+/// it through macOS's own settings. Only installer apps can go to Cleanup.
+struct SystemStorageList: View {
+    let items: [SystemStorageCatalog.Item]
+    @ObservedObject var model: ScanModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            MonoLabel("What macOS keeps")
+            Text("Space macOS fills by itself. Most of it can only be freed through macOS's own settings.")
+                .font(DiskMapType.secondary)
+                .foregroundStyle(DiskMapTheme.ink2)
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 14) {
+                ForEach(items) { item in row(item) }
+            }
+            .padding(16)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(DiskMapTheme.card))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(DiskMapTheme.line, lineWidth: 1))
+        }
+        .accessibilityIdentifier("system-storage")
+    }
+
+    private func row(_ item: SystemStorageCatalog.Item) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: DiskMapSpace.xs) {
+                Text(item.entry.title).font(DiskMapType.bodyEmphasis).foregroundStyle(DiskMapTheme.ink)
+                if item.entry.regrows {
+                    Text("COMES BACK").font(DiskMapType.label).foregroundStyle(DiskMapTheme.ink3)
+                        .help("macOS downloads or rebuilds this again when it needs it.")
+                }
+                Spacer(minLength: DiskMapSpace.sm)
+                Text(ByteFormat.string(item.bytes) + (item.isPartial ? "+" : ""))
+                    .font(DiskMapType.figureStrong).foregroundStyle(DiskMapTheme.ink)
+                    .help(item.isPartial ? "Some folders inside couldn't be read without Full Disk Access, so it's at least this much." : "")
+            }
+            Text(item.entry.why)
+                .font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink2)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(item.entry.steps, id: \.self) { step in
+                Text(step).font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 8) {
+                if let pane = item.entry.settingsPane, let url = Self.settingsURL(pane) {
+                    Button("Open Settings") { NSWorkspace.shared.open(url) }
+                        .buttonStyle(SecondaryButtonStyle())
+                        .accessibilityIdentifier("system-storage-settings-\(item.id)")
+                }
+                if item.entry.action == .trash {
+                    ForEach(item.found, id: \.path) { found in
+                        Button(item.found.count == 1 ? "Add to Cleanup"
+                               : "Add \(URL(fileURLWithPath: found.path).deletingPathExtension().lastPathComponent) to Cleanup") {
+                            model.stageRow(path: found.path, size: found.bytes, reason: item.entry.title)
+                        }
+                        .buttonStyle(SecondaryButtonStyle())
+                        .accessibilityIdentifier("system-storage-stage")
+                    }
+                }
+            }
+            .padding(.top, 2)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("system-storage-row-\(item.id)")
+    }
+
+    static func settingsURL(_ pane: String) -> URL? {
+        URL(string: "x-apple.systempreferences:" + pane)
     }
 }

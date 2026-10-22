@@ -1,0 +1,72 @@
+{
+  "_comment": "Storage macOS fills by itself (AGENTS.md rule 6: patterns are data). Research and sources: docs/STORAGE-RESEARCH-PLAN.md section 2. Paths: '~' is the home folder; a trailing '*' in the last component matches by prefix. action: never = macOS manages it, nothing to do; guide = free it through macOS's own settings (steps); trash = may be added to Cleanup. settingsPane: a System Settings extension id, checked against /System/Library/ExtensionKit/Extensions on macOS 26.5.",
+  "entries": [
+    {
+      "id": "intelligence-siri",
+      "title": "Apple Intelligence & Siri models",
+      "paths": ["/System/Library/AssetsV2/com_apple_MobileAsset_UAF_Siri_*", "/System/Library/AssetsV2/com_apple_MobileAsset_UAF_Translation_*", "/System/Library/AssetsV2/com_apple_MobileAsset_Trial_Siri_*", "/System/Library/AssetsV2/com_apple_MobileAsset_ImageCaptionModel"],
+      "action": "guide",
+      "why": "On-device models for Apple Intelligence, Siri and translation. macOS downloads them and protects them; no app can delete them.",
+      "steps": ["Open System Settings › Apple Intelligence & Siri.", "Turn off what you don't use. macOS removes those models later by itself."],
+      "settingsPane": "com.apple.Siri-Settings.extension",
+      "regrows": true
+    },
+    {
+      "id": "language-speech",
+      "title": "Language, dictation & voices",
+      "paths": ["/System/Library/AssetsV2/com_apple_MobileAsset_LinguisticData", "/System/Library/AssetsV2/com_apple_MobileAsset_UAF_Speech_*", "/System/Library/AssetsV2/com_apple_MobileAsset_TTSAXResourceModelAssets", "/System/Library/AssetsV2/com_apple_MobileAsset_MacinTalkVoiceAssets", "/System/Library/AssetsV2/com_apple_MobileAsset_DictionaryServices_*"],
+      "action": "guide",
+      "why": "Spelling, prediction, dictation and spoken-content voices for the languages you use. Protected by macOS.",
+      "steps": ["Remove languages you don't type in: System Settings › Keyboard › Text Input.", "Remove extra voices: System Settings › Accessibility › Spoken Content › System Voice › Manage Voices."],
+      "settingsPane": "com.apple.Keyboard-Settings.extension",
+      "regrows": true
+    },
+    {
+      "id": "pending-updates",
+      "title": "Downloaded macOS updates",
+      "paths": ["/Library/Updates", "/System/Library/AssetsV2/com_apple_MobileAsset_MacSoftwareUpdate", "/System/Library/AssetsV2/com_apple_MobileAsset_MacSplatSoftwareUpdate", "/System/Library/AssetsV2/com_apple_MobileAsset_SFRSoftwareUpdate"],
+      "action": "guide",
+      "why": "Updates macOS has downloaded but not installed yet. Deleting them by hand can break the next update.",
+      "steps": ["Install the waiting update in System Settings › General › Software Update. macOS clears the download afterwards."],
+      "settingsPane": "com.apple.Software-Update-Settings.extension",
+      "regrows": false
+    },
+    {
+      "id": "aerial-videos",
+      "title": "Aerial wallpaper & screen saver videos",
+      "paths": ["~/Library/Application Support/com.apple.wallpaper/aerials/videos", "/Library/Application Support/com.apple.idleassetsd/Customer"],
+      "action": "guide",
+      "why": "The moving landscape videos behind aerial wallpapers and screen savers, often hundreds of MB each.",
+      "steps": ["Choose a still wallpaper and a non-aerial screen saver in System Settings › Wallpaper.", "macOS downloads aerials again if you pick one later."],
+      "settingsPane": "com.apple.Wallpaper-Settings.extension",
+      "regrows": true
+    },
+    {
+      "id": "wallpaper-cache",
+      "title": "Wallpaper cache",
+      "paths": ["~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches/com.apple.wallpaper.caches"],
+      "action": "guide",
+      "why": "A cache the wallpaper agent keeps. A known macOS bug can let it grow very large; Apple calls deleting it by hand risky and unsupported.",
+      "steps": ["There is no supported way to clear it, so freedisk.space leaves it alone.", "If it keeps growing, report it to Apple with Feedback Assistant."],
+      "regrows": true
+    },
+    {
+      "id": "macos-installers",
+      "title": "macOS installer apps",
+      "paths": ["/Applications/Install macOS *"],
+      "action": "trash",
+      "why": "Full macOS installers, often over 12 GB each. Once macOS is installed you don't need them; you can download them again from the App Store.",
+      "steps": ["Add them to Cleanup. They go to the Trash first."],
+      "regrows": false
+    },
+    {
+      "id": "system-logs",
+      "title": "System logs",
+      "paths": ["/private/var/db/diagnostics", "/private/var/db/uuidtext"],
+      "action": "never",
+      "why": "macOS's unified log. It caps its own size and removes old entries; deleting it breaks diagnostics.",
+      "steps": ["Nothing to do: macOS keeps this in check."],
+      "regrows": true
+    }
+  ]
+}

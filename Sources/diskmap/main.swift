@@ -24,6 +24,9 @@ USAGE
       (in: downloads desktop documents library caches · is: duplicate
       hardlink cloud · kind: video audio image media document developer
       archive). Bare words match names; -word excludes.
+  diskmap system [--json]
+      Storage macOS manages itself: Apple Intelligence models, voices,
+      pending updates, aerial videos, installers, logs — and how to free it.
   diskmap export <path> --format json|ndjson|csv|ncdu [--out FILE]
                  [--min-size SIZE] [--max-depth N]
       The whole scan, for jq, spreadsheets, or `ncdu -f FILE`.
@@ -375,6 +378,29 @@ case "find":
     }
     warnDenied(deniedPaths(result, root: root))
 
+case "system":
+    let items = SystemStorageCatalog.measure()
+    if json {
+        emitJSON([
+            "schema": 1,
+            "items": items.map { item -> [String: Any] in
+                [
+                    "id": item.id, "title": item.entry.title, "sizeBytes": item.bytes, "partial": item.isPartial,
+                    "action": item.entry.action.rawValue, "regrows": item.entry.regrows,
+                    "paths": item.found.map(\.path), "steps": item.entry.steps,
+                ]
+            },
+        ])
+    } else {
+        for item in items {
+            let size = ByteCountFormatter.string(fromByteCount: item.bytes, countStyle: .file) + (item.isPartial ? "+" : "")
+            print(size.padding(toLength: 12, withPad: " ", startingAt: 0) + item.entry.title)
+            for step in item.entry.steps { print("            " + step) }
+        }
+        if items.contains(where: \.isPartial) {
+            print("\n+ some folders couldn't be read; grant Full Disk Access to your terminal for the full size.")
+        }
+    }
 case "export":
     let root = rootURL()
     guard let rawFormat = flags["--format"], let format = ExportFormat(rawValue: rawFormat) else {

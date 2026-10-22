@@ -581,6 +581,20 @@ enum SnapshotHarness {
     /// deletion state.
     static var restState: String? { value(after: "--rest-state") }
 
+    /// "What macOS keeps" for deterministic renders: the bundled entries
+    /// with fixed sizes, plus one installer so the Cleanup button shows.
+    static let fixedSystemStorage: [SystemStorageCatalog.Item] = {
+        let sizes: [String: Int64] = ["intelligence-siri": 2_230_000_000, "language-speech": 2_010_000_000,
+                                      "aerial-videos": 467_000_000, "pending-updates": 256_000_000,
+                                      "wallpaper-cache": 96_700_000, "system-logs": 2_880_000_000,
+                                      "macos-installers": 14_200_000_000]
+        return SystemStorageCatalog.loadEntries().compactMap { entry in
+            guard let bytes = sizes[entry.id] else { return nil }
+            let path = entry.id == "macos-installers" ? "/Applications/Install macOS Sequoia.app" : entry.paths[0]
+            return SystemStorageCatalog.Item(entry: entry, found: [(path: path, bytes: bytes)], isPartial: entry.id == "system-logs")
+        }.sorted { $0.bytes > $1.bytes }
+    }()
+
     /// Two Time Machine snapshots for deterministic renders of the sheet.
     static let fixedSnapshots: [LocalSnapshots.Snapshot] = [
         "com.apple.TimeMachine.2026-10-21-101500.local", "com.apple.TimeMachine.2026-10-22-091500.local",

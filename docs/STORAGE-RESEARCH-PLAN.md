@@ -155,6 +155,8 @@ We should **not** recommend or bundle third-party "remove Apple Intelligence" to
   - Mac AssetsV2 firmlink twin (B11)
 - **Rule 3 changes, decision D2:** add `CoreAIPlatform.00` on Windows (B9). Optionally add `/Library/Updates` on Mac.
 
+**Status (2026-10-22): Mac built.** `system-storage.json` + `SystemStorageCatalog`, shown as "What macOS keeps" in the Where's the rest? sheet and as `diskmap system`. Measured here: logs 2.89 GB, Apple Intelligence & Siri 2.23 GB, language & voices 2.01 GB, aerials 467 MB, pending updates 256 MB, wallpaper cache 97 MB; models match `du` within 2%. Settings pane ids checked against /System/Library/ExtensionKit. Only installers can reach Cleanup. **Open (rule 3, maintainer):** the queue's excluded list doesn't block aerial videos or the wallpaper cache if staged by hand from Explore. Windows: not started.
+
 **Effort:** M per platform.
 
 ---
