@@ -274,4 +274,155 @@ public static class Dialogs
         window.Loaded += (_, _) => keep.Focus();
         return window;
     }
+
+    // ---- "Where's the rest?" (Mac: SpaceAccountSheet) ----
+
+    /// <summary>
+    /// The sheet Overview opens from "Where's the rest?": the drive's used space as one stacked
+    /// bar, then a folding row per part, then Done.
+    /// </summary>
+    public static void ShowSpaceAccount(Window? owner, SpaceAccount account)
+    {
+        var body = new StackPanel();
+        var head = new DockPanel();
+        var tile = Rd.IconTile(Icons.PieChart, 40);
+        tile.Margin = new Thickness(0, 0, 14, 0);
+        tile.VerticalAlignment = VerticalAlignment.Top;
+        DockPanel.SetDock(tile, Dock.Left);
+        head.Children.Add(tile);
+        var titles = new StackPanel();
+        titles.Children.Add(Rd.Text("Where's the rest?", 20, FontWeights.SemiBold));
+        var sub = Rd.Text($"{ShellFormat.Bytes(account.UsedBytes)} in use, split into parts that add up", 13, null, "RdInk2", wrap: true);
+        sub.Margin = new Thickness(0, 6, 0, 0);
+        titles.Children.Add(sub);
+        head.Children.Add(titles);
+        body.Children.Add(head);
+
+        var scroller = new ScrollViewer
+        {
+            MaxHeight = 520, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false,
+            Content = SpaceAccountBreakdown(account), Margin = new Thickness(0, 18, 0, 0),
+        };
+        body.Children.Add(scroller);
+
+        Window? window = null;
+        var done = Rd.AccentButton("Done", () => window!.Close(), large: true);
+        done.IsDefault = true;
+        done.IsCancel = true;
+        done.HorizontalAlignment = HorizontalAlignment.Right;
+        done.Margin = new Thickness(0, 18, 0, 0);
+        System.Windows.Automation.AutomationProperties.SetAutomationId(done, "space-account-done");
+        body.Children.Add(done);
+
+        window = Sheet(body, 520, owner);   // the Mac sheet's width
+        window.Loaded += (_, _) => done.Focus();
+        window.ShowDialog();
+    }
+
+    /// <summary>SpaceAccountBreakdown: one stacked bar, then a folding row per part, in a card.</summary>
+    public static Border SpaceAccountBreakdown(SpaceAccount account)
+    {
+        var stack = new StackPanel();
+        stack.Children.Add(StackedBar(account));
+        var rows = new StackPanel { Margin = new Thickness(0, 14, 0, 0) };
+        for (int i = 0; i < account.Rows.Count; i++)
+        {
+            var row = account.Rows[i];
+            var detail = new StackPanel();
+            detail.Children.Add(Rd.Text(row.Detail, 12, null, "RdInk2", wrap: true));
+            if (row.Confidence == SpaceAccount.Confidence.Remainder)
+            {
+                var note = Rd.Text("Worked out from the other figures, not measured directly.", 12, null, "RdInk3", wrap: true);
+                note.Margin = new Thickness(0, 6, 0, 0);
+                detail.Children.Add(note);
+            }
+            var dot = new System.Windows.Shapes.Ellipse { Width = 8, Height = 8, Fill = AccountColor(row, i) };
+            var folding = FoldingRow(row.Title, dot, Rd.Figure(ShellFormat.Bytes(row.Bytes), 12, FontWeights.SemiBold), detail);
+            if (i > 0) folding.Margin = new Thickness(0, 10, 0, 0);
+            System.Windows.Automation.AutomationProperties.SetAutomationId(folding, "space-account-row");
+            rows.Children.Add(folding);
+        }
+        stack.Children.Add(rows);
+        var card = Rd.Surface(stack, "RdCard", 12);
+        card.Padding = new Thickness(16);
+        System.Windows.Automation.AutomationProperties.SetAutomationId(card, "space-account");
+        return card;
+    }
+
+    /// <summary>Every part as one 10 pt bar, in row order, 2 pt apart, each at least 3 pt.</summary>
+    private static FrameworkElement StackedBar(SpaceAccount account)
+    {
+        var grid = new Grid { Height = 10, ClipToBounds = true };
+        int column = 0;
+        for (int i = 0; i < account.Rows.Count; i++)
+        {
+            var row = account.Rows[i];
+            double fraction = account.UsedBytes > 0 ? (double)row.Bytes / account.UsedBytes : 0;
+            if (fraction <= 0) continue;
+            if (column > 0) grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(fraction, GridUnitType.Star), MinWidth = 3 });
+            var part = new System.Windows.Shapes.Rectangle { Fill = AccountColor(row, i) };
+            Grid.SetColumn(part, grid.ColumnDefinitions.Count - 1);
+            grid.Children.Add(part);
+            column++;
+        }
+        // Rounded 3 pt ends: a Border's radius doesn't clip its child, so clip to the laid-out size.
+        grid.SizeChanged += (_, e) => grid.Clip = new RectangleGeometry(new Rect(e.NewSize), 3, 3);
+        System.Windows.Automation.AutomationProperties.SetAutomationId(grid, "space-account-bar");
+        return grid;
+    }
+
+    /// <summary>The scan in the accent; Windows' own parts in the data palette; what's left in a quiet grey.</summary>
+    public static Brush AccountColor(SpaceAccount.Row row, int index) => row.Part switch
+    {
+        SpaceAccount.Part.Scanned => Ui.Brush("AppAccent"),
+        SpaceAccount.Part.NotSeen => Rd.WithOpacity(Ui.Brush("RdInk3"), 0.45),
+        // Skips the palette's lilac (index 1), too close to the accent.
+        _ => Ui.Data(new[] { 0, 2, 3, 5, 4, 6 }[index % 6]),
+    };
+
+    /// <summary>
+    /// FoldingRow: a name and a figure that fold their explanation away until clicked, so the
+    /// sheet stays a list of numbers, not a page of text.
+    /// </summary>
+    public static FrameworkElement FoldingRow(string title, FrameworkElement leading, FrameworkElement trailing, FrameworkElement detail, bool startsOpen = false)
+    {
+        var chevron = Ui.Glyph(Icons.ChevronRight, 10, Ui.Brush("RdInk3"));
+        chevron.RenderTransformOrigin = new Point(0.5, 0.5);
+        var rotate = new RotateTransform(startsOpen ? 90 : 0);
+        chevron.RenderTransform = rotate;
+        chevron.Margin = new Thickness(10, 0, 0, 0);
+        chevron.VerticalAlignment = VerticalAlignment.Center;
+
+        var header = new DockPanel { Background = Brushes.Transparent, Cursor = System.Windows.Input.Cursors.Hand };
+        leading.VerticalAlignment = VerticalAlignment.Center;
+        leading.Margin = new Thickness(0, 0, 10, 0);
+        DockPanel.SetDock(leading, Dock.Left);
+        header.Children.Add(leading);
+        DockPanel.SetDock(chevron, Dock.Right);
+        header.Children.Add(chevron);
+        trailing.VerticalAlignment = VerticalAlignment.Center;
+        trailing.Margin = new Thickness(8, 0, 0, 0);
+        DockPanel.SetDock(trailing, Dock.Right);
+        header.Children.Add(trailing);
+        var name = Rd.Text(title, 13);
+        name.VerticalAlignment = VerticalAlignment.Center;
+        name.TextTrimming = TextTrimming.CharacterEllipsis;
+        header.Children.Add(name);
+
+        detail.Margin = new Thickness(20, 6, 0, 0);
+        detail.Visibility = startsOpen ? Visibility.Visible : Visibility.Collapsed;
+        var stack = new StackPanel();
+        stack.Children.Add(header);
+        stack.Children.Add(detail);
+        header.ToolTip = null;
+        header.MouseLeftButtonUp += (_, e) =>
+        {
+            bool open = detail.Visibility != Visibility.Visible;
+            detail.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+            rotate.Angle = open ? 90 : 0;
+            e.Handled = true;
+        };
+        return stack;
+    }
 }

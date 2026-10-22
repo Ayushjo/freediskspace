@@ -155,6 +155,17 @@ public sealed class ScanModel : ViewModelBase
     private VolumeInfo? _volume;
     public VolumeInfo? Volume { get => _volume; private set { if (Set(ref _volume, value)) Changed(); } }
 
+    private SpaceAccount? _spaceAccount;
+    /// <summary>"Where's the rest?" — the drive's used space in parts that add up (WIN-113). Nil until read.</summary>
+    public SpaceAccount? SpaceAccount { get => _spaceAccount; private set { if (Set(ref _spaceAccount, value)) Changed(); } }
+
+    private async Task ReadSpaceAccountAsync(string path, long scannedOnDiskBytes, int unreadable)
+    {
+        var volume = Volume;
+        var account = await Task.Run(() => Harness.SpaceAccountFor(volume, path, scannedOnDiskBytes, unreadable));
+        if (RootPath == path) SpaceAccount = account;
+    }
+
     /// <summary>WIN-066: non-null when the opt-in ReFS block-clone pass ran on the last scan.</summary>
     public BlockClones.Report? CloneProfile { get; private set; }
 
@@ -418,7 +429,9 @@ public sealed class ScanModel : ViewModelBase
             Volume = Harness.VolumeFor(path);
             // The harness pins "Scanned 2 minutes ago", as the Mac's --deterministic does.
             LastScanFinishedAt = Harness.Deterministic ? DateTimeOffset.Now.AddSeconds(-120) : DateTimeOffset.Now;
+            SpaceAccount = null;
             Tree = scanned.Tree;
+            _ = ReadSpaceAccountAsync(path, snapshot.ScannedOnDiskBytes, scanned.DeniedDirectoryIds.Count);
             // WIN-013: let staging measure from this tree when the journal
             // proves a staged folder's subtree is unchanged since the scan.
             Cleanup.SetScanContext(scanned.Tree, path, scanned.ScanMarker,
@@ -480,7 +493,9 @@ public sealed class ScanModel : ViewModelBase
         _zoomForward.Clear();
         RootPath = snapshot.RootPath;
         Volume = Harness.VolumeFor(snapshot.RootPath);
+        SpaceAccount = null;
         Tree = snapshot.Tree;
+        _ = ReadSpaceAccountAsync(snapshot.RootPath, snap.ScannedOnDiskBytes, 0);
     }
 
     // Zoom navigation history for the breadcrumb ‹ › buttons.

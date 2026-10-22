@@ -270,7 +270,7 @@ public sealed class SettingsWindow : Window
 
     private FrameworkElement Privacy()
     {
-        bool admin = IsElevated();
+        bool admin = Harness.IsElevated();
         FrameworkElement access = admin
             ? Rd.Tag("Allowed", Rd.TagTone.Accent)
             : Rd.Tag("Off");
@@ -280,16 +280,6 @@ public sealed class SettingsWindow : Window
                 : "Off. Some system folders are left out of scans, and scans walk folders instead of reading the MFT.", access),
             Row("Analytics and crash reports", "None. There is nothing to turn on.", Rd.Tag("Never")),
             Row("Reset all settings", "Saved scans and History are kept.", Rd.SecondaryButton("Reset…", ConfirmReset)));
-    }
-
-    private static bool IsElevated()
-    {
-        try
-        {
-            using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
-            return new System.Security.Principal.WindowsPrincipal(identity).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
-        }
-        catch { return false; }
     }
 
     // ---- Actions ----

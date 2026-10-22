@@ -246,7 +246,17 @@ public sealed class OverviewPage : UserControl
         text.MaxWidth = 900;
         System.Windows.Automation.AutomationProperties.SetAutomationId(text, "volume-reconciliation");
         row.Children.Add(text);
-        if (WhyDetail() is { Count: > 0 } detail)
+        if (ShowsAccount && Model.SpaceAccount is { } account)
+        {
+            // The full account replaces the one-line "Why?" once it was read; its parts always
+            // add up to what the drive has in use.
+            var rest = Rd.Link("Where's the rest?", () => Dialogs.ShowSpaceAccount(Window.GetWindow(this), account), 12);
+            rest.Margin = new Thickness(6, 0, 0, 0);
+            rest.ToolTip = "Explains the gap between this scan and the drive";
+            System.Windows.Automation.AutomationProperties.SetAutomationId(rest, "space-account-link");
+            row.Children.Add(rest);
+        }
+        else if (WhyDetail() is { Count: > 0 } detail)
         {
             System.Windows.Controls.Primitives.Popup? popup = null;
             // The link handles its own click, so the toggle must be its action (a second
@@ -259,6 +269,8 @@ public sealed class OverviewPage : UserControl
         }
         return row;
     }
+
+    private bool ShowsAccount => Model.SpaceAccount is { } a && a.Rows.Count > 1 && a.Total == a.UsedBytes;
 
     private string CoverageText()
     {

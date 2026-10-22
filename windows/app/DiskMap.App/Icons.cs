@@ -28,6 +28,7 @@ public static class Icons
     public const string Link = "BsLink45Deg";
     public const string Drive = "BsDeviceHdd";
     public const string ChevronDown = "BsChevronDown";
+    public const string ChevronRight = "BsChevronRight";
     public const string Grid = "BsGrid";
     public const string DarkMode = "BsMoon";
     public const string LightMode = "BsSun";

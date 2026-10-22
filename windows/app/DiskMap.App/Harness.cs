@@ -69,4 +69,30 @@ internal static class Harness
     /// <summary>The volume to show: the fixed one in deterministic runs, else the real drive.</summary>
     public static VolumeInfo? VolumeFor(string? path) =>
         Deterministic ? FixedVolume(path) : VolumeStats.Of(path);
+
+    /// <summary>Whether this process runs as administrator (it can read System Volume Information).</summary>
+    public static bool IsElevated()
+    {
+        try
+        {
+            using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+            return new System.Security.Principal.WindowsPrincipal(identity).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+        }
+        catch { return false; }
+    }
+
+    /// <summary>
+    /// "Where's the rest?" for the scan. Deterministic runs pin Windows' files and the Recycle
+    /// Bin to demo figures, so renders never show this PC's own.
+    /// </summary>
+    public static SpaceAccount? SpaceAccountFor(VolumeInfo? volume, string path, long scannedOnDiskBytes, int unreadableFolders)
+    {
+        if (!Deterministic) return SpaceAccount.Read(volume, path, scannedOnDiskBytes, unreadableFolders, IsElevated());
+        if (volume is not { UsedBytes: > 0 } v) return null;
+        string full = System.IO.Path.GetFullPath(path);
+        bool driveRoot = string.Equals(full.TrimEnd('\\'), (System.IO.Path.GetPathRoot(full) ?? full).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase);
+        return SpaceAccount.Build(v.UsedBytes, driveRoot, scannedOnDiskBytes, 1_240_000_000,
+            [new("pagefile.sys", 12_884_901_888), new("hiberfil.sys", 6_817_349_632), new("swapfile.sys", 268_435_456)],
+            unreadableFolders, isElevated: false);
+    }
 }
