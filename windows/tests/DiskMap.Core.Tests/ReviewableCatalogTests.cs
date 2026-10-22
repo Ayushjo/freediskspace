@@ -125,6 +125,31 @@ public class ReviewableCatalogTests
     }
 
     [Fact]
+    public void EveryPathSitsNextToItsOwnScanEntry()
+    {
+        // Paths are listed in name order; NodeIds must follow them, or the basket stages the
+        // wrong folder for a path (Clean up pairs Paths[i] with NodeIds[i]).
+        // Found out of name order (GPUCache before Cache), so sorting the paths alone would misalign them.
+        (string, long)[] files =
+        [
+            .. DemoFiles,
+            (@"AppData\Roaming\Slack\GPUCache\data_1", 100 * MB),
+            (@"AppData\Roaming\Slack\Cache\data_0", 300 * MB),
+            (@"AppData\Roaming\Slack\Code Cache\js\index", 200 * MB),
+        ];
+        var (tree, totals) = Build(files);
+        using var _ = new HomeOverride(Root);
+        var targets = ReviewableCatalog.Build(tree, Root, totals, QuickWins.Find(tree, Root, QuickWins.BundledPatterns())).Targets;
+        Assert.Contains(targets, t => t.DisplayName == "Slack" && t.Paths.Count == 3);
+        foreach (var target in targets)
+        {
+            Assert.Equal(target.Paths.Count, target.NodeIds.Count);
+            for (int i = 0; i < target.Paths.Count; i++)
+                Assert.Equal(target.Paths[i], tree.PathOf(target.NodeIds[i], Root), StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    [Fact]
     public void ACacheInsideACacheCountsOnce()
     {
         var targets = Catalog(

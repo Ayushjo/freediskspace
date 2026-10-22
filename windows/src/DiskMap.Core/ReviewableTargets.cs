@@ -149,21 +149,24 @@ public static class ReviewableCatalog
             for (int child = tree.FirstChild[id]; child != -1; child = tree.NextSibling[child])
                 if (tree.IsDirectory[child]) stack.Push(child);
         }
-        return byApp.Select(kv => new ReviewableTarget(
-                Id: $"cache-{kv.Key}",
+        // Paths and NodeIds are parallel lists (Paths[i] is NodeIds[i]): sort them as pairs.
+        static List<(string Path, int Id)> Pairs(Acc acc) =>
+            acc.Paths.Zip(acc.NodeIds).Select(p => (p.First, p.Second)).OrderBy(p => p.First, StringComparer.Ordinal).ToList();
+        return byApp.Select(kv => (kv, pairs: Pairs(kv.Value))).Select(t => new ReviewableTarget(
+                Id: $"cache-{t.kv.Key}",
                 Category: ReviewableCategory.Caches,
-                DisplayName: kv.Key,
-                Detail: kv.Value.Detail,
-                Bytes: kv.Value.Bytes,
-                PrimaryPath: kv.Value.Paths.Order(StringComparer.Ordinal).First(),
-                Paths: kv.Value.Paths.Order(StringComparer.Ordinal).ToList(),
-                NodeIds: kv.Value.NodeIds,
-                Safety: kv.Value.Safety.Level == SafetyLevel.Protected
-                    ? new SafetyAssessment(SafetyLevel.Review, kv.Value.Safety.Reason, kv.Key)
-                    : kv.Value.Safety,
-                Consequence: kv.Value.Consequence,
-                Symbol: kv.Value.Symbol,
-                BundleHint: kv.Value.BundleHint))
+                DisplayName: t.kv.Key,
+                Detail: t.kv.Value.Detail,
+                Bytes: t.kv.Value.Bytes,
+                PrimaryPath: t.pairs[0].Path,
+                Paths: t.pairs.Select(p => p.Path).ToList(),
+                NodeIds: t.pairs.Select(p => p.Id).ToList(),
+                Safety: t.kv.Value.Safety.Level == SafetyLevel.Protected
+                    ? new SafetyAssessment(SafetyLevel.Review, t.kv.Value.Safety.Reason, t.kv.Key)
+                    : t.kv.Value.Safety,
+                Consequence: t.kv.Value.Consequence,
+                Symbol: t.kv.Value.Symbol,
+                BundleHint: t.kv.Value.BundleHint))
             .OrderByDescending(t => t.Bytes).ThenBy(t => t.Id, StringComparer.Ordinal)
             .ToList();
     }
