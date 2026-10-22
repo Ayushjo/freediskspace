@@ -245,7 +245,7 @@ public partial class MainWindow : Window
         _pageFactories["Biggest Folders"] = () => new BiggestFoldersPage();
         _pageFactories["Forgotten Files"] = () => new ForgottenFilesPage();
         _pageFactories["Duplicates"] = () => new DuplicatesPage();
-        _pageFactories["Safe to Review"] = () => new SafeToReviewPage();
+        _pageFactories["Safe to Review"] = () => new CleanUpPage();   // Mac cleanSafe: Clean up
         _pageFactories["Caches"] = () => new CachesPage();
         _pageFactories["Old Downloads"] = () => new OldDownloadsPage();
         _pageFactories["Large Media"] = () => new LargeMediaPage();

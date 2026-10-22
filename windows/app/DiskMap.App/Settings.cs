@@ -18,6 +18,8 @@ public sealed class AppSettings
     /// <summary>WIN-066: after each scan on a ReFS volume, map extents and count block clones once.</summary>
     [JsonPropertyName("cloneAccounting")] public bool CloneAccounting { get; set; }
     [JsonPropertyName("showDusty")] public bool ShowDusty { get; set; } = true;
+    /// <summary>Clean up ticks what rebuilds by itself for you (Mac: CleanUp.TickRebuilds); off = tick everything yourself.</summary>
+    [JsonPropertyName("tickRebuilds")] public bool TickRebuilds { get; set; } = true;
 
     private static string Path0 => System.IO.Path.Combine(DiskMap.Core.UserFolders.StateDirectory, "settings.json");
 

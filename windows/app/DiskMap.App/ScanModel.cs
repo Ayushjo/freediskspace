@@ -660,6 +660,29 @@ public sealed class ScanModel : ViewModelBase
         return ok;
     }
 
+    /// <summary>True when this exact path is in the basket.</summary>
+    public bool IsStaged(string path) =>
+        StagedItems.Any(s => string.Equals(System.IO.Path.GetFullPath(s.Path).TrimEnd('\\'),
+            System.IO.Path.GetFullPath(path).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Put Back the last cleanup from the Recycle Bin (Mac: putBackLastCleanup). Restoring is
+    /// never destructive: anything already back, or whose place is taken, is left alone and
+    /// kept in the record for a later try.
+    /// </summary>
+    public async Task<PutBackReport?> PutBackLastCleanupAsync()
+    {
+        if (CleanupRecord.Load() is not { Items.Count: > 0 } record) return null;
+        var report = await Task.Run(() => PutBack.Run(record));
+        var left = record.Items.Where(i => report.Restored.All(r => r.OriginalPath != i.OriginalPath)).ToList();
+        new CleanupRecord(record.Date, left).Save();
+        Toast($"Put back {report.Restored.Count} item{(report.Restored.Count == 1 ? "" : "s")}"
+            + (report.Skipped.Count > 0 ? $" · {report.Skipped.Count} skipped ({report.Skipped[0].Reason})" : ""));
+        RefreshStaged();
+        Changed();
+        return report;
+    }
+
     public void Unstage(Guid id)
     {
         Cleanup.Unstage(id);
