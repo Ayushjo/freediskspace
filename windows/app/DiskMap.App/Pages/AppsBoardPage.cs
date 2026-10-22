@@ -173,6 +173,8 @@ public sealed class AppsBoardPage : UserControl
             }
             // One row per id (a key name can repeat across the registry views).
             list = list.GroupBy(ApplicationsCatalog.EntryId).Select(g => g.First()).ToList();
+            if (!demo)
+                foreach (var a in list) _icons.GetOrAdd(ApplicationsCatalog.EntryId(a), _ => ReadIcon(a));
             var broadFolders = ApplicationsCatalog.BroadFolders();
             var launches = demo ? [] : ProgramUsage.ReadUserAssist();
             var built = list.Select(a => ApplicationsCatalog.Stub(a,
@@ -511,7 +513,7 @@ public sealed class AppsBoardPage : UserControl
         int c = 0;
 
         var first = new StackPanel { Orientation = Orientation.Horizontal };
-        first.Children.Add(AppTile(28));
+        first.Children.Add(AppTile(28, app));
         var name = Rd.Text(app.Name, 13.5, FontWeights.Medium);
         name.Margin = new Thickness(12, 0, 0, 0);
         first.Children.Add(name);
@@ -610,17 +612,52 @@ public sealed class AppsBoardPage : UserControl
         return menu;
     }
 
-    /// <summary>The app's tile: a card square with the app glyph (radius 22% of its size, like the Mac's icons).</summary>
-    private static Border AppTile(double size)
+    /// <summary>Program icons by entry id, read once from each program's .exe (off the UI thread).</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, ImageSource?> _icons = new();
+
+    /// <summary>The program's own icon, from its DisplayIcon or the .exe in its install folder; nil when none.</summary>
+    private static ImageSource? ReadIcon(InstalledApp app)
     {
-        var glyph = Ui.Glyph(Icons.Applications, Math.Round(size * 0.5), Ui.Brush("RdInk2"));
-        glyph.HorizontalAlignment = HorizontalAlignment.Center;
-        glyph.VerticalAlignment = VerticalAlignment.Center;
+        try
+        {
+            string? path = app.DisplayIcon?.Split(',')[0].Trim().Trim('"');
+            if (path is not { Length: > 0 } || !System.IO.File.Exists(path)
+                || !path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && !path.EndsWith(".ico", StringComparison.OrdinalIgnoreCase))
+                return null;
+            using var icon = path.EndsWith(".ico", StringComparison.OrdinalIgnoreCase)
+                ? new System.Drawing.Icon(path, 64, 64)
+                : System.Drawing.Icon.ExtractAssociatedIcon(path);
+            if (icon is null) return null;
+            var source = System.Windows.Interop.Imaging.CreateBitmapSourceFromHIcon(icon.Handle, Int32Rect.Empty,
+                System.Windows.Media.Imaging.BitmapSizeOptions.FromEmptyOptions());
+            source.Freeze();
+            return source;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// The app's tile (radius 22% of its size, like the Mac's icons): the program's own icon, else
+    /// its initial on a palette colour. Never an empty square — that read as a tick box.
+    /// </summary>
+    private static Border AppTile(double size, ApplicationEntry app)
+    {
+        if (_icons.TryGetValue(app.Id, out var image) && image is not null)
+            return new Border
+            {
+                Width = size, Height = size, VerticalAlignment = VerticalAlignment.Center,
+                Child = new Image { Source = image, Width = size, Height = size, Stretch = Stretch.Uniform },
+            };
+        string initial = app.Name.FirstOrDefault(char.IsLetterOrDigit) is var c && c != default ? char.ToUpperInvariant(c).ToString() : "?";
+        var letter = Rd.Text(initial, Math.Round(size * 0.46), FontWeights.SemiBold);
+        letter.Foreground = Brushes.White;
+        letter.HorizontalAlignment = HorizontalAlignment.Center;
+        letter.VerticalAlignment = VerticalAlignment.Center;
+        int hue = (int)((uint)StringComparer.OrdinalIgnoreCase.GetHashCode(app.Name) % (uint)Ui.DataPalette.Length);
         return new Border
         {
             Width = size, Height = size, CornerRadius = new CornerRadius(size * 0.22),
-            Background = Ui.Brush("RdCard"), BorderBrush = Ui.Brush("RdLine"), BorderThickness = new Thickness(1),
-            Child = glyph, VerticalAlignment = VerticalAlignment.Center,
+            Background = Ui.Data(hue), Child = letter, VerticalAlignment = VerticalAlignment.Center,
         };
     }
 
@@ -654,7 +691,7 @@ public sealed class AppsBoardPage : UserControl
 
         // Icon, name, publisher · version, path.
         var head = new DockPanel();
-        var tile = AppTile(56);
+        var tile = AppTile(56, app);
         tile.VerticalAlignment = VerticalAlignment.Top;
         tile.Margin = new Thickness(0, 0, 14, 0);
         DockPanel.SetDock(tile, Dock.Left);
