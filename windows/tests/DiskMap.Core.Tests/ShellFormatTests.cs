@@ -57,4 +57,77 @@ public class ShellFormatTests
     [InlineData(1_280, 1.3, 260)]
     public void SidebarWidthFollowsTheWindow(double window, double scale, double expected) =>
         Assert.Equal(expected, ShellFormat.SidebarWidth(window, scale));
+
+    /// <summary>Every value printed by macOS ByteCountFormatter (.file) on the Mac.</summary>
+    [Theory]
+    [InlineData(0L, "0 bytes")]
+    [InlineData(1L, "1 byte")]
+    [InlineData(2L, "2 bytes")]
+    [InlineData(999L, "999 bytes")]
+    [InlineData(1000L, "1 KB")]
+    [InlineData(1001L, "1 KB")]
+    [InlineData(1499L, "1 KB")]
+    [InlineData(1500L, "2 KB")]
+    [InlineData(1501L, "2 KB")]
+    [InlineData(2500L, "3 KB")]
+    [InlineData(999499L, "999 KB")]
+    [InlineData(999500L, "1 MB")]
+    [InlineData(999999L, "1 MB")]
+    [InlineData(1000000L, "1 MB")]
+    [InlineData(1049999L, "1 MB")]
+    [InlineData(1050000L, "1.1 MB")]
+    [InlineData(1150000L, "1.2 MB")]
+    [InlineData(8360000L, "8.4 MB")]
+    [InlineData(8350000L, "8.4 MB")]
+    [InlineData(8250000L, "8.3 MB")]
+    [InlineData(99950000L, "100 MB")]
+    [InlineData(999949999L, "999.9 MB")]
+    [InlineData(999950000L, "1 GB")]
+    [InlineData(1000000000L, "1 GB")]
+    [InlineData(1005000000L, "1.01 GB")]
+    [InlineData(1015000000L, "1.02 GB")]
+    [InlineData(1125000000L, "1.13 GB")]
+    [InlineData(17725000000L, "17.73 GB")]
+    [InlineData(26100000000L, "26.1 GB")]
+    [InlineData(183860000000L, "183.86 GB")]
+    [InlineData(500000000000L, "500 GB")]
+    [InlineData(999995000000L, "1 TB")]
+    [InlineData(1000000000000L, "1 TB")]
+    [InlineData(1234567890123L, "1.23 TB")]
+    [InlineData(393200L, "393 KB")]
+    [InlineData(640000000L, "640 MB")]
+    [InlineData(2400000L, "2.4 MB")]
+    [InlineData(120000000000L, "120 GB")]
+    [InlineData(28540000000L, "28.54 GB")]
+    [InlineData(12000000000L, "12 GB")]
+    [InlineData(196140000000L, "196.14 GB")]
+    [InlineData(5605000000L, "5.61 GB")]
+    [InlineData(5615000000L, "5.62 GB")]
+    public void BytesMatchTheMacFormatter(long bytes, string expected) =>
+        Assert.Equal(expected, ShellFormat.Bytes(bytes));
+
+    [Fact]
+    public void NegativeBytesKeepTheirSign() => Assert.Equal("-1.5 MB", ShellFormat.Bytes(-1_500_000));
+
+    [Fact]
+    public void HumanUnitsUsesTheSameFormat() => Assert.Equal("28.54 GB", HumanUnits.Format(28_540_000_000));
+
+    /// <summary>The Mac's ByteFormat.hero, values printed by Swift (digits picked before rounding).</summary>
+    [Theory]
+    [InlineData(0L, "0 bytes")]
+    [InlineData(999L, "999 bytes")]
+    [InlineData(1000L, "1.00 KB")]
+    [InlineData(120000000000L, "120 GB")]
+    [InlineData(500000000000L, "500 GB")]
+    [InlineData(28540000000L, "28.5 GB")]
+    [InlineData(8405000000L, "8.40 GB")]
+    [InlineData(8415000000L, "8.41 GB")]
+    [InlineData(1000000000L, "1.00 GB")]
+    [InlineData(99950000000L, "100.0 GB")]
+    [InlineData(999600000000L, "1000 GB")]
+    [InlineData(12345L, "12.3 KB")]
+    [InlineData(45550000000L, "45.5 GB")]
+    [InlineData(1234567890123L, "1.23 TB")]
+    public void HeroBytesMatchTheMac(long bytes, string expected) =>
+        Assert.Equal(expected, ShellFormat.HeroBytes(bytes));
 }

@@ -29,10 +29,17 @@ public static class Rd
     /// <summary>The hero figure on Overview ("120 GB"), sized by the caller.</summary>
     public static TextBlock Hero(string text, double size) => Text(text, size, FontWeights.SemiBold);
 
+    /// <summary>Segoe UI Variable's display cut for big type (SF switches to Display at 20 pt).</summary>
+    private static readonly FontFamily DisplayFont = new("Segoe UI Variable Display, Segoe UI");
+    private static readonly FontFamily TextFont = new("Segoe UI Variable Text, Segoe UI");
+
+    public static FontFamily FontFor(double size) => size >= 20 ? DisplayFont : TextFont;
+
     public static TextBlock Text(string text, double size = 13, FontWeight? weight = null,
         string color = "RdInk", bool wrap = false) => new()
     {
         Text = text,
+        FontFamily = FontFor(size),
         FontSize = Ui.Scaled(size),
         FontWeight = weight ?? FontWeights.Normal,
         Foreground = B(color),
@@ -99,15 +106,23 @@ public static class Rd
     }
 
     /// <summary>BoardBanner: a one-line notice, violet dot and a violet rule on the leading edge.</summary>
-    public static Border Banner(string title, string detail, string? actionTitle = null, Action? action = null)
+    public static Border Banner(string title, string detail, string? actionTitle = null, Action? action = null,
+        Action? onDismiss = null)
     {
         var row = new DockPanel { LastChildFill = true };
         var dot = new Ellipse { Width = 7, Height = 7, Fill = B("AppAccent"), Margin = new Thickness(0, 0, 12, 0) };
         DockPanel.SetDock(dot, Dock.Left);
         row.Children.Add(dot);
+        if (onDismiss is not null)
+        {
+            var close = IconButton(Icons.Cancel, "Dismiss", onDismiss, 24);
+            close.Margin = new Thickness(12, 0, 0, 0);
+            DockPanel.SetDock(close, Dock.Right);
+            row.Children.Add(close);
+        }
         if (actionTitle is not null)
         {
-            var button = Ui.Button(actionTitle, null, Ui.ButtonStyle.Outline, action);
+            var button = SecondaryButton(actionTitle, action);
             button.Margin = new Thickness(8, 0, 0, 0);
             DockPanel.SetDock(button, Dock.Right);
             row.Children.Add(button);
@@ -122,6 +137,7 @@ public static class Rd
             Background = B("AppAccent"), CornerRadius = new CornerRadius(10, 0, 0, 10),
         };
         var body = new Border { Padding = new Thickness(14, 0, 10, 0), MinHeight = 44, Child = row };
+        row.VerticalAlignment = VerticalAlignment.Center;
         var stack = new Grid();
         stack.Children.Add(body);
         stack.Children.Add(rule);
@@ -140,6 +156,7 @@ public static class Rd
     {
         var glyph = Ui.Glyph(icon, 14, B("RdInk"));
         glyph.HorizontalAlignment = HorizontalAlignment.Center;
+        glyph.VerticalAlignment = VerticalAlignment.Center;
         return new Border
         {
             Width = size, Height = size,
@@ -150,6 +167,25 @@ public static class Rd
             Child = glyph,
         };
     }
+
+    /// <summary>The Mac's SF Symbol names, as Bootstrap icons.</summary>
+    public static string IconForSymbol(string symbol) => symbol switch
+    {
+        "internaldrive" => "BsDeviceHdd",
+        "hammer" => "BsHammer",
+        "shippingbox" => "BsBox",
+        "folder" => "BsFolder",
+        "globe" or "safari" => "BsGlobe",
+        "music.note" => "BsMusicNote",
+        "chevron.left.forwardslash.chevron.right" => "BsCodeSlash",
+        "bubble.left" or "bubble.left.and.bubble.right" => "BsChatLeft",
+        "video" => "BsCameraVideo",
+        "paintbrush.pointed" => "BsBrush",
+        "paintpalette" => "BsPalette",
+        "doc.text" => "BsFileText",
+        "paperplane" => "BsSend",
+        _ => "BsFolder",
+    };
 
     public enum TagTone { Neutral, Accent, Ink }
 
@@ -184,7 +220,7 @@ public static class Rd
     /// 12 (18) side padding; `hard` adds the boards' black 3,3 offset shadow and a black outline.
     /// </summary>
     public static Button AccentButton(string text, Action? onClick = null, bool large = false,
-        bool fullWidth = false, bool hard = false)
+        bool fullWidth = false, bool hard = false, bool shadow = false)
     {
         var button = new Button
         {
@@ -197,7 +233,7 @@ public static class Rd
             Background = B("AppAccent"),
             Cursor = Cursors.Hand,
             HorizontalAlignment = fullWidth ? HorizontalAlignment.Stretch : HorizontalAlignment.Left,
-            Template = AccentTemplate(hard),
+            Template = AccentTemplate(hard, shadow || hard),
         };
         System.Windows.Automation.AutomationProperties.SetName(button, text);
         if (onClick is not null) button.Click += (_, _) => onClick();
@@ -280,14 +316,18 @@ public static class Rd
         return template;
     }
 
-    private static ControlTemplate? _accentSoft, _accentHard;
+    private static readonly Dictionary<(bool, bool), ControlTemplate> _accentTemplates = [];
 
-    private static ControlTemplate AccentTemplate(bool hard)
+    /// <summary>
+    /// <paramref name="hard"/>: black outline, black 3,3 shadow and a 2,2 press nudge (the first
+    /// launch's Scan button). <paramref name="withShadow"/> alone: just the black 3,3 block
+    /// behind the button (Overview's Review button).
+    /// </summary>
+    private static ControlTemplate AccentTemplate(bool hard, bool withShadow)
     {
-        if (hard && _accentHard is not null) return _accentHard;
-        if (!hard && _accentSoft is not null) return _accentSoft;
+        if (_accentTemplates.TryGetValue((hard, withShadow), out var cached)) return cached;
         // Pressed: 85% fill (and a 2,2 nudge for the hard style); disabled: 40% fill.
-        string shadow = hard
+        string shadow = withShadow
             ? "<Border CornerRadius=\"8\" Background=\"Black\" Margin=\"3,3,-3,-3\"/>"
             : "";
         string outline = hard ? "BorderBrush=\"Black\" BorderThickness=\"1\"" : "";
@@ -317,7 +357,7 @@ public static class Rd
   </ControlTemplate.Triggers>
 </ControlTemplate>";
         var template = (ControlTemplate)XamlReader.Parse(xaml);
-        if (hard) _accentHard = template; else _accentSoft = template;
+        _accentTemplates[(hard, withShadow)] = template;
         return template;
     }
 
@@ -420,6 +460,30 @@ public static class Rd
         return brush;
     }
 
+    /// <summary>Hatch with any colours, spacing and stroke (Mac Hatch(stripe:ground:spacing:width:)).</summary>
+    public static Brush HatchBrush(Brush stripe, Brush ground, double spacing, double width)
+    {
+        var group = new DrawingGroup();
+        group.Children.Add(new GeometryDrawing(ground, null, new RectangleGeometry(new Rect(0, 0, spacing, spacing))));
+        var lines = new GeometryGroup();
+        lines.Children.Add(new LineGeometry(new Point(-spacing, spacing), new Point(0, 0)));
+        lines.Children.Add(new LineGeometry(new Point(0, spacing), new Point(spacing, 0)));
+        lines.Children.Add(new LineGeometry(new Point(spacing, spacing), new Point(spacing * 2, 0)));
+        group.Children.Add(new GeometryDrawing(null, new Pen(stripe, width), lines));
+        group.ClipGeometry = new RectangleGeometry(new Rect(0, 0, spacing, spacing));
+        var brush = new DrawingBrush(group)
+        {
+            TileMode = TileMode.Tile,
+            Viewport = new Rect(0, 0, spacing, spacing),
+            ViewportUnits = BrushMappingMode.Absolute,
+            Viewbox = new Rect(0, 0, spacing, spacing),
+            ViewboxUnits = BrushMappingMode.Absolute,
+            Stretch = Stretch.None,
+        };
+        brush.Freeze();
+        return brush;
+    }
+
     /// <summary>FreeStripes: 2 px vertical line stripes every 6 on the card colour (free space in a bar).</summary>
     public static Brush FreeStripes()
     {
@@ -438,9 +502,9 @@ public static class Rd
     }
 
     /// <summary>BoardGrid: a faint 24 pt grid (ink @ 4.5%) behind some surfaces.</summary>
-    public static Brush Grid24()
+    public static Brush Grid24(Brush? tint = null)
     {
-        var pen = new Pen(WithOpacity(B("RdInk"), 0.045), 1);
+        var pen = new Pen(tint ?? WithOpacity(B("RdInk"), 0.045), 1);
         var lines = new GeometryGroup();
         lines.Children.Add(new LineGeometry(new Point(0.5, 0), new Point(0.5, 24)));
         lines.Children.Add(new LineGeometry(new Point(0, 0.5), new Point(24, 0.5)));
@@ -456,6 +520,112 @@ public static class Rd
         };
         brush.Freeze();
         return brush;
+    }
+
+    // ---- Layout ----
+
+    public enum WidthClass { Compact, Regular, Wide }
+
+    /// <summary>The boards' breakpoints by window width: 13" Air, 14" Pro, a large display.</summary>
+    public static WidthClass ClassFor(double windowWidth) =>
+        windowWidth < 1_400 ? WidthClass.Compact : windowWidth < 1_700 ? WidthClass.Regular : WidthClass.Wide;
+
+    public static double PagePadding(this WidthClass c) => c switch { WidthClass.Compact => 18, WidthClass.Regular => 24, _ => 28 };
+    public static double Gap(this WidthClass c) => c switch { WidthClass.Compact => 12, WidthClass.Regular => 16, _ => 18 };
+
+    /// <summary>
+    /// tightText: the hero figure with tracking (negative kerning on every character but the
+    /// last) and tabular digits, as one row of single-character runs.
+    /// </summary>
+    public static StackPanel TightText(string text, double size, double kerning, string color = "RdInk",
+        FontWeight? weight = null, Brush? brush = null)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal };
+        for (int i = 0; i < text.Length; i++)
+        {
+            var glyph = new TextBlock
+            {
+                Text = text[i].ToString(),
+                FontFamily = FontFor(size),
+                FontSize = Ui.Scaled(size),
+                FontWeight = weight ?? FontWeights.SemiBold,
+                Foreground = brush ?? B(color),
+                Margin = new Thickness(0, 0, i < text.Length - 1 ? Ui.Scaled(kerning) : 0, 0),
+            };
+            Typography.SetNumeralAlignment(glyph, FontNumeralAlignment.Tabular);
+            row.Children.Add(glyph);
+        }
+        System.Windows.Automation.AutomationProperties.SetName(row, text);
+        return row;
+    }
+
+    /// <summary>
+    /// Two runs on one baseline (Mac HStack(alignment: .lastTextBaseline)): "120 GB" then
+    /// "of 500 GB". Bottom-aligned, the smaller one lifted by the difference in descent.
+    /// </summary>
+    public static StackPanel BaselineRow(FrameworkElement big, double bigSize, FrameworkElement small, double smallSize,
+        double gap)
+    {
+        double descent(double size) => Ui.Scaled(size) * (FontFor(size).LineSpacing - FontFor(size).Baseline);
+        big.VerticalAlignment = VerticalAlignment.Bottom;
+        small.VerticalAlignment = VerticalAlignment.Bottom;
+        small.Margin = new Thickness(gap, 0, 0, Math.Max(0, descent(bigSize) - descent(smallSize)));
+        var row = new StackPanel { Orientation = Orientation.Horizontal };
+        row.Children.Add(big);
+        row.Children.Add(small);
+        return row;
+    }
+
+    /// <summary>LinkButtonStyle: accent 13 medium text, 70% while pressed, hand cursor.</summary>
+    public static TextBlock Link(string text, Action onClick, double size = 13, string color = "AppAccent",
+        FontWeight? weight = null)
+    {
+        var link = Text(text, size, weight ?? FontWeights.Medium, color);
+        link.Cursor = Cursors.Hand;
+        link.Focusable = true;
+        link.MouseLeftButtonDown += (_, e) => { link.Opacity = 0.7; e.Handled = true; };
+        link.MouseLeave += (_, _) => link.Opacity = 1;
+        link.MouseLeftButtonUp += (_, e) =>
+        {
+            if (link.Opacity < 1) { link.Opacity = 1; onClick(); }
+            e.Handled = true;
+        };
+        link.KeyDown += (_, e) => { if (e.Key is Key.Enter or Key.Space) { onClick(); e.Handled = true; } };
+        System.Windows.Automation.AutomationProperties.SetName(link, text);
+        return link;
+    }
+
+    /// <summary>IconButtonStyle: a square glyph button with a hover fill.</summary>
+    public static Border IconButton(string icon, string label, Action onClick, double size = 28)
+    {
+        var glyph = Ui.Glyph(icon, 12, B("RdInk2"));
+        glyph.HorizontalAlignment = HorizontalAlignment.Center;
+        glyph.VerticalAlignment = VerticalAlignment.Center;
+        var button = new Border
+        {
+            Width = size, Height = size, CornerRadius = new CornerRadius(6),
+            Background = Brushes.Transparent, Child = glyph, Cursor = Cursors.Hand, ToolTip = label,
+        };
+        button.MouseEnter += (_, _) => button.Background = B("RdHover");
+        button.MouseLeave += (_, _) => button.Background = Brushes.Transparent;
+        button.MouseLeftButtonUp += (_, e) => { onClick(); e.Handled = true; };
+        System.Windows.Automation.AutomationProperties.SetName(button, label);
+        return button;
+    }
+
+    /// <summary>A rounded surface with a fill and an optional hairline, clipped to its corners.</summary>
+    public static Border Surface(UIElement child, string fill, double radius, string? stroke = "RdLine")
+    {
+        var border = new Border
+        {
+            Background = B(fill),
+            BorderBrush = stroke is null ? null : B(stroke),
+            BorderThickness = new Thickness(stroke is null ? 0 : 1),
+            CornerRadius = new CornerRadius(radius),
+            Child = child,
+        };
+        ClipToRoundedBounds(border, radius);
+        return border;
     }
 
     // ---- Helpers ----

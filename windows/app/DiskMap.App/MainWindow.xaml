@@ -49,20 +49,8 @@
         </Border>
         <Border Grid.Row="2" Background="{DynamicResource RdLine}" />
 
-        <!-- Live scan strip: items found, rate, current folder, cancel. -->
-        <Border x:Name="ScanBanner" Grid.Row="3" Visibility="Collapsed"
-                BorderBrush="{DynamicResource RdLine}" BorderThickness="0,0,0,1"
-                Padding="16,6" Background="{DynamicResource RdPage}">
-            <DockPanel>
-                <ContentControl x:Name="ScanCancelHost" DockPanel.Dock="Right" />
-                <ContentControl x:Name="ScanDustyHost" DockPanel.Dock="Right" Margin="0,0,12,0" />
-                <StackPanel VerticalAlignment="Center">
-                    <TextBlock x:Name="ScanBannerText" FontSize="11.5"
-                               Foreground="{DynamicResource RdInk2}" />
-                    <ItemsControl x:Name="ScanTopLevels" Margin="0,4,0,0" />
-                </StackPanel>
-            </DockPanel>
-        </Border>
+        <!-- Row 3 is empty: the first scan shows on Overview's scanning board, a rescan in the
+             page bar ("Rescanning · N"), as on the Mac. -->
 
         <Grid Grid.Row="4">
             <Grid.ColumnDefinitions>

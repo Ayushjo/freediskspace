@@ -292,6 +292,7 @@ internal static class IncrementalScan
             NotDownloadedCount = notDownloaded,
             Backend = "usn",
             FallbackReason = null,
+            ChangedRecords = changedFrns.Count,
             ScanMarker = changes.Marker,
             // 0-denied can't be told from a journal replay — the baseline's
             // number would be a lie about the new tree; leave empty and let

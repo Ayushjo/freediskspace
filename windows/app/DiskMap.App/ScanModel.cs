@@ -133,6 +133,12 @@ public sealed class ScanModel : ViewModelBase
     private string? _fallbackReason;
     public string? FallbackReason { get => _fallbackReason; private set => Set(ref _fallbackReason, value); }
 
+    /// <summary>A quick update's replayed change count (Backend "usn"); the Overview footer's line.</summary>
+    public int ChangedRecords { get; private set; }
+
+    /// <summary>When the scan in flight started — the scanning board's clock.</summary>
+    public DateTimeOffset? ScanStartedAt { get; private set; }
+
     /// <summary>
     /// Directories that refused to list in the last scan — their bytes are
     /// missing from every total above them, so the UI says so rather than
@@ -318,6 +324,7 @@ public sealed class ScanModel : ViewModelBase
     public async Task ScanAsync(string path)
     {
         if (IsScanning) return;
+        ScanStartedAt = DateTimeOffset.Now;
         IsScanning = true;
         ScanPhase = "walking";
         ScanProgress = 0;
@@ -366,6 +373,7 @@ public sealed class ScanModel : ViewModelBase
             }
             ItemCount = scanned.ItemCount;
             Elapsed = scanned.ElapsedSeconds;
+            ChangedRecords = scanned.ChangedRecords;
             NotDownloaded = scanned.NotDownloadedCount;
             Backend = scanned.Backend;
             FallbackReason = scanned.FallbackReason;

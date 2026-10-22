@@ -58,7 +58,6 @@ public partial class MainWindow : Window
         _model.ScanRequested += async () => await PickAndScan();
         _model.StagedChanged += (_, _) => RefreshBasket();
         _model.PropertyChanged += OnModelChanged;
-        RefreshScanBanner();
         SizeChanged += (_, _) => RefreshAdaptiveLayout();
         SelectPage("Overview");
         // WIN-051: the shared keyboard map — destination shortcuts,
@@ -845,7 +844,6 @@ public partial class MainWindow : Window
             WindowChrome.SetIsHitTestVisibleInChrome(host, true);
         RefreshAdaptiveLayout();
         RefreshShell();
-        ScanCancelHost.Content = Rd.SecondaryButton("Cancel", () => _model.CancelScan());
     }
 
     /// <summary>Everything in the frame that reads the scan: page bar, nav figures, basket, footer.</summary>
@@ -1082,68 +1080,17 @@ public partial class MainWindow : Window
         {
             case nameof(ScanModel.IsScanning):
                 RefreshScanButton();
-                RefreshScanBanner();
                 RefreshScanStatus();
+                // A scan from the first launch always lands on Overview's scanning board.
+                if (_model.IsScanning && _model.Tree is null && _currentPage != "Overview") SelectPage("Overview");
                 break;
             case nameof(ScanModel.ScanStats):
             case nameof(ScanModel.ScanPhase):
-                RefreshScanBanner();
                 RefreshScanStatus();
                 break;
             case nameof(ScanModel.ReclaimEstimate):
                 RefreshBasket();
                 break;
-        }
-    }
-
-    private void RefreshScanBanner()
-    {
-        // A rescan reports in the page bar ("Rescanning · N"); only the first scan gets the strip.
-        if (!_model.IsScanning || _model.Tree is not null)
-        {
-            ScanBanner.Visibility = Visibility.Collapsed;
-            ScanTopLevels.ItemsSource = null;
-            ScanDustyHost.Content = null;
-            return;
-        }
-        ScanBanner.Visibility = Visibility.Visible;
-        ScanDustyHost.Content = AppSettings.Load().ShowDusty ? Ui.BrandIcon(40) : null;
-        if (_model.ScanPhase == "summarizing")
-        {
-            ScanBannerText.Text = "Summarizing scan — rolling up sizes…";
-            return;
-        }
-        var s = _model.ScanStats;
-        ScanBannerText.Text = s is null
-            ? $"Scanning {_model.RootPath}…"
-            : $"Scanning {s.CurrentFolder}…  {s.Items:N0} items · " +
-              $"{s.ItemsPerSecond:N0}/s · {ByteFormat.Format(s.Bytes)}";
-        // WIN-006: per-top-level fill bars — the live report already
-        // carries each top-level folder's running bytes.
-        if (s?.TopLevel is { Count: > 1 } top)
-        {
-            long max = top.Max(t => t.Bytes);
-            ScanTopLevels.ItemsSource = top.OrderByDescending(t => t.Bytes).Take(6).Select(t =>
-            {
-                var row = new DockPanel { Margin = new Thickness(0, 1, 0, 0) };
-                var fill = new Border
-                {
-                    Height = 3, CornerRadius = new CornerRadius(1.5),
-                    HorizontalAlignment = HorizontalAlignment.Left,
-                    Background = Ui.Brush("AppAccent"),
-                    Width = 140 * Math.Max(0.02, max > 0 ? (double)t.Bytes / max : 0),
-                    Margin = new Thickness(0, 0, 6, 0),
-                    VerticalAlignment = VerticalAlignment.Center,
-                };
-                DockPanel.SetDock(fill, Dock.Left);
-                row.Children.Add(fill);
-                row.Children.Add(Rd.Text($"{t.Name}  {ByteFormat.Format(t.Bytes)}", 10.5, null, "RdInk2"));
-                return (UIElement)row;
-            }).ToList();
-        }
-        else
-        {
-            ScanTopLevels.ItemsSource = null;
         }
     }
 
