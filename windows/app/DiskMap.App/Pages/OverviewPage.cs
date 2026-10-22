@@ -463,7 +463,6 @@ public sealed class OverviewPage : UserControl
             bar.Clip = new RectangleGeometry(new Rect(0, 0, e.NewSize.Width, e.NewSize.Height), 8, 8);
             LayoutBar(bar, parts, total, e.NewSize.Width);
         };
-        System.Windows.Automation.AutomationProperties.SetAccessibilityView(bar, System.Windows.Automation.Peers.AccessibilityView.Raw);
         stack.Children.Add(bar);
 
         // The legend: 4 columns (3 compact), 28 apart (22), rows 10 apart.

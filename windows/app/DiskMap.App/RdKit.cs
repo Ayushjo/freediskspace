@@ -552,7 +552,7 @@ public static class Rd
                 Foreground = brush ?? B(color),
                 Margin = new Thickness(0, 0, i < text.Length - 1 ? Ui.Scaled(kerning) : 0, 0),
             };
-            Typography.SetNumeralAlignment(glyph, FontNumeralAlignment.Tabular);
+            System.Windows.Documents.Typography.SetNumeralAlignment(glyph, FontNumeralAlignment.Tabular);
             row.Children.Add(glyph);
         }
         System.Windows.Automation.AutomationProperties.SetName(row, text);
