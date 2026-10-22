@@ -32,10 +32,18 @@ See what's filling your disk, learn what each thing is, and free space without t
 
 ## Why freedisk.space
 
-|  |  |  |
-| --- | --- | --- |
-| **Free, for real**<br>No trial, no subscription, no account. MIT licensed. | **Trash first**<br>Cleanup moves things to the Trash, never straight to deletion. Put Back returns them. | **Offline**<br>Scans never leave your computer. No analytics, no telemetry. |
-| **Knows what rebuilds**<br>Caches and build files that apps make again are ticked for you. Your own files never are. | **Explains itself**<br>Every folder says what it is and what removing it would cost you. | **Built for developers**<br>Xcode, simulators, `node_modules`, Python environments, Docker and package caches, tied to the project that made them. |
+<table>
+  <tr>
+    <td width="33%" valign="top"><b>Free, for real</b><br>No trial, no subscription, no account. MIT licensed.</td>
+    <td width="33%" valign="top"><b>Trash first</b><br>Cleanup moves things to the Trash, never straight to deletion. Put Back returns them.</td>
+    <td width="33%" valign="top"><b>Offline</b><br>Scans never leave your computer. No analytics, no telemetry.</td>
+  </tr>
+  <tr>
+    <td width="33%" valign="top"><b>Knows what rebuilds</b><br>Caches and build files that apps make again are ticked for you. Your own files never are.</td>
+    <td width="33%" valign="top"><b>Explains itself</b><br>Every folder says what it is and what removing it would cost you.</td>
+    <td width="33%" valign="top"><b>Built for developers</b><br>Xcode, simulators, <code>node_modules</code>, Python environments, Docker and package caches, tied to the project that made them.</td>
+  </tr>
+</table>
 
 ## A quick tour
 
