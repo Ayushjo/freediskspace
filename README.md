@@ -1,8 +1,23 @@
 # freedisk.space
 
-A native, open-source storage analyzer for macOS, with a Windows port in progress. See what fills a disk, follow large folders to their files, understand developer artifacts and duplicates, and review every cleanup action before anything moves to Trash.
+**Free, open-source disk space analyzer for Mac and Windows.** See what fills your disk as a map and by category, find out what System Data, developer files and duplicates really are, and review every cleanup before anything moves to the Trash.
 
-**Website:** [Next.js project](design/website-motion-v1/README.md) · **Domain:** [freedisk.space](https://freedisk.space) · **License:** MIT
+[**Download for Mac**](https://github.com/Ayushjo/Diskmap/releases/latest/download/freedisk.space.dmg) · [All releases, including Windows](https://github.com/Ayushjo/Diskmap/releases) · [freedisk.space](https://www.freedisk.space)
+
+![The redesigned freedisk.space Overview on a demo Mac](docs/screenshots/overview.webp)
+
+<sub>The redesigned app shown here is coming in the next update; real render with demo files.</sub>
+
+- **Free and MIT licensed.** No trial, no subscription, no account.
+- **Mac and Windows.** macOS 14 or later on Apple silicon and Intel; Windows 10 and 11 (x64).
+- **Offline.** Scans never leave your computer. The only network use is an optional update check on Mac, off by default.
+- **Trash first.** Cleanup goes to the Trash (Recycle Bin on Windows), never straight to deletion, so you can put things back.
+- **Honest numbers.** APFS clones are counted once, so it won't promise space that deleting wouldn't free.
+- **Built for developers too.** Xcode DerivedData and simulators, Docker, node_modules, Python environments and package caches, tied to the project and tool that made them.
+
+![Choosing what to free, with a receipt before anything moves](docs/screenshots/cleanup.webp)
+
+The Mac release is ad-hoc signed, not notarized yet: the first time you open it, approve it once in System Settings > Privacy & Security. Guides on the website explain [System Data](https://www.freedisk.space/guides/why-is-system-data-so-big-on-mac), [what to delete when your Mac is full](https://www.freedisk.space/guides/mac-storage-full-what-to-delete) and [free alternatives to CleanMyMac](https://www.freedisk.space/guides/cleanmymac-alternatives) and [DaisyDisk](https://www.freedisk.space/guides/daisydisk-alternatives).
 
 ## Mac: build and run
 
@@ -33,7 +48,7 @@ swift run -c release diskmap find ~ ext:mp4 size\>500MB
 
 ## Windows
 
-The native WPF port lives in [windows/README.md](windows/README.md). It can be built from source with .NET 10; a verified one-click installer has not been published.
+The native WPF port lives in [windows/README.md](windows/README.md). Download the installer from the [releases page](https://github.com/Ayushjo/Diskmap/releases), or build from source with .NET 10.
 
 ## How cleanup works
 
