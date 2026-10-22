@@ -33,7 +33,8 @@
         </Border>
 
         <!-- Page bar: page context left; scan status and Rescan right. -->
-        <Border Grid.Row="1" Padding="14,0,12,0" Background="{DynamicResource RdPage}">
+        <!-- Right 22: the Mac bar ends in a zero-width ⌘K button after a 10 pt gap. -->
+        <Border Grid.Row="1" Padding="14,0,22,0" Background="{DynamicResource RdPage}">
             <DockPanel LastChildFill="True">
                 <ContentControl x:Name="SidebarButtonHost" DockPanel.Dock="Left" Margin="0,0,10,0"
                                 VerticalAlignment="Center" />

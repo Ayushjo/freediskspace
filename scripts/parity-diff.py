@@ -25,7 +25,7 @@ KEYS = {
     "duplicates": "duplicates", "cleanSafe": "safetoreview", "cleanCaches": "caches",
     "cleanDownloads": "olddownloads", "cleanMedia": "largemedia", "fileBrowser": "filebrowser",
     "visualize": "visualize", "developerStorage": "developerstorage",
-    "applications": "applications", "snapshots": "snapshots", "history": "history",
+    "applications": "applications", "snapshots": "snapshots", "history": "cleanup",
 }
 TOLERANCE = 24  # per-channel difference ignored as antialiasing / font rendering noise
 

@@ -261,7 +261,8 @@ public partial class MainWindow : Window
         _navItems.Clear();
         foreach (var dest in PrimaryNav) AddNavRow(dest);
         var more = Rd.MonoLabel("More");
-        more.Margin = new Thickness(10, 14, 10, 6);
+        // 14 above and 6 below like the Mac; +1.5 below for SF Mono's taller line (measured).
+        more.Margin = new Thickness(10, 14, 10, 7.5);
         more.HorizontalAlignment = HorizontalAlignment.Left;
         NavPanel.Children.Add(more);
         foreach (var dest in MoreNav) AddNavRow(dest);
@@ -403,7 +404,7 @@ public partial class MainWindow : Window
         }
         var open = Rd.PrimaryButton(count == 0 ? "Open basket" : "Review basket",
             () => SelectPage("Cleanup"), fullWidth: true);
-        open.Margin = new Thickness(0, 10, 0, 0);
+        open.Margin = new Thickness(0, 9, 0, 0);
         stack.Children.Add(open);
         BasketHost.Content = new Border
         {
@@ -422,7 +423,7 @@ public partial class MainWindow : Window
     private void BuildSidebarFooter()
     {
         bool scanned = _model.Tree is not null;
-        var find = new StackPanel { Orientation = Orientation.Horizontal, Background = System.Windows.Media.Brushes.Transparent };
+        var find = new StackPanel { Orientation = Orientation.Horizontal, Background = System.Windows.Media.Brushes.Transparent, VerticalAlignment = VerticalAlignment.Center };
         var glass = Ui.Glyph(Icons.Search, 10, Ui.Brush("RdInk3"));
         glass.VerticalAlignment = VerticalAlignment.Center;
         find.Children.Add(glass);
@@ -443,7 +444,8 @@ public partial class MainWindow : Window
         System.Windows.Automation.AutomationProperties.SetName(gearHost, "Settings");
         gearHost.MouseLeftButtonUp += (_, _) => OpenSettings();
 
-        var row = new DockPanel { Margin = new Thickness(6, 10, 6, 0) };
+        // 16.5 tall: the Mac row's height (its gear glyph), measured from the reference renders.
+        var row = new DockPanel { Margin = new Thickness(6, 10, 6, 0), Height = 16.5 };
         DockPanel.SetDock(gearHost, Dock.Right);
         row.Children.Add(gearHost);
         row.Children.Add(find);

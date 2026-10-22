@@ -188,7 +188,7 @@ public static class Rd
     {
         var button = new Button
         {
-            Content = text,
+            Content = Label(text, B("RdOnAccent"), large ? 14 : 13, large ? FontWeights.SemiBold : FontWeights.Medium),
             Height = large ? 40 : 28,
             Padding = new Thickness(large ? 18 : 12, 0, large ? 18 : 12, 0),
             FontSize = Ui.Scaled(large ? 14 : 13),
@@ -217,7 +217,7 @@ public static class Rd
     {
         var button = new Button
         {
-            Content = text,
+            Content = Label(text, ink, 13, FontWeights.Medium),
             Height = 28,
             Padding = new Thickness(12, 0, 12, 0),
             FontSize = Ui.Scaled(13),
@@ -234,6 +234,21 @@ public static class Rd
         if (onClick is not null) button.Click += (_, _) => onClick();
         return button;
     }
+
+    /// <summary>
+    /// A button's label with its colour set on the TextBlock itself: the Fluent theme's implicit
+    /// TextBlock style beats the template's inherited TextElement.Foreground, which left the
+    /// Primary button's white label drawn in ink on ink (invisible).
+    /// </summary>
+    private static TextBlock Label(string text, Brush ink, double size, FontWeight weight) => new()
+    {
+        Text = text,
+        Foreground = ink,
+        FontSize = Ui.Scaled(size),
+        FontWeight = weight,
+        TextTrimming = TextTrimming.CharacterEllipsis,
+        VerticalAlignment = VerticalAlignment.Center,
+    };
 
     private static readonly Dictionary<double, ControlTemplate> _plainTemplates = [];
 

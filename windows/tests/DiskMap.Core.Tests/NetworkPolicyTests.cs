@@ -112,11 +112,13 @@ public class NetworkPolicyTests
         string appRoot = Path.Combine(windows, "app", "DiskMap.App");
         string project = File.ReadAllText(Path.Combine(appRoot, "DiskMap.App.csproj"));
         string window = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml"));
+        string shell = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml.cs"));
         string settings = File.ReadAllText(Path.Combine(appRoot, "Settings.cs"));
         Assert.Contains("<AssemblyTitle>freedisk.space</AssemblyTitle>", project);
         Assert.Contains("<Resource Include=\"app.ico\" />", project);
         Assert.Contains("Title=\"freedisk.space\"", window);
-        Assert.Contains("Text=\"freedisk.space\"", window);
+        // The Mac redesign's shell has no logo; the page bar names the app until a scan exists.
+        Assert.Contains(": \"freedisk.space\", 13, FontWeights.Medium", shell);
         Assert.Contains("showDusty", settings, StringComparison.OrdinalIgnoreCase);
     }
 }

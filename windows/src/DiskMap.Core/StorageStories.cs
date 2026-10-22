@@ -95,7 +95,7 @@ public static class StorageNarrator
         if (snap.QuickWinBytes > 0)
         {
             list.Add(new StorageRecommendation("rec-quickwins", "Review regenerable caches",
-                "High confidence — known package/build caches DiskMap can explain.",
+                "High confidence — known package and build caches freedisk.space can explain.",
                 snap.QuickWinBytes, StoryConfidence.High, StorySafety.Safe));
         }
         if (snap.Categories.FirstOrDefault(c => c.Key == "downloads") is { Bytes: > 0 } downloads)
