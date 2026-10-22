@@ -312,6 +312,30 @@ public sealed class ScanModel : ViewModelBase
     public event EventHandler? StateChanged;
     private void Changed() => StateChanged?.Invoke(this, EventArgs.Empty);
 
+    private (FileTree Tree, long[] Totals, DeveloperCatalogResult Result)? _developer;
+
+    /// <summary>
+    /// The Developer catalog for the current scan and size basis, built in the background after
+    /// each scan (Mac: cachedDeveloper, prewarmed so the sidebar can show its total). Nil until ready.
+    /// </summary>
+    public DeveloperCatalogResult? Developer =>
+        _developer is { } d && ReferenceEquals(d.Tree, _tree) && ReferenceEquals(d.Totals, _totals) ? d.Result : null;
+
+    private async void PrewarmDeveloper()
+    {
+        if (_tree is not { } tree || _rootPath is not { } root || _totals.Length != tree.Count) return;
+        var totals = _totals;
+        if (_developer is { } d && ReferenceEquals(d.Tree, tree) && ReferenceEquals(d.Totals, totals)) return;
+        try
+        {
+            var result = await Task.Run(() => DeveloperCatalog.Build(tree, root, totals));
+            if (!ReferenceEquals(tree, _tree) || !ReferenceEquals(totals, _totals)) return;
+            _developer = (tree, totals, result);
+            Changed();
+        }
+        catch { /* the page builds its own when opened */ }
+    }
+
     /// <summary>Raised by pages/inspector to switch the main navigation (e.g. "View in File Browser").</summary>
     public event Action<string>? PageRequested;
     public void ShowPage(string name) => PageRequested?.Invoke(name);
@@ -346,6 +370,7 @@ public sealed class ScanModel : ViewModelBase
         if (ReferenceEquals(tree, _tree) && basis == _sizeBasis)
         {
             Totals = basis == SizeBasis.Logical ? _totalsLogical : _totalsAllocated;
+            PrewarmDeveloper();
             Snapshot = snapshot.Item1;
             (Reviewables, OldDownloads, LargeMedia) = snapshot.Item2;
         }
@@ -434,6 +459,7 @@ public sealed class ScanModel : ViewModelBase
             LastScanFinishedAt = Harness.Deterministic ? DateTimeOffset.Now.AddSeconds(-120) : DateTimeOffset.Now;
             SpaceAccount = null;
             Tree = scanned.Tree;
+            PrewarmDeveloper();
             _ = ReadSpaceAccountAsync(path, snapshot.ScannedOnDiskBytes, scanned.DeniedDirectoryIds.Count);
             // WIN-013: let staging measure from this tree when the journal
             // proves a staged folder's subtree is unchanged since the scan.
@@ -499,6 +525,7 @@ public sealed class ScanModel : ViewModelBase
         Volume = Harness.VolumeFor(snapshot.RootPath);
         SpaceAccount = null;
         Tree = snapshot.Tree;
+        PrewarmDeveloper();
         _ = ReadSpaceAccountAsync(snapshot.RootPath, snap.ScannedOnDiskBytes, 0);
     }
 

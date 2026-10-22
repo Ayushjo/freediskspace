@@ -364,6 +364,9 @@ public partial class MainWindow : Window
                 // What Clean up ticks for you (AppShellView: safeReclaimableBytes).
                 if (_model.Reviewables is null) return null;
                 return Bytes(_model.SafeReclaimableBytes, accent: true);
+            case "Developer":
+                // AppShellView: cachedDeveloper.summary.totalBytes once the catalog is ready.
+                return _model.Developer is { } developer ? Bytes(developer.Summary.TotalBytes) : null;
             case "Duplicates":
                 if (!_model.DuplicatesSearched) return null;
                 // Mac: physicalCopies − 1 — copies sharing blocks free nothing, so a clone family is one copy.
@@ -650,9 +653,12 @@ public partial class MainWindow : Window
         window.UpdateLayout();
         var element = (FrameworkElement)window.Content;
         var dpi = System.Windows.Media.VisualTreeHelper.GetDpi(window);
+        // Rendering an element includes its offset (the card's margin), so the bitmap needs the
+        // margin too, or the right and bottom edges are cut off.
+        var m = element.Margin;
         var bmp = new System.Windows.Media.Imaging.RenderTargetBitmap(
-            Math.Max(1, (int)Math.Ceiling(element.ActualWidth * dpi.DpiScaleX)),
-            Math.Max(1, (int)Math.Ceiling(element.ActualHeight * dpi.DpiScaleY)),
+            Math.Max(1, (int)Math.Ceiling((element.ActualWidth + m.Left + m.Right) * dpi.DpiScaleX)),
+            Math.Max(1, (int)Math.Ceiling((element.ActualHeight + m.Top + m.Bottom) * dpi.DpiScaleY)),
             96 * dpi.DpiScaleX, 96 * dpi.DpiScaleY, System.Windows.Media.PixelFormats.Pbgra32);
         bmp.Render(element);
         var encoder = new System.Windows.Media.Imaging.PngBitmapEncoder();

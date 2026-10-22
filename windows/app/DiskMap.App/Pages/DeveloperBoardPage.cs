@@ -137,6 +137,12 @@ public sealed class DeveloperBoardPage : UserControl
     private static DeveloperCatalogResult? Catalog(FileTree tree, long[] totals, Action ready)
     {
         if (_built is { } done && ReferenceEquals(done.Tree, tree) && ReferenceEquals(done.Totals, totals)) return done.Result;
+        // Usually ready already: the model builds it after every scan for the sidebar figure.
+        if (ReferenceEquals(Model.Tree, tree) && ReferenceEquals(Model.Totals, totals) && Model.Developer is { } prewarmed)
+        {
+            _built = (tree, totals, prewarmed);
+            return prewarmed;
+        }
         // Every page that asks while it builds hears when it's done — a theme change makes a
         // new page mid-build, and only telling the first one left the new one loading.
         _waiting.Add(ready);
