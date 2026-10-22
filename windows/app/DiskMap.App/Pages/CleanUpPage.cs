@@ -608,11 +608,18 @@ internal sealed class ReceiptView : Border
             stack.Children.Add(foot);
         }
 
+        // The paper is drawn on a Canvas, which measures as zero: the torn teeth hang 7 pt below
+        // the text, and a Path that took part in layout grew the box by 7 pt on every pass
+        // (it pushed the Move button millions of pixels down).
         var paper = new System.Windows.Shapes.Path { Fill = Paper, Stroke = Black(0.1), StrokeThickness = 1 };
+        var paperHost = new Canvas { ClipToBounds = false };
+        paperHost.Children.Add(paper);
         var layers = new Grid();
-        layers.Children.Add(paper);
+        layers.Children.Add(paperHost);
         layers.Children.Add(stack);
-        layers.SizeChanged += (_, e) => paper.Data = PaperShape(e.NewSize);
+        stack.SizeChanged += (_, _) =>
+            paper.Data = PaperShape(new Size(stack.ActualWidth + stack.Margin.Left + stack.Margin.Right,
+                stack.ActualHeight + stack.Margin.Top + stack.Margin.Bottom));
         Child = layers;
         Margin = new Thickness(0, 0, 0, 7);   // the torn teeth hang below the box
         Effect = new System.Windows.Media.Effects.DropShadowEffect { Color = Colors.Black, Opacity = 0.18, BlurRadius = 44, ShadowDepth = 18, Direction = 270 };
