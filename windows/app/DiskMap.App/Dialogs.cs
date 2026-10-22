@@ -77,6 +77,15 @@ public static class Dialogs
             Owner = owner,
             WindowStartupLocation = owner is null ? WindowStartupLocation.CenterScreen : WindowStartupLocation.CenterOwner,
         };
+        // A borderless, layered window isn't always made the active one when it opens, and then
+        // no key reaches it at all (Esc did nothing on "Where's the rest?"). Activate it once it
+        // has drawn and put the focus inside, unless the sheet already focused its default.
+        window.ContentRendered += (_, _) =>
+        {
+            window.Activate();
+            if (!window.IsKeyboardFocusWithin)
+                window.MoveFocus(new System.Windows.Input.TraversalRequest(System.Windows.Input.FocusNavigationDirection.First));
+        };
         // Esc dismisses every sheet as its safe choice. IsCancel alone needed the focus on a
         // button, and a click in the list or on a folding row took it away.
         window.PreviewKeyDown += (_, e) =>
