@@ -213,6 +213,21 @@ public sealed class ScanModel : ViewModelBase
     private List<ReviewableTarget>? _reviewables;
     public List<ReviewableTarget>? Reviewables { get => _reviewables; private set { if (Set(ref _reviewables, value)) Changed(); } }
 
+    /// <summary>Files in Downloads, oldest first in spirit (Mac: cachedOldDownloads). Null until summarized.</summary>
+    private OldDownloadsCatalogResult? _oldDownloads;
+    public OldDownloadsCatalogResult? OldDownloads { get => _oldDownloads; private set { if (Set(ref _oldDownloads, value)) Changed(); } }
+
+    /// <summary>Big videos, photos, audio and media projects (Mac: cachedLargeMedia). Null until summarized.</summary>
+    private MediaCatalogResult? _largeMedia;
+    public MediaCatalogResult? LargeMedia { get => _largeMedia; private set { if (Set(ref _largeMedia, value)) Changed(); } }
+
+    /// <summary>The scan's catalogs on one basis: Clean up, Overview and the review pages read these.</summary>
+    private static (List<ReviewableTarget>, OldDownloadsCatalogResult, MediaCatalogResult) BuildCatalogs(
+        FileTree tree, string root, long[] totals, IReadOnlyList<QuickWins.Hit> quickWins) =>
+        (ReviewableCatalog.Build(tree, root, totals, quickWins).Targets,
+         OldDownloadsCatalog.Build(tree, root, totals),
+         MediaCatalog.Build(tree, root, totals));
+
     /// <summary>What Clean up ticks for you: the targets that rebuild by themselves.</summary>
     public long SafeReclaimableBytes => Reviewables?.Where(t => t.IsGenerallySafe).Sum(t => t.Bytes) ?? 0;
 
@@ -310,14 +325,14 @@ public sealed class ScanModel : ViewModelBase
         {
             var totals = basis == SizeBasis.Logical ? _totalsLogical : _totalsAllocated;
             return (AnalysisSnapshot.Build(tree, root, _totalsLogical, _totalsAllocated, basis, QuickWins, volumeOf: Harness.VolumeFor),
-                ReviewableCatalog.Build(tree, root, totals, QuickWins ?? []).Targets);
+                BuildCatalogs(tree, root, totals, QuickWins ?? []));
         });
         // A newer toggle or scan may have landed while this one ran.
         if (ReferenceEquals(tree, _tree) && basis == _sizeBasis)
         {
             Totals = basis == SizeBasis.Logical ? _totalsLogical : _totalsAllocated;
             Snapshot = snapshot.Item1;
-            Reviewables = snapshot.Item2;
+            (Reviewables, OldDownloads, LargeMedia) = snapshot.Item2;
         }
     }
 
@@ -350,7 +365,7 @@ public sealed class ScanModel : ViewModelBase
                 var c = scanned.Tree.RollUpCounts();
                 var qw = Core.QuickWins.Find(scanned.Tree, path, Core.QuickWins.BundledPatterns());
                 var snap = AnalysisSnapshot.Build(scanned.Tree, path, l, a, basis, qw, volumeOf: Harness.VolumeFor);
-                var rv = ReviewableCatalog.Build(scanned.Tree, path, basis == SizeBasis.Logical ? l : a, qw).Targets;
+                var rv = BuildCatalogs(scanned.Tree, path, basis == SizeBasis.Logical ? l : a, qw);
                 return (l, a, c, qw, snap, rv);
             }, cts.Token);
             cts.Token.ThrowIfCancellationRequested();
@@ -382,7 +397,7 @@ public sealed class ScanModel : ViewModelBase
             Duplicates = [];
             _duplicatesRan = false;
             QuickWins = quickWins;
-            Reviewables = reviewables;
+            (Reviewables, OldDownloads, LargeMedia) = reviewables;
             Snapshot = snapshot;
             // Totals before Tree: a view refreshed by the Tree change must
             // never pair the new tree with the old totals.
@@ -435,7 +450,7 @@ public sealed class ScanModel : ViewModelBase
             var c = snapshot.Tree.RollUpCounts();
             var qw = Core.QuickWins.Find(snapshot.Tree, snapshot.RootPath, Core.QuickWins.BundledPatterns());
             var s = AnalysisSnapshot.Build(snapshot.Tree, snapshot.RootPath, l, a, basis, qw, volumeOf: Harness.VolumeFor);
-            var rv = ReviewableCatalog.Build(snapshot.Tree, snapshot.RootPath, basis == SizeBasis.Logical ? l : a, qw).Targets;
+            var rv = BuildCatalogs(snapshot.Tree, snapshot.RootPath, basis == SizeBasis.Logical ? l : a, qw);
             return (l, a, c, qw, s, rv);
         });
         ItemCount = snapshot.Tree.Count;
@@ -449,7 +464,7 @@ public sealed class ScanModel : ViewModelBase
         Duplicates = [];
         _duplicatesRan = false;
         QuickWins = quickWins;
-        Reviewables = reviewables;
+        (Reviewables, OldDownloads, LargeMedia) = reviewables;
         Snapshot = snap;
         _totalsLogical = logical;
         _totalsAllocated = allocated;

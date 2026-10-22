@@ -74,10 +74,53 @@ public sealed class CleanUpPage : UserControl
         : Window.GetWindow(this)?.Content is FrameworkElement root && root.ActualWidth > 0 ? root.ActualWidth
         : 1280;
 
-    private bool Ready => Model.Reviewables is not null;
+    private bool Ready => Model.Reviewables is not null && Model.OldDownloads is not null && Model.LargeMedia is not null;
 
-    // Old downloads and large media join once their catalogs are ported (WIN-106 part 2).
-    private List<CleanItem> Items() => BuildItems(Model.Reviewables ?? [], Model.Totals, [], []);
+    private List<CleanItem> Items() => BuildItems(Model.Reviewables ?? [], Model.Totals,
+        DownloadItems(Model.OldDownloads?.Candidates ?? [], Model.RootPath),
+        MediaItems(Model.LargeMedia?.Candidates ?? [], Model.RootPath));
+
+    /// <summary>
+    /// Old downloads older than 30 days — the Old downloads page's default, so the group's
+    /// "Not opened in a long time" holds and its count matches the page.
+    /// </summary>
+    public static List<CleanItem> DownloadItems(IReadOnlyList<OldDownloadsCandidate> candidates, string? root) =>
+        OldDownloadsCatalog.Filter(candidates, OldDownloadsAgeFilter.Days30, OldDownloadsSizeFilter.Any, OldDownloadsTypeFilter.All, "")
+            .Where(c => c.Safety.Level != SafetyLevel.Protected)
+            .Select(c => new CleanItem($"d-{c.NodeID}", CleanGroup.Downloads, c.Name,
+                $"{Age(c.AgeDays)} · {Place(c.AbsolutePath, root)}", c.Bytes, [(c.NodeID, c.AbsolutePath)], c.AbsolutePath))
+            .ToList();
+
+    public static List<CleanItem> MediaItems(IReadOnlyList<MediaCandidate> candidates, string? root) =>
+        candidates.Where(m => m.Safety.Level != SafetyLevel.Protected)
+            .Select(m => new CleanItem($"m-{m.NodeID}", CleanGroup.Media, m.Name,
+                $"{Age(m.AgeDays)} · {Place(m.AbsolutePath, root)}", m.Bytes, [(m.NodeID, m.AbsolutePath)], m.AbsolutePath))
+            .ToList();
+
+    /// <summary>The folder a file sits in, relative to the scan ("Downloads\\misc"), else its display path.</summary>
+    public static string Place(string absolutePath, string? root)
+    {
+        string parent = System.IO.Path.GetDirectoryName(absolutePath) ?? absolutePath;
+        if (root is { Length: > 0 })
+        {
+            string r = root.TrimEnd('\\', '/');
+            if (parent.Equals(r, StringComparison.OrdinalIgnoreCase))
+                return System.IO.Path.GetFileName(r) is { Length: > 0 } name ? name : r;
+            if (parent.StartsWith(r + "\\", StringComparison.OrdinalIgnoreCase))
+                return parent[(r.Length + 1)..];
+        }
+        return CanonicalPath.DisplayPath(parent);
+    }
+
+    /// <summary>"today", "9 days old", "5 weeks old", "5 months old", "2 years old".</summary>
+    public static string Age(int days)
+    {
+        if (days < 1) return "today";
+        if (days < 14) return $"{days} days old";
+        if (days < 60) return $"{days / 7} weeks old";
+        if (days < 730) return $"{days / 30} months old";
+        return $"{days / 365} years old";
+    }
 
     /// <summary>
     /// Every Clean up row, biggest first. Protected items never appear; a file that is both an
