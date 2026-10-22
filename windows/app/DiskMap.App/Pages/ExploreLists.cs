@@ -969,6 +969,7 @@ public sealed class BiggestFilesExplorePage : UserControl
                 e.Id == _selected || Model.MultiSelection.Contains(e.Id), columns,
                 select: () =>
                 {
+                    Focus();   // the list takes the keyboard from the search box
                     _selected = entry.Id;
                     if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) Model.ToggleMulti(entry.Id);
                     else { Model.ClearMulti(); Model.Select(entry.Id); }

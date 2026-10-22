@@ -290,6 +290,7 @@ public abstract class CleanDetailPage : UserControl
 
     private void SelectRow(CleanDetailRow row)
     {
+        Focus();   // a click gives the list the keyboard (the search box kept it, so ↑↓ and Delete did nothing)
         _selectedId = row.Id;
         if (row.NodeId is { } id)
         {

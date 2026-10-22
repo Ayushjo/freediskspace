@@ -634,6 +634,7 @@ public sealed class FindExplorePage : UserControl
 
     private void SelectRow(int id)
     {
+        Focus();   // a click gives the list the keyboard (the search box kept it, so ↑↓ and Delete did nothing)
         _selected = id;
         if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) Model.ToggleMulti(id);
         else { Model.ClearMulti(); Model.Select(id); }
