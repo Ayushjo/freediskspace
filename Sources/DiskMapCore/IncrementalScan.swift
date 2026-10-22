@@ -273,10 +273,17 @@ public enum IncrementalScan {
         var sharing: SharingLayout?
         var sharingMode: SharingMode = .off
 
-        init(old: FileTree, rootPath: String, rootDevID: Int32) {
+        /// Mount points of other volumes under the root (see ForeignMounts):
+        /// the device id of a listed entry can't show them.
+        let foreignMounts: Set<String>
+
+        init(old: FileTree, rootPath: String, rootDevID: Int32,
+             foreignMounts: Set<String>? = nil) {
             self.old = old
             self.rootPath = rootPath
             self.rootDevID = rootDevID
+            self.foreignMounts = foreignMounts
+                ?? ForeignMounts.paths(under: rootPath, rootDevice: rootDevID, mounts: ForeignMounts.current())
             self.new = old.emptiedKeepingNames()
         }
 
@@ -326,7 +333,13 @@ public enum IncrementalScan {
                     var child = old.firstChild[Int(oldID)]
                     while child != -1 {
                         let copied = copy(child, under: newID)
-                        if old.isDirectory[Int(child)] { stack.append((child, copied)) }
+                        // A cache from before mount points were stopped at
+                        // may hold another volume's files: keep the folder,
+                        // drop what was walked inside it.
+                        if old.isDirectory[Int(child)],
+                           foreignMounts.isEmpty || !foreignMounts.contains(path(copied)) {
+                            stack.append((child, copied))
+                        }
                         child = old.nextSibling[Int(child)]
                     }
                 }
@@ -385,6 +398,7 @@ public enum IncrementalScan {
                     // Same descent rules as the walk: not across volumes, not
                     // into cloud placeholders or symlinks.
                     guard entry.isDirectory, entry.descend, entry.devID == rootDevID else { continue }
+                    if !foreignMounts.isEmpty, foreignMounts.contains(path(id)) { continue }
                     if let previous = oldChildren[nameID], old.isDirectory[Int(previous)] {
                         stack.append((previous, id))   // unchanged inside unless its own event says so
                     } else {

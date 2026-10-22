@@ -228,6 +228,22 @@ final class ScanModel: ObservableObject {
     @Published var multiSelection: Set<Int32> = []
     var selectionAnchor: Int32?
     @Published var analysis: AnalysisSnapshot = .empty
+    /// "Where's the rest?" for the last scan: the disk's used space split
+    /// into parts that add up. Nil until read (it runs diskutil, off the
+    /// main thread) and on disks that aren't APFS.
+    @Published var spaceAccount: SpaceAccount?
+    @Published var isSpaceAccountPresented = false
+    /// Storage macOS fills by itself (P2), measured where it lives. Nil
+    /// until read; read with the space account after each scan.
+    @Published var systemStorage: [SystemStorageCatalog.Item]?
+    /// Xcode and simulator storage (P3), measured where it lives.
+    @Published var xcodeStorage: [SystemStorageCatalog.Item]?
+    /// Time Machine snapshot deletion from "Where's the rest?" (decision D1).
+    enum SnapshotDeletion: Equatable {
+        case idle, running
+        case finished(deleted: Int, alreadyGone: Int = 0, failed: [String])
+    }
+    @Published var snapshotDeletion: SnapshotDeletion = .idle
     /// With clone accounting off (the default): where cloned copies probably
     /// inflate the totals, sampled after each scan. Allocated bytes.
     @Published var cloneSurvey: CloneSurvey = .empty
@@ -456,6 +472,7 @@ final class ScanModel: ObservableObject {
             }
         }
         deniedDirectoryIDs = result.deniedDirectoryIDs
+        startSpaceAccount(root: url, generation: generation)
         // Staging a folder from this tree can skip the walk when exact (TASK-082).
         let context = StorageSharing.ScanContext(
             tree: scannedTree, rootPath: url.path, eventID: result.eventIDAtStart,
@@ -711,6 +728,86 @@ final class ScanModel: ObservableObject {
         UserDefaults.standard.set(SharingMode.refcount.rawValue, forKey: CloneAccounting.key)
         guard let root = rootURL, !isScanning else { return }
         Task { await scan(root, mode: .full) }
+    }
+
+    /// Reads the volume split and local snapshots for the scan just
+    /// finished. A newer scan discards the result.
+    private func startSpaceAccount(root: URL, generation: Int) {
+        spaceAccount = nil
+        systemStorage = nil
+        xcodeStorage = nil
+        isSpaceAccountPresented = false
+        if snapshotDeletion != .running { snapshotDeletion = .idle }
+        let scanned = analysis.scannedOnDiskBytes
+        let purgeable = Int64(clamping: analysis.volume?.purgeableBytes ?? 0)
+        let denied = deniedDirectoryIDs.count
+        if SnapshotHarness.isDeterministic {
+            spaceAccount = SpaceAccount.build(
+                breakdown: SnapshotHarness.fixedBreakdown, scanRootPath: root.path,
+                // Demo renders (scripts/make-demo-fixture.sh) are sparse and
+                // drawn with logical sizes; account with the same basis.
+                scanRootMountPoint: "/System/Volumes/Data",
+                scannedOnDiskBytes: CommandLine.arguments.contains("logical") ? (logicalTotals.first ?? scanned) : scanned,
+                purgeableBytes: 6_400_000_000, snapshots: SnapshotHarness.fixedSnapshots, unreadableFolders: denied)
+            systemStorage = SnapshotHarness.fixedSystemStorage
+            xcodeStorage = SnapshotHarness.fixedXcodeStorage
+            switch SnapshotHarness.restState {
+            case "running": snapshotDeletion = .running
+            case "deleted": snapshotDeletion = .finished(deleted: 2, failed: [])
+            case "failed": snapshotDeletion = .finished(deleted: 1, failed: ["Failed to delete local snapshot '2026-10-21-101500'"])
+            default: break
+            }
+            return
+        }
+        Task {
+            let account = await Task.detached(priority: .utility) {
+                SpaceAccount.read(scanRootPath: root.path, scannedOnDiskBytes: scanned,
+                                  purgeableBytes: purgeable, unreadableFolders: denied)
+            }.value
+            guard generation == scanGeneration else { return }
+            spaceAccount = account
+            let system = await Task.detached(priority: .utility) { SystemStorageCatalog.measure() }.value
+            guard generation == scanGeneration else { return }
+            systemStorage = system
+            let xcode = await Task.detached(priority: .utility) {
+                SystemStorageCatalog.measure(entries: SystemStorageCatalog.loadEntries(resource: "developer-storage"))
+            }.value
+            guard generation == scanGeneration else { return }
+            xcodeStorage = xcode
+        }
+    }
+
+    /// Deletes the account's Apple Time Machine local snapshots, then
+    /// re-reads the account so the freed space shows. The only direct
+    /// deletion in the app (AGENTS.md rule 1); the confirmation is the
+    /// caller's.
+    func deleteTimeMachineSnapshots() {
+        guard let account = spaceAccount, !account.timeMachineSnapshotNames.isEmpty,
+              snapshotDeletion != .running, let root = rootURL else { return }
+        let names = account.timeMachineSnapshotNames
+        snapshotDeletion = .running
+        let generation = scanGeneration
+        let scanned = analysis.scannedOnDiskBytes
+        let denied = deniedDirectoryIDs.count
+        Task {
+            let (results, refreshed) = await Task.detached(priority: .userInitiated) { () -> ([TimeMachineSnapshotRemoval.Result], SpaceAccount?) in
+                let results = TimeMachineSnapshotRemoval.delete(names: names, volume: "/")
+                let purgeable = Int64(clamping: VolumeStats.forPath(root.path, includePurgeable: true)?.purgeableBytes ?? 0)
+                let account = SpaceAccount.read(scanRootPath: root.path, scannedOnDiskBytes: scanned,
+                                                purgeableBytes: purgeable, unreadableFolders: denied)
+                return (results, account)
+            }.value
+            let deleted = results.filter { $0.outcome == .deleted }.count
+            let alreadyGone = results.filter { $0.outcome == .alreadyGone }.count
+            let failed = results.compactMap { result -> String? in
+                if case .failed(let reason) = result.outcome { return reason }
+                return nil
+            }
+            log("time machine snapshots: deleted=\(deleted) gone=\(alreadyGone) failed=\(failed.count)")
+            snapshotDeletion = .finished(deleted: deleted, alreadyGone: alreadyGone, failed: failed)
+            guard generation == scanGeneration else { return }
+            if let refreshed { spaceAccount = refreshed }
+        }
     }
 
     func rebuildAnalysis() {
@@ -1089,6 +1186,11 @@ struct ContentView: View {
                 } onCancel: { worker.cancel() }
                 guard !Task.isCancelled, model.rootURL == root, model.sizeBasis == basis else { return }
                 model.analysis = result.0
+                // Demo renders (scripts/make-demo-fixture.sh: sparse files at
+                // logical size): the coverage line uses the same basis.
+                if SnapshotHarness.isDeterministic, basis == .logical, let total = logical.first {
+                    model.analysis.scannedOnDiskBytes = total
+                }
                 model.cachedFileTypes = result.1
             }
     }

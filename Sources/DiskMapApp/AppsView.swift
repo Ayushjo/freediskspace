@@ -454,6 +454,9 @@ struct AppsView: View {
         isLoading = false
 
         loadTask?.cancel()
+        // Every installed app's ID, so one app's uninstall never claims a
+        // sibling's data (Chrome vs Chrome Canary).
+        let installedIDs = Set(urls.compactMap { Bundle(url: $0)?.bundleIdentifier })
         loadTask = Task {
             await withTaskGroup(of: ApplicationEntry?.self) { group in
                 var inflight = 0
@@ -463,7 +466,7 @@ struct AppsView: View {
                         inflight += 1
                         group.addTask {
                             if Task.isCancelled { return nil }
-                            let leftovers = AppLeftoverFinder.findLeftovers(for: url, measureRelated: true)
+                            let leftovers = AppLeftoverFinder.findLeftovers(for: url, measureRelated: true, otherInstalledIDs: installedIDs)
                             let meta = AppMetadata.read(url)
                             return ApplicationsCatalog.makeEntry(
                                 leftovers: leftovers,

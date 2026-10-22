@@ -209,6 +209,11 @@ public enum DeveloperCatalog {
         /// Set for dependency folders whose reproducibility depends on a
         /// lockfile ("node", "cocoapods", "python").
         var lockEcosystem: String? = nil
+        /// A folder that holds other, more specific findings (Xcode holds
+        /// DerivedData, DeviceSupport, Archives). It is listed only when none
+        /// of them was found inside it; otherwise, being the bigger outer
+        /// folder, it swallowed them all in the dedup below.
+        var umbrella: Bool = false
     }
 
     /// Rules are data (AGENTS.md rule 6): `developer-rules.json`, bundled.
@@ -227,6 +232,7 @@ public enum DeveloperCatalog {
             var whyLarge: String
             var rebuildCost: String?
             var lockEcosystem: String?
+            var umbrella: Bool?
         }
         struct Manifests: Decodable {
             var names: [String]
@@ -277,7 +283,8 @@ public enum DeveloperCatalog {
                 projectFromParent: entry.projectFromParent,
                 whyLarge: entry.whyLarge,
                 rebuildCost: entry.rebuildCost.flatMap(RebuildCost.init(rawValue:)) ?? .cheap,
-                lockEcosystem: entry.lockEcosystem
+                lockEcosystem: entry.lockEcosystem,
+                umbrella: entry.umbrella ?? false
             )
         }
     }
@@ -350,21 +357,36 @@ public enum DeveloperCatalog {
         }
 
         // Prefer outer directories: skip a hit inside one already kept.
+        // Umbrella folders wait until the specific findings are placed, and
+        // are kept only when nothing specific sits inside them.
         var kept: [(id: Int32, rule: Rule, bytes: Int64, path: String, name: String)] = []
         var keptIDs = Set<Int32>()
-        for hit in hits {
-            var ancestor = tree.parent[Int(hit.id)]
-            var insideKept = false
-            var steps = 0
-            while ancestor >= 0, steps < 4096 {
-                if keptIDs.contains(ancestor) { insideKept = true; break }
+        func ancestors(of id: Int32) -> [Int32] {
+            var chain: [Int32] = []
+            var ancestor = tree.parent[Int(id)]
+            while ancestor >= 0, chain.count < 4096 {
+                chain.append(ancestor)
                 ancestor = tree.parent[Int(ancestor)]
-                steps += 1
             }
-            if insideKept { continue }
+            return chain
+        }
+        for hit in hits where !hit.rule.umbrella {
+            if ancestors(of: hit.id).contains(where: keptIDs.contains) { continue }
             kept.append(hit)
             keptIDs.insert(hit.id)
             if kept.count >= limit { break }
+        }
+        let umbrellasHolding = Set(kept.flatMap { ancestors(of: $0.id) })
+        for hit in hits where hit.rule.umbrella && kept.count < limit {
+            if umbrellasHolding.contains(hit.id) { continue }
+            if ancestors(of: hit.id).contains(where: keptIDs.contains) { continue }
+            kept.append(hit)
+            keptIDs.insert(hit.id)
+        }
+        kept.sort {
+            if $0.bytes != $1.bytes { return $0.bytes > $1.bytes }
+            let (a, b) = (depths[$0.id] ?? 0, depths[$1.id] ?? 0)
+            return a != b ? a < b : $0.id < $1.id
         }
 
         var items: [DeveloperItem] = []

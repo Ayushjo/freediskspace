@@ -955,7 +955,7 @@ public sealed class ApplicationsPage : ListPage
                 .ToDictionary(g => g.Key, g => g.First().UninstallString,
                     StringComparer.OrdinalIgnoreCase);
             var listed = installed
-                .Select(a => AppLeftoverFinder.FindLeftovers(a, measureSizes: false))
+                .Select(a => AppLeftoverFinder.FindLeftovers(a, measureSizes: false, installed))
                 .ToList();
             var store = AppLeftoverFinder.StoreApplications();
             return (listed, uninstallByKey, store);

@@ -28,6 +28,18 @@ public enum SharingMode: String, Sendable, CaseIterable {
 }
 
 enum BulkScan {
+    /// The allocated size the tree records for one entry. Some volumes
+    /// report 0 allocated bytes for a non-empty file; the logical size is
+    /// used then and the entry is marked estimated (TASK-082). A dataless
+    /// (evicted iCloud / File Provider) file truly takes 0 bytes here, so it
+    /// keeps 0: before 2026-10-21 it fell into that fallback and every
+    /// cloud-only file counted its full cloud size as "on disk".
+    static func recordedAllocation(logical: Int64, allocated: Int64, isDirectory: Bool,
+                                   dataless: Bool) -> (allocated: Int64, estimated: Bool) {
+        if isDirectory || dataless || allocated > 0 { return (max(0, allocated), false) }
+        return (logical, logical > 0)
+    }
+
     struct Result: Sendable {
         var tree: FileTree
         var itemCount: Int
@@ -55,7 +67,8 @@ enum BulkScan {
         crossMounts: Bool = false,
         sharing: SharingMode = .off,
         progress: (@Sendable (Int) -> Void)?,
-        live: (@Sendable (ScanProgress) -> Void)? = nil
+        live: (@Sendable (ScanProgress) -> Void)? = nil,
+        foreignMounts: Set<String>? = nil
     ) -> Result {
         var tree = FileTree()
         // Home scans land near 1.7–2M nodes; reserve once so appends stay O(1).
@@ -83,6 +96,14 @@ enum BulkScan {
         if hasRootStat {
             state.scanRootDevID = Int32(rootStat.st_dev)
             state.hasRootDevID = true
+            // The device check above can't see mount points (see
+            // ForeignMounts), so stop at the mount table's list too.
+            if !crossMounts {
+                state.foreignMountsUTF8 = Set(
+                    (foreignMounts ?? ForeignMounts.paths(under: root.path, rootDevice: Int32(rootStat.st_dev),
+                                                          mounts: ForeignMounts.current()))
+                        .map { nulTerminatedUTF8($0) })
+            }
         }
         // Clone accounting (TASK-077): APFS only, and only for the root's
         // own volume — another filesystem may claim the extended attributes
@@ -371,6 +392,8 @@ enum BulkScan {
                 logical = firstSize
                 allocated = secondSize
             }
+            let recorded = BulkScan.recordedAllocation(logical: logical, allocated: allocated,
+                                                   isDirectory: isDirectory, dataless: dataless)
             let start = names.count
             names.append(contentsOf: rawName)
             entries.append(Entry(
@@ -379,8 +402,8 @@ enum BulkScan {
                 include: !isLink,
                 isDirectory: isDirectory,
                 logical: logical,
-                allocated: allocated > 0 ? allocated : logical,
-                allocatedEstimated: !isDirectory && allocated <= 0 && logical > 0,
+                allocated: recorded.allocated,
+                allocatedEstimated: recorded.estimated,
                 day: dayFromEpochSeconds(modified),
                 createdDay: dayFromEpochSeconds(created),
                 notDownloaded: dataless,
@@ -448,6 +471,9 @@ enum BulkScan {
         var scanRootDevID: Int32 = 0
         var hasRootDevID = false
         var crossMounts = false
+        /// NUL-terminated paths of mount points under the root that belong
+        /// to another volume. Empty for most scans, so the check is skipped.
+        var foreignMountsUTF8: Set<[UInt8]> = []
         /// Read APFS sharing facts (TASK-077); trusted on the root's device only.
         var readsSharing: Bool { sharingLayout != nil }
         var sharingLayout: SharingLayout?
@@ -623,6 +649,10 @@ enum BulkScan {
                             parentPathUTF8: batch.parentPathUTF8,
                             name: bytes
                         )
+                        if !self.foreignMountsUTF8.isEmpty, self.foreignMountsUTF8.contains(childPathUTF8) {
+                            crossMountSkipDelta += 1
+                            continue
+                        }
                         if self.mayHitFirmlinkTwins {
                             // Only a "/" (or /System/Volumes) scan can reach the
                             // Data-volume twin of a firmlink already reachable via

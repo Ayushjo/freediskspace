@@ -259,17 +259,19 @@ internal static class IncrementalScan
             try
             {
                 onDisk = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach (string entry in Directory.EnumerateFileSystemEntries(path))
+                // Attributes from the listing itself, as the Win32 scanner
+                // reads them (File.GetAttributes never reports
+                // RECALL_ON_OPEN), so both apply the same cloud test.
+                foreach (var entry in new DirectoryInfo(path).EnumerateFileSystemInfos())
                 {
                     // Filter like the scanner does: non-cloud reparse
                     // points never enter the tree, so they can't be
                     // evidence either.
-                    var attrs = File.GetAttributes(entry);
-                    if ((attrs & FileAttributes.ReparsePoint) != 0
-                        && (attrs & (FileAttributes)0x00400000) == 0)   // RECALL_ON_OPEN
+                    uint attrs = (uint)entry.Attributes;
+                    if ((attrs & Win32.FILE_ATTRIBUTE_REPARSE_POINT) != 0
+                        && !ScanEngine.IsCloudPlaceholder(attrs, fromDirectoryEnumeration: true))
                         continue;
-                    string? n = Path.GetFileName(entry);
-                    if (n is not null) onDisk.Add(n);
+                    onDisk.Add(entry.Name);
                 }
             }
             catch { continue; }   // a folder we can't list isn't evidence

@@ -137,14 +137,16 @@ public static class AppLeftoverFinder
     /// When false, returns just the matched leftover paths — no recursive
     /// walks. Use for a fast listing pass; measure per-app later.
     /// </param>
-    public static AppLeftovers FindLeftovers(InstalledApp app, bool measureSizes)
+    /// <param name="installed">
+    /// Every installed app, so one app's leftovers never include a folder a
+    /// sibling owns (SteamVR's, or the shared "Google" folder Drive uses).
+    /// </param>
+    public static AppLeftovers FindLeftovers(InstalledApp app, bool measureSizes,
+                                             IReadOnlyCollection<InstalledApp>? installed = null)
     {
         var matches = new List<string>();
-        // Match tokens: display name and publisher are the closest thing
-        // Windows has to a bundle identifier.
-        var tokens = new List<string> { app.Name };
-        if (!string.IsNullOrWhiteSpace(app.Publisher) && app.Publisher.Length > 3)
-            tokens.Add(app.Publisher);
+        var others = installed ?? Array.Empty<InstalledApp>();
+        string documents = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Documents");
 
         foreach (var location in SearchLocations)
         {
@@ -152,16 +154,14 @@ public static class AppLeftoverFinder
             IEnumerable<string> contents;
             try { contents = Directory.EnumerateFileSystemEntries(location); }
             catch { continue; }
+            // The user's own Documents only ever match the exact app name.
+            bool exactOnly = string.Equals(location, documents, StringComparison.OrdinalIgnoreCase);
 
             foreach (var item in contents)
             {
-                string itemName = Path.GetFileName(item);
-                if (tokens.Any(t => t.Length > 3 && itemName.Contains(t, StringComparison.OrdinalIgnoreCase)))
-                {
-                    // Don't match the app's own install dir or the Recycle Bin.
-                    if (item.Contains("$Recycle.Bin", StringComparison.OrdinalIgnoreCase)) continue;
+                if (item.Contains("$Recycle.Bin", StringComparison.OrdinalIgnoreCase)) continue;
+                if (MatchesApp(Path.GetFileName(item), app, others, exactOnly))
                     matches.Add(item);
-                }
             }
         }
 
@@ -181,6 +181,83 @@ public static class AppLeftoverFinder
             InstallSize: installSize,
             LeftoverPaths: matches,
             LeftoverSize: leftoverSize);
+    }
+
+    /// <summary>Folder names under AppData/ProgramData that hold many apps' data.</summary>
+    private static readonly HashSet<string> SharedFolderWords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "microsoft", "windows", "packages", "programs", "temp", "common", "apple", "google", "adobe",
+        "intel", "nvidia", "amd", "mozilla", "oracle", "jetbrains", "package", "cache", "crashdumps",
+    };
+
+    private static readonly HashSet<string> FileExtensionWords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "log", "json", "ini", "xml", "cfg", "dat", "txt", "db", "sqlite",
+    };
+
+    private static readonly HashSet<string> CompanySuffixes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "inc", "llc", "ltd", "limited", "corporation", "corp", "co", "gmbh", "software", "technologies", "ag", "sa", "bv",
+        "ab", "as", "oy", "pty", "plc", "srl", "spa", "kk", "llp", "sarl", "sas", "nv", "pte", "pvt",
+    };
+
+    /// <summary>Lower-case words of a name: letters and digits only.</summary>
+    public static string[] Words(string? name) =>
+        string.IsNullOrWhiteSpace(name)
+            ? []
+            : System.Text.RegularExpressions.Regex.Split(name.ToLowerInvariant(), "[^\\p{L}\\p{Nd}]+")
+                .Where(w => w.Length > 0).ToArray();
+
+    private static bool StartsWith(string[] longer, string[] prefix) =>
+        prefix.Length > 0 && prefix.Length <= longer.Length && prefix.Select((w, i) => longer[i] == w).All(x => x);
+
+    /// <summary>
+    /// Whether a data folder or file belongs to <paramref name="app"/>. Whole
+    /// words only: until 2026-10-21 a substring match let "Steam" claim
+    /// "SteamVR" and any 4+ letter publisher claim every folder from that
+    /// vendor. A missed leftover costs a few KB; a wrong one costs another
+    /// app's data (AGENTS.md: fewer false positives).
+    /// </summary>
+    public static bool MatchesApp(string itemName, InstalledApp app, IReadOnlyCollection<InstalledApp> installed,
+                                  bool exactOnly = false)
+    {
+        var item = Words(itemName);
+        // "Spotify.log", "Discord.json": a data file named after the app.
+        if (item.Length > 1 && FileExtensionWords.Contains(item[^1])) item = item[..^1];
+        var name = Words(app.Name);
+        if (item.Length == 0 || name.Length == 0) return false;
+        if (string.Join(" ", name).Length <= 3) return false;   // "Git", "VLC": too short to trust
+
+        var siblings = installed.Where(o => !string.Equals(o.Name, app.Name, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (exactOnly) return item.SequenceEqual(name);
+
+        // A sibling whose name the folder spells out at least as fully owns it.
+        bool siblingOwns(string[] words) => siblings.Any(o =>
+        {
+            var other = Words(o.Name);
+            return other.Length > 0 && (StartsWith(words, other) && other.Length > name.Length
+                                        || words.SequenceEqual(other));
+        });
+
+        if (item.SequenceEqual(name)) return true;
+        if (StartsWith(item, name)) return !siblingOwns(item);          // "Zoom Workplace Data" for "Zoom Workplace"
+        if (StartsWith(name, item))                                     // "Zoom" for "Zoom Workplace"
+        {
+            if (SharedFolderWords.Contains(item[0])) return false;
+            bool shared = siblings.Any(o => StartsWith(Words(o.Name), item));
+            return !shared;
+        }
+
+        // Publisher folder ("Spotify AB" → "Spotify"): only when no other
+        // installed app comes from that publisher.
+        var publisher = Words(app.Publisher).Where(w => !CompanySuffixes.Contains(w)).ToArray();
+        if (publisher.Length > 0 && item.SequenceEqual(publisher) && !SharedFolderWords.Contains(publisher[0]))
+        {
+            bool samePublisher = siblings.Any(o =>
+                Words(o.Publisher).Where(w => !CompanySuffixes.Contains(w)).SequenceEqual(publisher));
+            return !samePublisher;
+        }
+        return false;
     }
 
     public static long AllocatedSize(string path)

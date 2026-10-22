@@ -42,6 +42,13 @@ public enum FileKind: String, Sendable, Equatable, CaseIterable {
     public static func classify(fileName: String, path: String = "") -> FileKind {
         let n = fileName.lowercased()
         let p = path.lowercased()
+        // Everything inside an iPhone / iPad backup is part of it, whatever
+        // its name (hashed files, Manifest.db): Finder and Apple Devices keep
+        // them in MobileSync/Backup/<device id>. The older patterns below
+        // never matched these paths.
+        if p.contains("/mobilesync/backup/") {
+            return .deviceBackup
+        }
         if n.hasSuffix(".mkv") || n.hasSuffix(".mp4") || n.hasSuffix(".mov") || n.hasSuffix(".m4v")
             || n.hasSuffix(".avi") || n.hasSuffix(".webm") {
             return .video

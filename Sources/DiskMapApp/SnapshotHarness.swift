@@ -30,6 +30,16 @@ enum SnapshotHarness {
     static let fixedVolume = VolumeStats(volumeName: "Macintosh HD", totalBytes: 500_000_000_000,
                                          freeBytes: 120_000_000_000, usedBytes: 380_000_000_000)
 
+    /// The container behind `fixedVolume`, so "Where's the rest?" renders
+    /// the same parts every time (sums to its 380 GB used).
+    static let fixedBreakdown = ContainerBreakdown(
+        containerTotalBytes: 500_000_000_000, containerFreeBytes: 120_000_000_000,
+        volumes: [.init(mountPoint: "/System/Volumes/Data", role: .data, usedBytes: 330_000_000_000),
+                  .init(mountPoint: "/", role: .system, usedBytes: 12_600_000_000),
+                  .init(mountPoint: "/System/Volumes/Preboot", role: .preboot, usedBytes: 10_700_000_000),
+                  .init(mountPoint: "/System/Volumes/VM", role: .swap, usedBytes: 4_300_000_000)],
+        swapInUseBytes: 2_100_000_000)
+
     /// The modifiers of the synthetic click being delivered. A synthetic
     /// event cannot hold a real key down, so selection code asks here first.
     static var clickModifiers: NSEvent.ModifierFlags?
@@ -254,14 +264,28 @@ enum SnapshotHarness {
             }
             // `--sheet cleanup`: also open the Cleanup sheet and capture it
             // (sheets are their own windows, outside the content view).
-            if let sheetName = value(after: "--sheet"), ["cleanup", "explain"].contains(sheetName) {
+            if let sheetName = value(after: "--sheet"), ["cleanup", "explain", "rest"].contains(sheetName) {
                 if sheetName == "cleanup" { model.isCleanupQueuePresented = true }
+                else if sheetName == "rest" { model.isSpaceAccountPresented = true }
                 else { NotificationCenter.default.post(name: .diskMapOpenExplain, object: nil) }
                 try? await Task.sleep(nanoseconds: UInt64(settle * 1_000_000_000))
                 if let sheet = window.attachedSheet {
                     write(window: sheet, to: dir.appendingPathComponent("\(sheetName)-\(appearanceName).png"))
+                    // `--rest-action delete` (live runs only, never with
+                    // --deterministic): delete the real Time Machine
+                    // snapshots the way the confirm button does, then
+                    // capture the sheet again once it has finished.
+                    if sheetName == "rest", value(after: "--rest-action") == "delete", !isDeterministic {
+                        model.deleteTimeMachineSnapshots()
+                        for _ in 0..<600 where model.snapshotDeletion == .running {
+                            try? await Task.sleep(nanoseconds: 100_000_000)
+                        }
+                        try? await Task.sleep(nanoseconds: 1_500_000_000)
+                        write(window: sheet, to: dir.appendingPathComponent("\(sheetName)-after-\(appearanceName).png"))
+                    }
                 }
                 model.isCleanupQueuePresented = false
+                model.isSpaceAccountPresented = false
                 NotificationCenter.default.post(name: .diskMapOpenExplain, object: false)
                 try? await Task.sleep(nanoseconds: 400_000_000)
             }
@@ -552,6 +576,47 @@ enum SnapshotHarness {
 
     /// `--tab projects`: the tab a page with tabs opens on (Developer for now).
     static var requestedTab: String? { value(after: "--tab") }
+    /// `--rest-state confirm`: render "Where's the rest?" with the snapshot
+    /// confirmation open. `--rest-state deleted|failed|running`: with that
+    /// deletion state.
+    static var restState: String? { value(after: "--rest-state") }
+
+    /// "What macOS keeps" for deterministic renders: the bundled entries
+    /// with fixed sizes, plus one installer so the Cleanup button shows.
+    static let fixedSystemStorage: [SystemStorageCatalog.Item] = {
+        let sizes: [String: Int64] = ["intelligence-siri": 2_230_000_000, "language-speech": 2_010_000_000,
+                                      "aerial-videos": 467_000_000, "pending-updates": 256_000_000,
+                                      "wallpaper-cache": 96_700_000, "system-logs": 2_880_000_000,
+                                      "macos-installers": 14_200_000_000]
+        return SystemStorageCatalog.loadEntries().compactMap { entry in
+            guard let bytes = sizes[entry.id] else { return nil }
+            let path = entry.id == "macos-installers" ? "/Applications/Install macOS Sequoia.app" : entry.paths[0]
+            return SystemStorageCatalog.Item(entry: entry, found: [(path: path, bytes: bytes)], isPartial: entry.id == "system-logs")
+        }.sorted { $0.bytes > $1.bytes }
+    }()
+
+    /// Xcode storage for deterministic renders of the Developer › Xcode tab.
+    static let fixedXcodeStorage: [SystemStorageCatalog.Item] = {
+        let entries = Dictionary(uniqueKeysWithValues: SystemStorageCatalog.loadEntries(resource: "developer-storage").map { ($0.id, $0) })
+        let ds = "/Users/demo/Library/Developer/Xcode/iOS DeviceSupport/"
+        var items: [SystemStorageCatalog.Item] = []
+        if let e = entries["device-support"] {
+            items.append(.init(entry: e, found: [(ds + "17.10 (21X1)", 4_100_000_000), (ds + "17.4.1 (21E236)", 3_900_000_000),
+                                                 (ds + "16.7 (20H19)", 3_600_000_000)],
+                               isPartial: false, keep: [ds + "17.10 (21X1)"]))
+        }
+        for (id, bytes) in [("simulator-runtimes", Int64(18_400_000_000)), ("swiftui-previews", 6_200_000_000),
+                            ("simulator-devices", 5_300_000_000), ("simulator-caches", 2_900_000_000),
+                            ("xcode-archives", 1_700_000_000), ("swiftpm-cache", 640_000_000)] {
+            if let e = entries[id] { items.append(.init(entry: e, found: [(e.paths[0], bytes)], isPartial: false)) }
+        }
+        return items.sorted { $0.bytes > $1.bytes }
+    }()
+
+    /// Two Time Machine snapshots for deterministic renders of the sheet.
+    static let fixedSnapshots: [LocalSnapshots.Snapshot] = [
+        "com.apple.TimeMachine.2026-10-21-101500.local", "com.apple.TimeMachine.2026-10-22-091500.local",
+    ].map { .init(name: $0, uuid: "", purgeable: true, kind: LocalSnapshots.kind(of: $0), volumeMountPoint: "/System/Volumes/Data") }
 
     private static func value(after flag: String) -> String? {
         guard let index = arguments.firstIndex(of: flag), arguments.indices.contains(index + 1) else { return nil }

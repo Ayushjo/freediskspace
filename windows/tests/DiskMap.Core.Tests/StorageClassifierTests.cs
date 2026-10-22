@@ -11,6 +11,7 @@ public class StorageClassifierTests
     [InlineData(@"C:\Users\me\AppData\Local\Docker\wsl\disk\docker_data.vhdx", "vms", CleanupAdvice.Warn)]
     [InlineData(@"C:\Users\me\.android\avd\Pixel_4a.avd\userdata-qemu.img.qcow2", "vms", CleanupAdvice.Warn)]
     [InlineData(@"C:\Users\me\AppData\Local\Android\Sdk\system-images\android-34\system.img", "devtools", CleanupAdvice.Review)]
+    [InlineData(@"C:\Users\me\AppData\Local\CoreAIPlatform.00\UKP\{0A1B}\ukg.db", "system", CleanupAdvice.Never)]
     [InlineData(@"C:\pagefile.sys", "system", CleanupAdvice.Never)]
     [InlineData(@"C:\hiberfil.sys", "system", CleanupAdvice.Never)]
     [InlineData(@"C:\Windows\System32\ntoskrnl.exe", "system", CleanupAdvice.Never)]
@@ -54,6 +55,14 @@ public class StorageClassifierTests
         var wsl = StorageClassifier.Classify(@"C:\Users\me\AppData\Local\wsl\{x}\ext4.vhdx", false);
         Assert.Contains("Linux", wsl.Note);
         Assert.Contains("wsl --unregister", wsl.Instead);
+        // Compaction first; --set-sparse only with its corruption warning.
+        Assert.Contains("Optimize-VHD", wsl.Instead);
+        Assert.DoesNotContain("--set-sparse true", wsl.Instead);
+        Assert.Contains("corrupt", wsl.Instead);
+
+        var recall = StorageClassifier.Classify(@"C:\Users\me\AppData\Local\CoreAIPlatform.00\UKP\x", true);
+        Assert.Equal(CleanupAdvice.Never, recall.Advice);
+        Assert.Contains("Recall", recall.Instead);
     }
 
     [Fact]

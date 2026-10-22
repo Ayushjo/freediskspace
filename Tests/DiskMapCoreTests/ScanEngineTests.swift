@@ -48,6 +48,34 @@ struct ScanDecisionTests {
         #expect(decision.skipDescendants == snapshot.isDirectory)
     }
 
+    /// The bulk (getattrlistbulk) path must agree with `decide`: the same
+    /// captured evicted file records 0 bytes on disk and is not marked as an
+    /// estimate. It used to fall into TASK-082's "volume reported 0, use the
+    /// logical size" fallback and count its whole cloud size as local.
+    @Test func bulkScanKeepsAnEvictedFileAtZeroOnDisk() throws {
+        let snapshot = try EvictedItemSnapshot.loadFixture()
+        let recorded = BulkScan.recordedAllocation(logical: snapshot.fileSize, allocated: snapshot.stBlocks * 512,
+                                                   isDirectory: snapshot.isDirectory, dataless: snapshot.sfDataless)
+        #expect(recorded.allocated == 0)
+        #expect(recorded.estimated == false)
+    }
+
+    /// TASK-082 is unchanged for real files on volumes that report 0.
+    @Test func bulkScanStillEstimatesZeroAllocatedLocalFiles() {
+        let zero = BulkScan.recordedAllocation(logical: 4_096, allocated: 0, isDirectory: false, dataless: false)
+        #expect(zero.allocated == 4_096)
+        #expect(zero.estimated == true)
+        let normal = BulkScan.recordedAllocation(logical: 4_000, allocated: 4_096, isDirectory: false, dataless: false)
+        #expect(normal.allocated == 4_096)
+        #expect(normal.estimated == false)
+        let empty = BulkScan.recordedAllocation(logical: 0, allocated: 0, isDirectory: false, dataless: false)
+        #expect(empty.allocated == 0)
+        #expect(empty.estimated == false)
+        let folder = BulkScan.recordedAllocation(logical: 0, allocated: 0, isDirectory: true, dataless: false)
+        #expect(folder.allocated == 0)
+        #expect(folder.estimated == false)
+    }
+
     @Test func evictedDirectoryIsRecordedButNotDescended() {
         let decision = ScanEngine.decide(
             isDirectory: true,

@@ -22,18 +22,19 @@ struct DeveloperStorageView: View {
     private let toolCategories = QuickWins.bundledCategories()
 
     enum TableTab: String, CaseIterable, Identifiable {
-        case whereItLives, projects, byTool, allItems, opportunities
+        case whereItLives, projects, byTool, xcode, allItems, opportunities
         var id: String { rawValue }
         var title: String {
             switch self {
             case .whereItLives: return "Where it lives"
             case .projects: return "Projects"
             case .byTool: return "By tool"
+            case .xcode: return "Xcode"
             case .allItems: return "Every item"
             case .opportunities: return "Biggest wins"
             }
         }
-        static let primary: [TableTab] = [.whereItLives, .projects, .byTool]
+        static let primary: [TableTab] = [.whereItLives, .projects, .byTool, .xcode]
     }
 
     /// What the inspector shows.
@@ -100,6 +101,7 @@ struct DeveloperStorageView: View {
                 case .allItems: itemsList(filteredItems, title: ecosystemFilter.map { "\($0.title) items" } ?? "Every item")
                 case .opportunities: itemsList(catalog.opportunities, title: "Biggest wins")
                 case .byTool: toolsList
+                case .xcode: XcodeStorageList(model: model)
                 }
             }
             .padding(.horizontal, widthClass.pagePadding)
@@ -238,7 +240,7 @@ struct DeveloperStorageView: View {
             .fixedSize()
             if tableTab == .whereItLives { whereBreadcrumb }
             Spacer(minLength: 8)
-            if tableTab != .whereItLives && tableTab != .byTool {
+            if tableTab != .whereItLives && tableTab != .byTool && tableTab != .xcode {
                 DiskMapSearchField(placeholder: "Filter by name, path or tool", text: $query)
                     .frame(maxWidth: widthClass == .compact ? 180 : 260)
             }
@@ -565,6 +567,7 @@ struct DeveloperStorageView: View {
             if let first { return first.itemID.map(Selection.item) ?? .folder(first.id) }
             return nil
         case .projects: return catalog.projects.max { $0.reclaimableBytes < $1.reclaimableBytes }.map { .project($0.id) }
+        case .xcode: return nil
         case .allItems: return filteredItems.first.map { .item($0.id) }
         case .opportunities: return catalog.opportunities.first.map { .item($0.id) }
         case .byTool:
