@@ -2,67 +2,123 @@ import AppKit
 import DiskMapCore
 import SwiftUI
 
-/// "Where's the rest?": the disk's used space as parts that add up, each
-/// with a bar and how sure we are. Shown from Overview's coverage line.
+/// One row that shows a name and a figure, and folds its explanation away
+/// until clicked — the sheet stays a list of numbers, not a page of text.
+struct FoldingRow<Leading: View, Trailing: View, Detail: View>: View {
+    var title: String
+    var startsOpen = false
+    @ViewBuilder var leading: Leading
+    @ViewBuilder var trailing: Trailing
+    @ViewBuilder var detail: Detail
+    @State private var open: Bool?
+
+    var body: some View {
+        let isOpen = open ?? startsOpen
+        VStack(alignment: .leading, spacing: 6) {
+            Button {
+                withAnimation(.easeOut(duration: 0.15)) { open = !isOpen }
+            } label: {
+                HStack(spacing: 10) {
+                    leading
+                    Text(title).font(DiskMapType.body).foregroundStyle(DiskMapTheme.ink)
+                    Spacer(minLength: DiskMapSpace.sm)
+                    trailing
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(DiskMapTheme.ink3)
+                        .rotationEffect(.degrees(isOpen ? 90 : 0))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint(isOpen ? "Hides the explanation" : "Shows what this is")
+            if isOpen {
+                VStack(alignment: .leading, spacing: 6) { detail }
+                    .padding(.leading, 20)
+                    .transition(.opacity)
+            }
+        }
+    }
+}
+
+/// "Where's the rest?": the disk's used space as parts that add up — one
+/// stacked bar, then a row per part. Shown from Overview's coverage line.
 struct SpaceAccountBreakdown: View {
     let account: SpaceAccount
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DiskMapSpace.md) {
-            VStack(alignment: .leading, spacing: 14) {
-                ForEach(account.rows) { row in
-                    rowView(row)
+        VStack(alignment: .leading, spacing: 14) {
+            stackedBar
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(Array(account.rows.enumerated()), id: \.element.id) { index, row in
+                    FoldingRow(title: row.title) {
+                        Circle().fill(Self.color(row, index)).frame(width: 8, height: 8)
+                    } trailing: {
+                        Text(ByteFormat.string(row.bytes))
+                            .font(DiskMapType.figureStrong)
+                            .foregroundStyle(DiskMapTheme.ink)
+                    } detail: {
+                        Text(row.detail)
+                            .font(DiskMapType.secondary)
+                            .foregroundStyle(DiskMapTheme.ink2)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if row.confidence == .remainder {
+                            Text("Worked out from the other figures, not measured directly.")
+                                .font(DiskMapType.secondary)
+                                .foregroundStyle(DiskMapTheme.ink3)
+                        }
+                    }
+                    .accessibilityIdentifier("space-account-row")
                 }
             }
-            .padding(16)
-            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(DiskMapTheme.card))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(DiskMapTheme.line, lineWidth: 1))
             if account.purgeableBytes > 0 {
-                Text("macOS also counts about \(ByteFormat.string(account.purgeableBytes)) as purgeable: space it can free by itself when it needs to. That overlaps the parts above, so it isn't added.")
-                    .font(DiskMapType.secondary)
-                    .foregroundStyle(DiskMapTheme.ink2)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("space-account-purgeable")
+                HStack(spacing: 6) {
+                    Text("Purgeable, part of the above")
+                    Spacer()
+                    Text(ByteFormat.string(account.purgeableBytes)).font(DiskMapType.figure)
+                }
+                .font(DiskMapType.secondary)
+                .foregroundStyle(DiskMapTheme.ink3)
+                .help("Space macOS can free by itself when it needs to. It overlaps the parts above, so it isn't added.")
+                .accessibilityIdentifier("space-account-purgeable")
             }
         }
+        .padding(16)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(DiskMapTheme.card))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(DiskMapTheme.line, lineWidth: 1))
         .accessibilityIdentifier("space-account")
     }
 
-    private func rowView(_ row: SpaceAccount.Row) -> some View {
-        let fraction = account.usedBytes > 0 ? min(1, Double(row.bytes) / Double(account.usedBytes)) : 0
-        return VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: DiskMapSpace.xs) {
-                Text(row.title)
-                    .font(DiskMapType.bodyEmphasis)
-                    .foregroundStyle(DiskMapTheme.ink)
-                if row.confidence == .remainder {
-                    Text("WHAT'S LEFT")
-                        .font(DiskMapType.label)
-                        .foregroundStyle(DiskMapTheme.ink3)
-                        .help("Worked out from the other figures, not measured directly.")
-                }
-                Spacer(minLength: DiskMapSpace.sm)
-                Text(ByteFormat.string(row.bytes))
-                    .font(DiskMapType.figureStrong)
-                    .foregroundStyle(DiskMapTheme.ink)
-            }
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(DiskMapTheme.line)
-                    Capsule()
-                        .fill(row.part == .scanned ? DiskMapTheme.accent : DiskMapTheme.ink3)
-                        .frame(width: max(fraction > 0 ? 3 : 0, geo.size.width * fraction))
+    /// Every part as one bar, in row order, so the split reads at a glance.
+    private var stackedBar: some View {
+        GeometryReader { geo in
+            HStack(spacing: 2) {
+                ForEach(Array(account.rows.enumerated()), id: \.element.id) { index, row in
+                    let fraction = account.usedBytes > 0 ? Double(row.bytes) / Double(account.usedBytes) : 0
+                    if fraction > 0 {
+                        Rectangle()
+                            .fill(Self.color(row, index))
+                            .frame(width: max(3, (geo.size.width - CGFloat(account.rows.count * 2)) * fraction))
+                    }
                 }
             }
-            .frame(height: 5)
-            .accessibilityHidden(true)
-            Text(row.detail)
-                .font(DiskMapType.secondary)
-                .foregroundStyle(DiskMapTheme.ink2)
-                .fixedSize(horizontal: false, vertical: true)
+            .frame(width: geo.size.width, alignment: .leading)
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("space-account-row")
+        .frame(height: 10)
+        .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+        .accessibilityHidden(true)
+    }
+
+    /// The scan in the accent; macOS's own parts in the data palette; what's
+    /// left over in a quiet grey.
+    static func color(_ row: SpaceAccount.Row, _ index: Int) -> Color {
+        switch row.part {
+        case .scanned: return DiskMapTheme.accent
+        case .notSeen: return DiskMapTheme.ink3.opacity(0.45)
+        case .recoveryAndMetadata: return DiskMapTheme.ink3
+        // Skips the palette's lilac (index 1), too close to the accent.
+        case .volume: return DiskMapTheme.data([0, 2, 3, 5, 4, 6][index % 6])
+        }
     }
 }
 
@@ -82,7 +138,7 @@ struct SpaceAccountSheet: View {
                     Text("Where's the rest?")
                         .font(.system(size: DiskMapType.scaled(20), weight: .semibold))
                         .foregroundStyle(DiskMapTheme.ink)
-                    Text("\(ByteFormat.string(account.usedBytes)) of this disk is in use. These parts add up to all of it.")
+                    Text("\(ByteFormat.string(account.usedBytes)) in use, split into parts that add up")
                         .font(DiskMapType.body)
                         .foregroundStyle(DiskMapTheme.ink2)
                         .fixedSize(horizontal: false, vertical: true)
@@ -126,51 +182,60 @@ struct SpaceAccountSheet: View {
         let names = account.timeMachineSnapshotNames
         if !names.isEmpty || model.snapshotDeletion != .idle {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Time Machine snapshots").font(DiskMapType.bodyEmphasis).foregroundStyle(DiskMapTheme.ink)
-                if !names.isEmpty {
-                    Text(Self.snapshotSummary(names))
-                        .font(DiskMapType.secondary)
-                        .foregroundStyle(DiskMapTheme.ink2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                switch model.snapshotDeletion {
-                case .running:
-                    HStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
-                        Text("Deleting snapshots…").font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink2)
+                HStack(spacing: 10) {
+                    Image(systemName: "clock.arrow.circlepath").foregroundStyle(DiskMapTheme.ink2)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(names.isEmpty ? "Time Machine snapshots" : Self.snapshotTitle(names))
+                            .font(DiskMapType.bodyEmphasis).foregroundStyle(DiskMapTheme.ink)
+                        if let newest = Self.newest(names) {
+                            Text("Newest \(newest.formatted(date: .abbreviated, time: .shortened)) · size unknown")
+                                .font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink3)
+                        }
                     }
-                    .accessibilityIdentifier("snapshot-deleting")
-                case .finished(let deleted, let alreadyGone, let failed):
+                    .help(Self.snapshotSummary(names))
+                    Spacer()
+                    if model.snapshotDeletion == .running {
+                        ProgressView().controlSize(.small).accessibilityIdentifier("snapshot-deleting")
+                    } else if !names.isEmpty && !confirming {
+                        Button("Delete…") { confirming = true }
+                            .buttonStyle(SecondaryButtonStyle())
+                            .accessibilityIdentifier("snapshot-delete")
+                    }
+                }
+                if case .finished(let deleted, let alreadyGone, let failed) = model.snapshotDeletion {
                     Text(Self.resultText(deleted: deleted, alreadyGone: alreadyGone, failed: failed))
                         .font(DiskMapType.secondary)
                         .foregroundStyle(failed.isEmpty ? DiskMapTheme.ink2 : DiskMapTheme.review)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("snapshot-result")
-                case .idle:
-                    EmptyView()
                 }
-                if !names.isEmpty && model.snapshotDeletion != .running {
-                    if confirming { confirmBox(count: names.count) } else {
-                        Button(names.count == 1 ? "Delete this snapshot…" : "Delete \(names.count) snapshots…") {
-                            confirming = true
-                        }
-                        .buttonStyle(SecondaryButtonStyle())
-                        .accessibilityIdentifier("snapshot-delete")
-                    }
+                if confirming && !names.isEmpty && model.snapshotDeletion != .running {
+                    confirmBox(count: names.count)
                 }
             }
-            .padding(16)
+            .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(DiskMapTheme.card))
             .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(DiskMapTheme.line, lineWidth: 1))
         }
     }
 
+    static func snapshotTitle(_ names: [String]) -> String {
+        names.count == 1 ? "1 Time Machine snapshot" : "\(names.count) Time Machine snapshots"
+    }
+
+    static func newest(_ names: [String]) -> Date? {
+        names.compactMap { name -> Date? in
+            if case .timeMachine(let date) = LocalSnapshots.kind(of: name) { return date }
+            return nil
+        }.max()
+    }
+
     private func confirmBox(count: Int) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(count == 1 ? "Delete this snapshot?" : "Delete \(count) snapshots?")
                 .font(DiskMapType.bodyEmphasis).foregroundStyle(DiskMapTheme.ink)
-            Text("They're deleted right away, not moved to the Trash, and can't be put back. Your backups on the Time Machine disk aren't touched, and Time Machine makes new snapshots as it backs up.")
+            Text("Deleted right away, not to the Trash. Your Time Machine backups aren't touched.")
                 .font(DiskMapType.secondary)
                 .foregroundStyle(DiskMapTheme.ink2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -230,11 +295,7 @@ struct SystemStorageList: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             MonoLabel("What macOS keeps")
-            Text("Space macOS fills by itself. Most of it can only be freed through macOS's own settings.")
-                .font(DiskMapType.secondary)
-                .foregroundStyle(DiskMapTheme.ink2)
-                .fixedSize(horizontal: false, vertical: true)
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 10) {
                 ForEach(items) { item in row(item) }
             }
             .padding(16)
@@ -245,18 +306,17 @@ struct SystemStorageList: View {
     }
 
     private func row(_ item: SystemStorageCatalog.Item) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: DiskMapSpace.xs) {
-                Text(item.entry.title).font(DiskMapType.bodyEmphasis).foregroundStyle(DiskMapTheme.ink)
-                if item.entry.regrows {
-                    Text("COMES BACK").font(DiskMapType.label).foregroundStyle(DiskMapTheme.ink3)
-                        .help("macOS downloads or rebuilds this again when it needs it.")
-                }
-                Spacer(minLength: DiskMapSpace.sm)
-                Text(ByteFormat.string(item.bytes) + (item.isPartial ? "+" : ""))
-                    .font(DiskMapType.figureStrong).foregroundStyle(DiskMapTheme.ink)
-                    .help(item.isPartial ? "Some folders inside couldn't be read without Full Disk Access, so it's at least this much." : "")
-            }
+        FoldingRow(title: item.entry.title, startsOpen: SnapshotHarness.restState == "system-open" && item.entry.action == .guide && item.entry.settingsPane != nil) {
+            Image(systemName: Self.symbol(item.entry.action))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(item.entry.action == .trash ? DiskMapTheme.accent : DiskMapTheme.ink3)
+                .frame(width: 12)
+                .help(Self.actionHelp(item.entry.action))
+        } trailing: {
+            Text(ByteFormat.string(item.bytes) + (item.isPartial ? "+" : ""))
+                .font(DiskMapType.figureStrong).foregroundStyle(DiskMapTheme.ink)
+                .help(item.isPartial ? "At least this much: some folders inside need Full Disk Access." : "")
+        } detail: {
             Text(item.entry.why)
                 .font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -264,10 +324,11 @@ struct SystemStorageList: View {
                 Text(step).font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            HStack(spacing: 8) {
+            HStack(spacing: 14) {
                 if let pane = item.entry.settingsPane, let url = Self.settingsURL(pane) {
                     Button("Open Settings") { NSWorkspace.shared.open(url) }
-                        .buttonStyle(SecondaryButtonStyle())
+                        .buttonStyle(LinkButtonStyle())
+                        .font(DiskMapType.secondary)
                         .accessibilityIdentifier("system-storage-settings-\(item.id)")
                 }
                 if item.entry.action == .trash {
@@ -276,15 +337,31 @@ struct SystemStorageList: View {
                                : "Add \(URL(fileURLWithPath: found.path).deletingPathExtension().lastPathComponent) to Cleanup") {
                             model.stageRow(path: found.path, size: found.bytes, reason: item.entry.title)
                         }
-                        .buttonStyle(SecondaryButtonStyle())
+                        .buttonStyle(LinkButtonStyle())
+                        .font(DiskMapType.secondary)
                         .accessibilityIdentifier("system-storage-stage")
                     }
                 }
             }
-            .padding(.top, 2)
         }
-        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("system-storage-row-\(item.id)")
+    }
+
+    /// Lock: macOS manages it. Gear: freed in Settings. Trash: can go to Cleanup.
+    static func symbol(_ action: SystemStorageCatalog.Action) -> String {
+        switch action {
+        case .never: return "lock.fill"
+        case .guide: return "gearshape.fill"
+        case .trash: return "trash.fill"
+        }
+    }
+
+    static func actionHelp(_ action: SystemStorageCatalog.Action) -> String {
+        switch action {
+        case .never: return "macOS manages this; nothing to do."
+        case .guide: return "Freed through macOS's own settings."
+        case .trash: return "Can go to Cleanup (Trash first)."
+        }
     }
 
     static func settingsURL(_ pane: String) -> URL? {
