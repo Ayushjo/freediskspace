@@ -744,7 +744,10 @@ final class ScanModel: ObservableObject {
         if SnapshotHarness.isDeterministic {
             spaceAccount = SpaceAccount.build(
                 breakdown: SnapshotHarness.fixedBreakdown, scanRootPath: root.path,
-                scanRootMountPoint: "/System/Volumes/Data", scannedOnDiskBytes: scanned,
+                // Demo renders (scripts/make-demo-fixture.sh) are sparse and
+                // drawn with logical sizes; account with the same basis.
+                scanRootMountPoint: "/System/Volumes/Data",
+                scannedOnDiskBytes: CommandLine.arguments.contains("logical") ? (logicalTotals.first ?? scanned) : scanned,
                 purgeableBytes: 6_400_000_000, snapshots: SnapshotHarness.fixedSnapshots, unreadableFolders: denied)
             systemStorage = SnapshotHarness.fixedSystemStorage
             xcodeStorage = SnapshotHarness.fixedXcodeStorage
@@ -1183,6 +1186,11 @@ struct ContentView: View {
                 } onCancel: { worker.cancel() }
                 guard !Task.isCancelled, model.rootURL == root, model.sizeBasis == basis else { return }
                 model.analysis = result.0
+                // Demo renders (scripts/make-demo-fixture.sh: sparse files at
+                // logical size): the coverage line uses the same basis.
+                if SnapshotHarness.isDeterministic, basis == .logical, let total = logical.first {
+                    model.analysis.scannedOnDiskBytes = total
+                }
                 model.cachedFileTypes = result.1
             }
     }
