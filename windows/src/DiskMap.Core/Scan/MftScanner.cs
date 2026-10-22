@@ -710,7 +710,8 @@ internal static class MftScanner
         long startedTicks = System.Diagnostics.Stopwatch.GetTimestamp();
         queue.Enqueue((rootFrn, tree.AddNode(
             Win32Scanner.RootName(rootPath).AsSpan(), parentId: -1, isDirectory: true,
-            logicalSize: 0, allocatedSize: 0, modifiedDaysSinceEpoch: 0)));
+            logicalSize: 0, allocatedSize: 0, modifiedDaysSinceEpoch: Win32Scanner.RootDays(rootPath).Modified,
+            createdDaysSinceEpoch: Win32Scanner.RootDays(rootPath).Created)));
 
         void ReportProgress()
         {

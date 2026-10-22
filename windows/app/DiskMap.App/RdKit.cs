@@ -35,8 +35,23 @@ public static class Rd
 
     public static FontFamily FontFor(double size) => size >= 20 ? DisplayFont : TextFont;
 
+    /// <summary>
+    /// SF's natural line height (ascender + descender ≈ 1.19 × size; SF Mono ≈ 1.21). Segoe's
+    /// is ≈ 1.33, so unpinned text sat a little lower and every stack drifted down a few
+    /// points against the Mac. Text in the kit uses the Mac's line height.
+    /// </summary>
+    public const double TextLineHeight = 1.19;
+    public const double MonoLineHeight = 1.21;
+
+    private static T Pinned<T>(T block, double size, double factor) where T : TextBlock
+    {
+        block.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
+        block.LineHeight = Math.Ceiling(Ui.Scaled(size) * factor);
+        return block;
+    }
+
     public static TextBlock Text(string text, double size = 13, FontWeight? weight = null,
-        string color = "RdInk", bool wrap = false) => new()
+        string color = "RdInk", bool wrap = false) => Pinned(new TextBlock
     {
         Text = text,
         FontFamily = FontFor(size),
@@ -46,10 +61,10 @@ public static class Rd
         TextWrapping = wrap ? TextWrapping.Wrap : TextWrapping.NoWrap,
         TextTrimming = wrap ? TextTrimming.None : TextTrimming.CharacterEllipsis,
         VerticalAlignment = VerticalAlignment.Center,
-    };
+    }, size, TextLineHeight);
 
     /// <summary>Mac `figure`: mono 12 (sizes, counts, dates).</summary>
-    public static TextBlock Figure(string text, double size = 12, FontWeight? weight = null, string color = "RdInk") => new()
+    public static TextBlock Figure(string text, double size = 12, FontWeight? weight = null, string color = "RdInk") => Pinned(new TextBlock
     {
         Text = text,
         FontFamily = Mono,
@@ -58,7 +73,7 @@ public static class Rd
         Foreground = B(color),
         TextTrimming = TextTrimming.CharacterEllipsis,
         VerticalAlignment = VerticalAlignment.Center,
-    };
+    }, size, MonoLineHeight);
 
     /// <summary>Mac `MonoLabel`: 10 medium mono, uppercase, ink3.</summary>
     public static TextBlock MonoLabel(string text, string color = "RdInk3") =>
@@ -553,6 +568,7 @@ public static class Rd
                 Margin = new Thickness(0, 0, i < text.Length - 1 ? Ui.Scaled(kerning) : 0, 0),
             };
             System.Windows.Documents.Typography.SetNumeralAlignment(glyph, FontNumeralAlignment.Tabular);
+            Pinned(glyph, size, TextLineHeight);
             row.Children.Add(glyph);
         }
         System.Windows.Automation.AutomationProperties.SetName(row, text);
@@ -566,7 +582,9 @@ public static class Rd
     public static StackPanel BaselineRow(FrameworkElement big, double bigSize, FrameworkElement small, double smallSize,
         double gap)
     {
-        double descent(double size) => Ui.Scaled(size) * (FontFor(size).LineSpacing - FontFor(size).Baseline);
+        // With a pinned line height WPF keeps the baseline at the font's proportion of the line.
+        double descent(double size) =>
+            Math.Ceiling(Ui.Scaled(size) * TextLineHeight) * (1 - FontFor(size).Baseline / FontFor(size).LineSpacing);
         big.VerticalAlignment = VerticalAlignment.Bottom;
         small.VerticalAlignment = VerticalAlignment.Bottom;
         small.Margin = new Thickness(gap, 0, 0, Math.Max(0, descent(bigSize) - descent(smallSize)));

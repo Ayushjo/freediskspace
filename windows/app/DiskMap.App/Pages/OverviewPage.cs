@@ -380,7 +380,7 @@ public sealed class OverviewPage : UserControl
             ? "Caches and build files that rebuild by themselves. They go to the Recycle Bin first, so you can always put them back."
             : Model.NothingTickedLine, 13, null, "RdInk", wrap: true);
         detail.Foreground = white(0.82);
-        detail.LineHeight = Ui.Scaled(13) * 1.33 + 2;
+        detail.LineHeight = Math.Ceiling(Ui.Scaled(13) * Rd.TextLineHeight) + 2;   // .lineSpacing(2)
         detail.Margin = new Thickness(0, 12, 0, 0);
         top.Children.Add(detail);
 

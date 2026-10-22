@@ -604,7 +604,7 @@ internal sealed class ReceiptView : Border
             stack.Children.Add(Dashed());
             var foot = Rd.Text("The space comes back when you empty the Recycle Bin. Put Back returns everything to the same place, with the same name.", 12, wrap: true);
             foot.Foreground = Black(0.55);
-            foot.LineHeight = Ui.Scaled(12) * 1.33 + 2;
+            foot.LineHeight = Math.Ceiling(Ui.Scaled(12) * Rd.TextLineHeight) + 2;   // .lineSpacing(2)
             stack.Children.Add(foot);
         }
 
