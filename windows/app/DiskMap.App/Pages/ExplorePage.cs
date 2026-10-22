@@ -267,16 +267,19 @@ public sealed class ExplorePage : UserControl
 
     private static readonly string[] MoreModes = ["Flame", "Bubbles", "Mind Map", "Age Map"];
 
-    /// <summary>ExploreViewSwitch: Map | Rings | List, then the other charts under More.</summary>
-    internal static FrameworkElement ViewSwitch()
+    /// <summary>
+    /// ExploreViewSwitch: Map | Rings | List, then the other charts under More. On a list page
+    /// (<paramref name="onList"/>) List is the one lit and More reads "More".
+    /// </summary>
+    internal static FrameworkElement ViewSwitch(bool onList = false)
     {
-        string mode = Model.VisualizeMode;
+        string mode = onList ? "" : Model.VisualizeMode;
         var row = new StackPanel { Orientation = Orientation.Horizontal };
         row.Children.Add(Rd.SegmentSwitch(
         [
-            new Rd.Segment("Map", mode is "Treemap" or "", () => Show("Treemap")),
+            new Rd.Segment("Map", !onList && mode is "Treemap" or "", () => Show("Treemap")),
             new Rd.Segment("Rings", mode == "Sunburst", () => Show("Sunburst")),
-            new Rd.Segment("List", false, () => Model.ShowPage("Biggest Files")),
+            new Rd.Segment("List", onList, () => { if (!onList) Model.ShowPage("Biggest Files"); }),
         ]));
         string moreTitle = MoreModes.Contains(mode) ? mode : "More";
         var more = new StackPanel { Orientation = Orientation.Horizontal, Cursor = Cursors.Hand, Background = Brushes.Transparent, Margin = new Thickness(8, 0, 0, 0) };

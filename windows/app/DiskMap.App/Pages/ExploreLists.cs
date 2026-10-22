@@ -415,6 +415,212 @@ internal static class ListKit
         FileKind.DeviceBackup => "Backups",
         _ => "Other",
     };
+
+    // ---- Shared by Folders, Forgotten and Find (WIN-107) ----
+
+    /// <summary>The token search with tokens the caller picked (Find shows every key: and comparison).</summary>
+    public static FrameworkElement SearchField(string text, IReadOnlyList<string> tokens, int? matchCount, string placeholder,
+        string accessibleName, Action<string> onChange, out TextBox input)
+    {
+        var field = SearchField(text, new ListQuery { Tokens = [.. tokens] }, matchCount, placeholder, onChange, out input);
+        System.Windows.Automation.AutomationProperties.SetName(input, accessibleName);
+        return field;
+    }
+
+    /// <summary>DiskMapEmptyState: a 20 pt ink3 symbol, the title (13 medium), the message (12 ink2, 420 wide), buttons.</summary>
+    public static FrameworkElement EmptyState(string icon, string title, string message, params FrameworkElement[] buttons)
+    {
+        var stack = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(32) };
+        var glyph = Ui.Glyph(icon, 20, Ui.Brush("RdInk3"));
+        glyph.HorizontalAlignment = HorizontalAlignment.Center;
+        stack.Children.Add(glyph);
+        var t = Rd.Text(title, 13, FontWeights.Medium);
+        t.HorizontalAlignment = HorizontalAlignment.Center;
+        t.Margin = new Thickness(0, 12, 0, 0);
+        stack.Children.Add(t);
+        var m = Rd.Text(message, 12, null, "RdInk2", wrap: true);
+        m.TextAlignment = TextAlignment.Center;
+        m.MaxWidth = 420;
+        m.HorizontalAlignment = HorizontalAlignment.Center;
+        m.Margin = new Thickness(0, 12, 0, 0);
+        stack.Children.Add(m);
+        if (buttons.Length > 0)
+        {
+            var row = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 20, 0, 0) };
+            foreach (var b in buttons) { b.Margin = new Thickness(row.Children.Count > 0 ? 8 : 0, 0, 0, 0); row.Children.Add(b); }
+            stack.Children.Add(row);
+        }
+        return stack;
+    }
+
+    /// <summary>DiskMapLoadingState (the catalog gate): a busy bar, the title, the detail.</summary>
+    public static FrameworkElement LoadingState(string title, string detail)
+    {
+        var stack = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(32) };
+        stack.Children.Add(new ProgressBar { IsIndeterminate = true, Width = 120, Height = 4, HorizontalAlignment = HorizontalAlignment.Center });
+        var t = Rd.Text(title, 13, FontWeights.Medium);
+        t.HorizontalAlignment = HorizontalAlignment.Center;
+        t.Margin = new Thickness(0, 16, 0, 0);
+        stack.Children.Add(t);
+        var d = Rd.Text(detail, 12, null, "RdInk2", wrap: true);
+        d.TextAlignment = TextAlignment.Center;
+        d.MaxWidth = 420;
+        d.HorizontalAlignment = HorizontalAlignment.Center;
+        d.Margin = new Thickness(0, 16, 0, 0);
+        stack.Children.Add(d);
+        System.Windows.Automation.AutomationProperties.SetName(stack, title);
+        return stack;
+    }
+
+    /// <summary>The table's column header: 30 tall, secondary ink3 labels, a 1 px ink @ 85% rule below.</summary>
+    public static FrameworkElement ColumnHeader(Columns columns, string kind, string size, bool sizeOn, string changed, string? free)
+    {
+        var header = new Grid();
+        void hcol(GridLength w) => header.ColumnDefinitions.Add(new ColumnDefinition { Width = w });
+        hcol(new GridLength(1, GridUnitType.Star)); hcol(new GridLength(columns.Kind)); hcol(new GridLength(columns.Bar + columns.Size));
+        hcol(new GridLength(columns.Changed + 24));
+        if (columns.ShowFree) hcol(new GridLength(columns.Free + (columns.FreeMax - columns.Free) / 2));
+        hcol(new GridLength(columns.Add + 8));
+        void head(string text, int c, string color = "RdInk3", bool right = false, double left = 0)
+        {
+            var t = Rd.Text(text, 12, null, color);
+            t.Margin = new Thickness(left, 0, 0, 0);
+            if (right) t.HorizontalAlignment = HorizontalAlignment.Right;
+            Grid.SetColumn(t, c);
+            header.Children.Add(t);
+        }
+        head("Name", 0, left: 12); head(kind, 1); head(size, 2, sizeOn ? "RdInk" : "RdInk3", right: true); head(changed, 3, left: 24);
+        if (columns.ShowFree && free is not null) head(free, 4);
+        return new Border
+        {
+            Height = 30, Child = header, BorderBrush = Rd.WithOpacity(Ui.Brush("RdInk"), 0.85), BorderThickness = new Thickness(0, 0, 0, 1),
+        };
+    }
+
+    /// <summary>The footer bar: mono 12 ink2 text, 10 above and below, a 1 px ink @ 85% rule on top.</summary>
+    public static Border FooterBar(UIElement text, params FrameworkElement[] trailing)
+    {
+        var dock = new DockPanel { Margin = new Thickness(0, 10, 0, 10) };
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        foreach (var t in trailing)
+        {
+            t.Margin = new Thickness(14, 0, 0, 0);
+            t.VerticalAlignment = VerticalAlignment.Center;
+            buttons.Children.Add(t);
+        }
+        DockPanel.SetDock(buttons, Dock.Right);
+        dock.Children.Add(buttons);
+        dock.Children.Add(text);
+        return new Border { Child = dock, BorderBrush = Rd.WithOpacity(Ui.Brush("RdInk"), 0.85), BorderThickness = new Thickness(0, 1, 0, 0) };
+    }
+
+    /// <summary>A footer line of mono 12 runs, each with its own colour; trims at the end.</summary>
+    public static TextBlock FooterText(params (string Text, string Color)[] runs)
+    {
+        var text = new TextBlock { VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
+        var mono = new FontFamily("Cascadia Mono, Consolas");
+        foreach (var (s, color) in runs)
+            text.Inlines.Add(new System.Windows.Documents.Run(s) { FontFamily = mono, FontSize = Ui.Scaled(12), Foreground = Ui.Brush(color) });
+        return text;
+    }
+
+    /// <summary>Selected nodes with no selected ancestor: a folder and something inside it are one item.</summary>
+    public static List<int> SelectionRoots(FileTree tree, IReadOnlyCollection<int> selection, long[] totals) =>
+        selection.Where(id =>
+        {
+            if (id < 0 || id >= tree.Count) return false;
+            for (int p = tree.Parent[id]; p >= 0; p = tree.Parent[p])
+                if (selection.Contains(p)) return false;
+            return true;
+        }).OrderByDescending(id => id < totals.Length ? totals[id] : 0).ToList();
+
+    /// <summary>
+    /// NodeSelectionToolbar: once anything is Ctrl-selected, "N selected  size  Clear", then
+    /// Show in File Explorer, Copy Paths and Add to basket — 48 tall on the card colour.
+    /// Null when nothing is selected.
+    /// </summary>
+    public static FrameworkElement? SelectionToolbar(string pageLabel)
+    {
+        if (Model.MultiSelection.Count == 0 || Model.Tree is not { } tree) return null;
+        var roots = SelectionRoots(tree, Model.MultiSelection, Model.Totals);
+        long bytes = roots.Sum(id => id < Model.Totals.Length ? Model.Totals[id] : 0);
+        var paths = roots.Select(Model.PathOf).ToList();
+        var dock = new DockPanel { Margin = new Thickness(16, 0, 16, 0) };
+        var right = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        var reveal = Rd.IconButton(Icons.Open, "Show in File Explorer", () => { foreach (var p in paths.Take(1)) Explorer.Reveal(p); });
+        right.Children.Add(reveal);
+        var copy = Rd.IconButton(Icons.Copy, "Copy Paths", () =>
+        {
+            try { Clipboard.SetText(string.Join(Environment.NewLine, paths)); } catch { }
+        });
+        copy.ToolTip = "Copy the selected paths, one per line";
+        copy.Margin = new Thickness(2, 0, 0, 0);
+        right.Children.Add(copy);
+        var add = Rd.AccentButton("Add to basket", () =>
+        {
+            int added = Model.ConfirmStageMany(roots, $"Selected in {pageLabel}", $"Selected in {pageLabel}");
+            if (added > 0) Model.ClearMulti();
+        });
+        add.Margin = new Thickness(8, 0, 0, 0);
+        right.Children.Add(add);
+        DockPanel.SetDock(right, Dock.Right);
+        dock.Children.Add(right);
+        var left = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        left.Children.Add(Rd.Text($"{roots.Count:N0} selected", 13, FontWeights.Medium));
+        var size = Rd.Figure(ByteFormat.Format(bytes), 12, null, "RdInk2");
+        size.Margin = new Thickness(8, 0, 0, 0);
+        left.Children.Add(size);
+        var clear = Rd.Text("Clear", 13, FontWeights.Medium, "RdInk2");
+        var clearBox = new Border
+        {
+            Height = 28, Padding = new Thickness(8, 0, 8, 0), CornerRadius = new CornerRadius(6), Margin = new Thickness(8, 0, 0, 0),
+            Background = Brushes.Transparent, Child = clear, Cursor = Cursors.Hand,
+        };
+        clearBox.MouseEnter += (_, _) => { clearBox.Background = Ui.Brush("RdHover"); clear.Foreground = Ui.Brush("RdInk"); };
+        clearBox.MouseLeave += (_, _) => { clearBox.Background = Brushes.Transparent; clear.Foreground = Ui.Brush("RdInk2"); };
+        clearBox.MouseLeftButtonUp += (_, _) => Model.ClearMulti();
+        System.Windows.Automation.AutomationProperties.SetName(clearBox, "Clear selection");
+        left.Children.Add(clearBox);
+        dock.Children.Add(left);
+        return new Border
+        {
+            Height = 48, Background = Ui.Brush("RdCard"), Child = dock,
+            BorderBrush = Ui.Brush("RdLine"), BorderThickness = new Thickness(0, 1, 0, 0),
+        };
+    }
+
+    /// <summary>Up/Down or J/K, Delete stages, Enter reveals, Ctrl+A selects all, Esc clears (Mac: listKeyboard).</summary>
+    public static bool ListKey(KeyEventArgs e, IReadOnlyList<int> ids, ref int? selected, Action<int> stage,
+        Func<int, string?> path, Action selectAll)
+    {
+        if (e.OriginalSource is TextBox || ids.Count == 0) return false;
+        int? current = selected;
+        int index = current is { } s ? ids.ToList().IndexOf(s) : -1;
+        switch (e.Key)
+        {
+            case Key.Down or Key.J when Keyboard.Modifiers == ModifierKeys.None:
+                selected = ids[Math.Min(ids.Count - 1, index + 1)];
+                Model.Select(selected.Value);
+                return true;
+            case Key.Up or Key.K when Keyboard.Modifiers == ModifierKeys.None:
+                selected = ids[Math.Max(0, index - 1)];
+                Model.Select(selected.Value);
+                return true;
+            case Key.Delete when index >= 0:
+                stage(ids[index]);
+                return true;
+            case Key.Enter when index >= 0:
+                if (path(ids[index]) is { } p) Explorer.Reveal(p);
+                return true;
+            case Key.A when Keyboard.Modifiers == ModifierKeys.Control:
+                selectAll();
+                return true;
+            case Key.Escape:
+                Model.ClearMulti();
+                return true;
+        }
+        return false;
+    }
 }
 
 /// <summary>
@@ -587,7 +793,7 @@ public sealed class BiggestFilesExplorePage : UserControl
     private FrameworkElement Header(FileTree tree)
     {
         var dock = new DockPanel();
-        var views = ExplorePage.ViewSwitch();
+        var views = ExplorePage.ViewSwitch(onList: true);
         DockPanel.SetDock(views, Dock.Right);
         dock.Children.Add(views);
         var row = new StackPanel { Orientation = Orientation.Horizontal };

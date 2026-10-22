@@ -241,16 +241,16 @@ public partial class MainWindow : Window
     private void BuildNav()
     {
         _pageFactories["Overview"] = () => new OverviewPage();
-        _pageFactories["Find"] = () => new SearchPage();
+        _pageFactories["Find"] = () => new FindExplorePage();   // Mac: FindView
         _pageFactories["Biggest Files"] = () => new BiggestFilesExplorePage();   // Mac: Explore → List → Files
-        _pageFactories["Biggest Folders"] = () => new BiggestFoldersPage();
-        _pageFactories["Forgotten Files"] = () => new ForgottenFilesPage();
+        _pageFactories["Biggest Folders"] = () => new BiggestFoldersExplorePage("Biggest Folders");   // Mac: Explore → List → Folders
+        _pageFactories["Forgotten Files"] = () => new ForgottenExplorePage();   // Mac: Explore → List → Forgotten
         _pageFactories["Duplicates"] = () => new DuplicatesPage();
         _pageFactories["Safe to Review"] = () => new CleanUpPage();   // Mac cleanSafe: Clean up
         _pageFactories["Caches"] = () => new CachesPage();
         _pageFactories["Old Downloads"] = () => new OldDownloadsPage();
         _pageFactories["Large Media"] = () => new LargeMediaPage();
-        _pageFactories["File Browser"] = () => new FileBrowserPage();
+        _pageFactories["File Browser"] = () => new BiggestFoldersExplorePage("File Browser");   // Mac shows BiggestFoldersView here
         _pageFactories["Visualize"] = () => new ExplorePage();   // Mac: Explore → Map
         _pageFactories["Developer Storage"] = () => new DeveloperStoragePage();
         _pageFactories["Applications"] = () => new ApplicationsPage();
