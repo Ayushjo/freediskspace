@@ -376,7 +376,9 @@ public sealed class ScanModel : ViewModelBase
             var (logical, allocated, counts, quickWins, snapshot, reviewables) = await Task.Run(() =>
             {
                 var l = scanned.Tree.RollUpSizes(SizeBasis.Logical);
-                var a = scanned.Tree.RollUpSizes(SizeBasis.Allocated);
+                // The demo PC's files are sparse (they take no space), so deterministic renders
+                // count them at their logical size on disk too, as the Mac's real demo files are.
+                var a = Harness.Deterministic ? l : scanned.Tree.RollUpSizes(SizeBasis.Allocated);
                 var c = scanned.Tree.RollUpCounts();
                 var qw = Core.QuickWins.Find(scanned.Tree, path, Core.QuickWins.BundledPatterns());
                 var snap = AnalysisSnapshot.Build(scanned.Tree, path, l, a, basis, qw, volumeOf: Harness.VolumeFor);
@@ -463,7 +465,7 @@ public sealed class ScanModel : ViewModelBase
         var (logical, allocated, counts, quickWins, snap, reviewables) = await Task.Run(() =>
         {
             var l = snapshot.Tree.RollUpSizes(SizeBasis.Logical);
-            var a = snapshot.Tree.RollUpSizes(SizeBasis.Allocated);
+            var a = Harness.Deterministic ? l : snapshot.Tree.RollUpSizes(SizeBasis.Allocated);
             var c = snapshot.Tree.RollUpCounts();
             var qw = Core.QuickWins.Find(snapshot.Tree, snapshot.RootPath, Core.QuickWins.BundledPatterns());
             var s = AnalysisSnapshot.Build(snapshot.Tree, snapshot.RootPath, l, a, basis, qw, volumeOf: Harness.VolumeFor);
