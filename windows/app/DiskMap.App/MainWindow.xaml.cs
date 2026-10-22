@@ -751,6 +751,8 @@ public partial class MainWindow : Window
         BuildCaptionButtons();
         InspectorHost.Content = new Controls.InspectorPanel();
         SelectPage(_currentPage);
+        BasketWindow.ThemeChanged();
+        _settingsWindow?.Rebuild();
     }
 
     /// <summary>WIN-059: rebuild code-built typography at the selected text scale.</summary>

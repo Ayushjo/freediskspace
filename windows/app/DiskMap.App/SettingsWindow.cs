@@ -46,11 +46,15 @@ public sealed class SettingsWindow : Window
         _root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1) });
         _root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         Content = _root;
+        // Esc closes, as the Mac's Settings window does with ⌘W.
+        PreviewKeyDown += (_, e) => { if (e.Key == System.Windows.Input.Key.Escape) { Close(); e.Handled = true; } };
         Rebuild();
     }
 
-    private void Rebuild()
+    internal void Rebuild()
     {
+        // The theme may have changed: brushes are swapped, not recoloured.
+        Background = Ui.Brush("RdPage");
         double offset = _scroll.VerticalOffset;
         _root.Children.Clear();
         _root.Children.Add(Sidebar());

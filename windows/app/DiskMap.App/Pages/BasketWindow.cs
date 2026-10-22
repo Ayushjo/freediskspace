@@ -63,6 +63,14 @@ public sealed class BasketWindow : Window
         Rebuild();
     }
 
+    /// <summary>The theme changed: repaint the open basket with the new brushes.</summary>
+    internal static void ThemeChanged()
+    {
+        if (_open is not { } window) return;
+        window.Background = Ui.Brush("RdPage");
+        window.Rebuild();
+    }
+
     private void OnStaged(object? sender, EventArgs e) => Dispatcher.InvokeAsync(Rebuild);
 
     private List<CleanupQueue.StagedItem> Items => Model.Cleanup.AllItems().ToList();

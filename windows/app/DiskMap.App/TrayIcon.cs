@@ -55,9 +55,21 @@ public sealed class TrayIcon : IDisposable
         _icon.Text = text.Length > 63 ? text[..63] : text;   // NotifyIcon's limit
     }
 
+    /// <summary>
+    /// Closes the flyout once. Closing deactivates it, and Deactivated closes it again — a second
+    /// Close while the first is under way throws ("…while a Window is closing").
+    /// </summary>
+    private void CloseFlyout()
+    {
+        if (_flyout is not { } flyout) return;
+        _flyout = null;
+        _closedAt = DateTime.Now;
+        flyout.Close();
+    }
+
     private void ShowWindow()
     {
-        _flyout?.Close();
+        CloseFlyout();
         _window.Show();
         _window.WindowState = WindowState.Normal;
         _window.Activate();
@@ -69,22 +81,24 @@ public sealed class TrayIcon : IDisposable
         // here — don't reopen it in the same breath.
         if (_flyout is not null || (DateTime.Now - _closedAt).TotalMilliseconds < 250)
         {
-            _flyout?.Close();
+            CloseFlyout();
             return;
         }
-        _flyout = BuildFlyout();
-        _flyout.Closed += (_, _) => { _flyout = null; _closedAt = DateTime.Now; };
-        _flyout.Deactivated += (_, _) => _flyout?.Close();
-        _flyout.KeyDown += (_, e) => { if (e.Key == System.Windows.Input.Key.Escape) _flyout?.Close(); };
-        _flyout.Opacity = 0;
-        _flyout.Show();
+        var opened = BuildFlyout();
+        _flyout = opened;
+        bool Current() => ReferenceEquals(_flyout, opened);
+        opened.Closed += (_, _) => { if (Current()) { _flyout = null; _closedAt = DateTime.Now; } };
+        opened.Deactivated += (_, _) => { if (Current()) CloseFlyout(); };
+        opened.KeyDown += (_, e) => { if (e.Key == System.Windows.Input.Key.Escape && Current()) CloseFlyout(); };
+        opened.Opacity = 0;
+        opened.Show();
         // Position after layout: bottom-right of the work area, above the
         // taskbar (or wherever the work area ends), like system flyouts.
         var area = SystemParameters.WorkArea;
-        _flyout.Left = area.Right - _flyout.ActualWidth - 4;
-        _flyout.Top = area.Bottom - _flyout.ActualHeight - 4;
-        _flyout.Opacity = 1;
-        _flyout.Activate();
+        opened.Left = area.Right - opened.ActualWidth - 4;
+        opened.Top = area.Bottom - opened.ActualHeight - 4;
+        opened.Opacity = 1;
+        if (Current()) opened.Activate();
     }
 
     /// <summary>Changes under 50 MB are noise (caches, logs), not news.</summary>
@@ -167,7 +181,7 @@ public sealed class TrayIcon : IDisposable
                 BorderBrush = Rd.WithOpacity(Ui.Brush("AppAccent"), 0.35), BorderThickness = new Thickness(1),
                 Child = card, Cursor = System.Windows.Input.Cursors.Hand, ToolTip = "Opens Clean up. Nothing is removed from here.",
             };
-            box.MouseLeftButtonUp += (_, _) => { ShowWindow(); model.ShowPage("Safe to Review"); };
+            box.MouseLeftButtonUp += (_, e) => { e.Handled = true; ShowWindow(); model.ShowPage("Safe to Review"); };
             add(box);
         }
 
@@ -205,7 +219,7 @@ public sealed class TrayIcon : IDisposable
         var more = new WrapPanel();
         void link(string label, Action run, bool enabled = true)
         {
-            var t = Rd.Link(label, () => { _flyout?.Close(); run(); }, 12, "RdInk3");
+            var t = Rd.Link(label, () => { CloseFlyout(); run(); }, 12, "RdInk3");
             t.IsEnabled = enabled;
             t.Opacity = enabled ? 1 : 0.45;
             t.Margin = new Thickness(0, 0, 14, 0);
@@ -238,7 +252,7 @@ public sealed class TrayIcon : IDisposable
             var settings = AppSettings.Load();
             settings.ShowTray = false;
             settings.Save();
-            _flyout?.Close();
+            CloseFlyout();
             Visible = false;
         };
         menu.Items.Add(hide);
@@ -268,7 +282,7 @@ public sealed class TrayIcon : IDisposable
 
     public void Dispose()
     {
-        _flyout?.Close();
+        CloseFlyout();
         _icon.Dispose();
     }
 }
