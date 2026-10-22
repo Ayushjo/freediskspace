@@ -28,7 +28,7 @@ See what's filling your disk, learn what each thing is, and free space without t
   <img src="docs/readme/overview-light.webp" alt="Overview: 120 GB free of 500 GB, 28.5 GB that can be freed, and a bar showing what is using the disk">
 </picture>
 
-<p align="center"><sub>The new design, arriving in the next update. Captured with demo files, not a real person's disk.</sub></p>
+<p align="center"><sub>Captured with demo files, not a real person's disk.</sub></p>
 
 ## Why freedisk.space
 
