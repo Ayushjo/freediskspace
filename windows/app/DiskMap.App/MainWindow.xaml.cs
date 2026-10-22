@@ -360,7 +360,8 @@ public partial class MainWindow : Window
                 return Bytes(_model.SafeReclaimableBytes, accent: true);
             case "Duplicates":
                 if (!_model.DuplicatesSearched) return null;
-                return Bytes(_model.Duplicates.Sum(g => (long)Math.Max(0, g.FileIDs.Count - 1) * g.SizeEach));
+                // Mac: physicalCopies − 1 — copies sharing blocks free nothing, so a clone family is one copy.
+                return Bytes(_model.Duplicates.Sum(g => (long)Math.Max(0, g.PhysicalCopies - 1) * g.SizeEach));
             case "What changed":
                 if (_model.HistoryComparison is not { } c || Math.Abs(c.FreeDelta) < GrowthNoise) return null;
                 long used = -c.FreeDelta;
