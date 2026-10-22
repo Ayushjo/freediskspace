@@ -293,7 +293,8 @@ public static class Dialogs
         SpaceAccountWindow(owner, account, system).ShowDialog();
 
     /// <summary>The "Where's the rest?" sheet, not yet shown (the harness renders it to a file).</summary>
-    public static Window SpaceAccountWindow(Window? owner, SpaceAccount account, IReadOnlyList<SystemStorageCatalog.Item>? system = null)
+    public static Window SpaceAccountWindow(Window? owner, SpaceAccount account, IReadOnlyList<SystemStorageCatalog.Item>? system = null,
+        bool fullHeight = false)
     {
         var body = new StackPanel();
         var head = new DockPanel();
@@ -321,7 +322,7 @@ public static class Dialogs
         }
         var scroller = new ScrollViewer
         {
-            MaxHeight = 520, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false,
+            MaxHeight = fullHeight ? double.PositiveInfinity : 520, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false,
             Content = content, Margin = new Thickness(0, 18, 0, 0),
         };
         body.Children.Add(scroller);

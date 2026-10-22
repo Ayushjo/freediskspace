@@ -108,6 +108,9 @@ public partial class MainWindow : Window
                             var rest = Dialogs.SpaceAccountWindow(this, account, _model.SystemStorage);
                             SaveWindowShot(rest, stem + "-rest.png");
                             rest.Close();
+                            var all = Dialogs.SpaceAccountWindow(this, account, _model.SystemStorage, fullHeight: true);
+                            SaveWindowShot(all, stem + "-rest-full.png");
+                            all.Close();
                         }
                     }
                     Trace("shot");
