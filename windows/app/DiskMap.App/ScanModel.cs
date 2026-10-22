@@ -187,7 +187,14 @@ public sealed class ScanModel : ViewModelBase
         _duplicatesRan ? Duplicates.SelectMany(g => g.FileIDs).ToHashSet() : null;
 
     /// <summary>The duplicate finder completed (possibly finding nothing).</summary>
-    public void MarkDuplicatesSearched() => _duplicatesRan = true;
+    public void MarkDuplicatesSearched() { _duplicatesRan = true; Changed(); }
+
+    /// <summary>True once the duplicate finder has run on this scan (the sidebar's figure).</summary>
+    public bool DuplicatesSearched => _duplicatesRan;
+
+    /// <summary>When the current scan finished — the page bar's "Scanned 2 minutes ago".</summary>
+    private DateTimeOffset? _lastScanFinishedAt;
+    public DateTimeOffset? LastScanFinishedAt { get => _lastScanFinishedAt; private set => Set(ref _lastScanFinishedAt, value); }
 
     /// <summary>Quick-wins hits, built once per scan (sidebar pages share it).</summary>
     private List<QuickWins.Hit>? _quickWins;
@@ -350,6 +357,8 @@ public sealed class ScanModel : ViewModelBase
             CloneProfile = scanned.CloneProfile;
             RootPath = path;
             Volume = Harness.VolumeFor(path);
+            // The harness pins "Scanned 2 minutes ago", as the Mac's --deterministic does.
+            LastScanFinishedAt = Harness.Deterministic ? DateTimeOffset.Now.AddSeconds(-120) : DateTimeOffset.Now;
             Tree = scanned.Tree;
             // WIN-013: let staging measure from this tree when the journal
             // proves a staged folder's subtree is unchanged since the scan.

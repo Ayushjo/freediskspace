@@ -204,6 +204,67 @@ public static class Rd
         return button;
     }
 
+    /// <summary>PrimaryButtonStyle: ink fill, onInk 13 medium text, radius 6, 28 tall, 12 side padding.</summary>
+    public static Button PrimaryButton(string text, Action? onClick = null, bool fullWidth = false) =>
+        PlainButton(text, onClick, fullWidth, B("RdInk"), B("RdOnInk"), null, 6);
+
+    /// <summary>SecondaryButtonStyle: raised @ 60% fill, 1 px line, ink 13 medium text, radius 6, 28 tall.</summary>
+    public static Button SecondaryButton(string text, Action? onClick = null, bool fullWidth = false) =>
+        PlainButton(text, onClick, fullWidth, WithOpacity(B("RdCard"), 0.6), B("RdInk"), B("RdLine"), 6);
+
+    private static Button PlainButton(string text, Action? onClick, bool fullWidth, Brush fill, Brush ink,
+        Brush? stroke, double radius)
+    {
+        var button = new Button
+        {
+            Content = text,
+            Height = 28,
+            Padding = new Thickness(12, 0, 12, 0),
+            FontSize = Ui.Scaled(13),
+            FontWeight = FontWeights.Medium,
+            Foreground = ink,
+            Background = fill,
+            BorderBrush = stroke ?? Brushes.Transparent,
+            BorderThickness = new Thickness(stroke is null ? 0 : 1),
+            Cursor = Cursors.Hand,
+            HorizontalAlignment = fullWidth ? HorizontalAlignment.Stretch : HorizontalAlignment.Left,
+            Template = PlainTemplate(radius),
+        };
+        System.Windows.Automation.AutomationProperties.SetName(button, text);
+        if (onClick is not null) button.Click += (_, _) => onClick();
+        return button;
+    }
+
+    private static readonly Dictionary<double, ControlTemplate> _plainTemplates = [];
+
+    private static ControlTemplate PlainTemplate(double radius)
+    {
+        if (_plainTemplates.TryGetValue(radius, out var cached)) return cached;
+        // Pressed: 82% (Mac: ink @ 0.82 / ink @ 8% wash); disabled: 30%.
+        string xaml = $@"
+<ControlTemplate TargetType=""Button""
+    xmlns=""http://schemas.microsoft.com/winfx/2006/xaml/presentation""
+    xmlns:x=""http://schemas.microsoft.com/winfx/2006/xaml"">
+  <Border x:Name=""Face"" CornerRadius=""{radius}"" Background=""{{TemplateBinding Background}}""
+          BorderBrush=""{{TemplateBinding BorderBrush}}"" BorderThickness=""{{TemplateBinding BorderThickness}}""
+          Padding=""{{TemplateBinding Padding}}"" SnapsToDevicePixels=""True"">
+    <ContentPresenter HorizontalAlignment=""Center"" VerticalAlignment=""Center""
+                      TextElement.Foreground=""{{TemplateBinding Foreground}}""/>
+  </Border>
+  <ControlTemplate.Triggers>
+    <Trigger Property=""IsPressed"" Value=""True"">
+      <Setter TargetName=""Face"" Property=""Opacity"" Value=""0.82""/>
+    </Trigger>
+    <Trigger Property=""IsEnabled"" Value=""False"">
+      <Setter TargetName=""Face"" Property=""Opacity"" Value=""0.3""/>
+    </Trigger>
+  </ControlTemplate.Triggers>
+</ControlTemplate>";
+        var template = (ControlTemplate)XamlReader.Parse(xaml);
+        _plainTemplates[radius] = template;
+        return template;
+    }
+
     private static ControlTemplate? _accentSoft, _accentHard;
 
     private static ControlTemplate AccentTemplate(bool hard)
@@ -384,18 +445,12 @@ public static class Rd
 
     // ---- Helpers ----
 
-    /// <summary>RelativeTime: the page bar's "2 minutes ago", same thresholds as the Mac.</summary>
-    public static string RelativeTime(DateTimeOffset since, DateTimeOffset now)
-    {
-        double s = Math.Max(0, (now - since).TotalSeconds);
-        if (s < 45) return "just now";
-        if (s < 90) return "a minute ago";
-        if (s < 3_600) return $"{(int)Math.Round(s / 60)} minutes ago";
-        if (s < 5_400) return "an hour ago";
-        if (s < 86_400) return $"{(int)Math.Round(s / 3_600)} hours ago";
-        int days = (int)Math.Round(s / 86_400);
-        return days == 1 ? "yesterday" : $"{days} days ago";
-    }
+    /// <summary>RelativeTime: the page bar's "2 minutes ago", same thresholds and rounding as the Mac.</summary>
+    public static string RelativeTime(DateTimeOffset since, DateTimeOffset now) =>
+        DiskMap.Core.ShellFormat.RelativeTime(since, now);
+
+    /// <summary>A nav figure's compact size, "31.6G" / "640M" (AppShellView.compactBytes).</summary>
+    public static string CompactBytes(long bytes) => DiskMap.Core.ShellFormat.CompactBytes(bytes);
 
     public static Brush WithOpacity(Brush brush, double opacity)
     {
