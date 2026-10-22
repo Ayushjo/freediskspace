@@ -10,10 +10,10 @@ A free, open source disk space analyzer for Mac and Windows.<br>
 See what's filling your disk, learn what each thing is, and free space without the fear of losing something.
 
 [![Latest release](https://img.shields.io/github/v/release/Ayushjo/freediskspace?label=release&color=7966DA)](https://github.com/Ayushjo/freediskspace/releases/latest)
-[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-14151A?logo=apple&logoColor=white)](https://github.com/Ayushjo/freediskspace/releases/latest/download/freedisk.space.dmg)
-[![Windows 10 and 11](https://img.shields.io/badge/Windows-10%20%7C%2011-14151A?logo=windows&logoColor=white)](https://github.com/Ayushjo/freediskspace/releases/download/v0.2.3/freedisk.space-0.2.3-windows-x64.exe)
-[![MIT license](https://img.shields.io/badge/license-MIT-14151A)](LICENSE)
-[![Works offline](https://img.shields.io/badge/works-offline-14151A)](#privacy)
+[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-7966DA?logo=apple&logoColor=white)](https://github.com/Ayushjo/freediskspace/releases/latest/download/freedisk.space.dmg)
+[![Windows 10 and 11](https://img.shields.io/badge/Windows-10%20%7C%2011-7966DA?logo=windows&logoColor=white)](https://github.com/Ayushjo/freediskspace/releases/download/v0.2.3/freedisk.space-0.2.3-windows-x64.exe)
+[![MIT license](https://img.shields.io/badge/license-MIT-7966DA)](LICENSE)
+[![Works offline](https://img.shields.io/badge/works-offline-7966DA)](#privacy)
 
 **[Download for Mac](https://github.com/Ayushjo/freediskspace/releases/latest/download/freedisk.space.dmg)** &nbsp;·&nbsp;
 **[Download for Windows](https://github.com/Ayushjo/freediskspace/releases/download/v0.2.3/freedisk.space-0.2.3-windows-x64.exe)** &nbsp;·&nbsp;
