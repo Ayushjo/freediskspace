@@ -31,6 +31,14 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        // Render harness: pin the content area to an exact size so shots match
+        // the macOS reference renders pixel for pixel.
+        if (Harness.ContentSize is { } size && Content is FrameworkElement content)
+        {
+            content.Width = size.Width;
+            content.Height = size.Height;
+            SizeToContent = SizeToContent.WidthAndHeight;
+        }
         ApplyTextScale(AppSettings.Load());
         BuildNav();
         BuildTopBar();
@@ -492,13 +500,17 @@ public partial class MainWindow : Window
 
     private void SaveShot(string path)
     {
+        // The content area only (no window frame), at DISKMAP_SHOT_SCALE when
+        // set, so a 1440x900 shot at scale 2 is 2880x1800 like the Mac's.
+        var element = Content as FrameworkElement ?? this;
         var dpi = System.Windows.Media.VisualTreeHelper.GetDpi(this);
+        double scale = Harness.ShotScale ?? dpi.DpiScaleX;
         var bmp = new System.Windows.Media.Imaging.RenderTargetBitmap(
-            Math.Max(1, (int)Math.Ceiling(ActualWidth * dpi.DpiScaleX)),
-            Math.Max(1, (int)Math.Ceiling(ActualHeight * dpi.DpiScaleY)),
-            96 * dpi.DpiScaleX, 96 * dpi.DpiScaleY,
+            Math.Max(1, (int)Math.Ceiling(element.ActualWidth * scale)),
+            Math.Max(1, (int)Math.Ceiling(element.ActualHeight * scale)),
+            96 * scale, 96 * scale,
             System.Windows.Media.PixelFormats.Pbgra32);
-        bmp.Render(this);
+        bmp.Render(element);
         var encoder = new System.Windows.Media.Imaging.PngBitmapEncoder();
         encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bmp));
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -758,7 +770,7 @@ public partial class MainWindow : Window
             if (q.Length > 0 && tree is not null && _model.Totals.Length == tree.Count)
             {
                 var parsed = FileQuery.Parse(q,
-                    home: Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                    home: UserFolders.Home,
                     root: _model.RootPath ?? "");
                 meaning.Text = parsed.Query.IsStructured
                     ? string.Join("  ·  ", parsed.Query.Describe())
@@ -934,7 +946,7 @@ public partial class MainWindow : Window
 
     private void RefreshDrive()
     {
-        var vol = _model.Volume ?? VolumeStats.Of(null);
+        var vol = _model.Volume ?? Harness.VolumeFor(null);
         if (vol is not { } v)
         {
             DriveName.Text = "Drive";

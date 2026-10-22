@@ -489,8 +489,7 @@ public static class DeveloperCatalog
         var items = new List<DeveloperItem>(kept.Count);
         var locator = new ProjectLocator(tree, ManifestNames, ManifestSuffixes);
         var lockfiles = LockfilesByEcosystem;
-        string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
-            .TrimEnd('\\');
+        string home = UserFolders.Home.TrimEnd('\\');
 
         foreach (var hit in kept)
         {

@@ -94,7 +94,7 @@ public sealed class AnalysisSnapshot
         {
             return CategoryMode.WholeDisk;
         }
-        string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile).TrimEnd('\\');
+        string home = UserFolders.Home.TrimEnd('\\');
         if (string.Equals(root, home, StringComparison.OrdinalIgnoreCase)) return CategoryMode.Home;
         if (tree.Count == 0) return CategoryMode.Folder;
         // Looks-like-home: at least two of the classic profile folders.

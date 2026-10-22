@@ -88,7 +88,7 @@ public sealed class ScanModel : ViewModelBase
     public int InspectedNode =>
         _selectedNode >= 0 && _selectedNode < (Tree?.Count ?? 0) ? _selectedNode : _zoomedNode;
 
-    private SizeBasis _sizeBasis = SizeBasis.Allocated;
+    private SizeBasis _sizeBasis = Harness.Basis ?? SizeBasis.Allocated;
     public SizeBasis SizeBasis
     {
         get => _sizeBasis;
@@ -310,8 +310,9 @@ public sealed class ScanModel : ViewModelBase
             }, cts.Token);
             cts.Token.ThrowIfCancellationRequested();
             // History record — one JSON line per scan, feeds "what grew".
-            var volume = VolumeStats.Of(path);
-            if (settings.KeepHistory)
+            var volume = Harness.VolumeFor(path);
+            // A render-harness run never writes the user's scan history.
+            if (settings.KeepHistory && !Harness.IsActive)
             {
                 var folders = StorageHistory.Folders(scanned.Tree, allocated);
                 _history.Record(new StorageHistory.Entry(
@@ -348,7 +349,7 @@ public sealed class ScanModel : ViewModelBase
             _zoomForward.Clear();
             CloneProfile = scanned.CloneProfile;
             RootPath = path;
-            Volume = VolumeStats.Of(path);
+            Volume = Harness.VolumeFor(path);
             Tree = scanned.Tree;
             // WIN-013: let staging measure from this tree when the journal
             // proves a staged folder's subtree is unchanged since the scan.
@@ -408,7 +409,7 @@ public sealed class ScanModel : ViewModelBase
         _zoomBack.Clear();
         _zoomForward.Clear();
         RootPath = snapshot.RootPath;
-        Volume = VolumeStats.Of(snapshot.RootPath);
+        Volume = Harness.VolumeFor(snapshot.RootPath);
         Tree = snapshot.Tree;
     }
 

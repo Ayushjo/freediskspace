@@ -395,7 +395,7 @@ public sealed class FileQuery : IEquatable<FileQuery>
         isCancelled ??= () => false;
         if (tree.Count <= 1 || totals.Length != tree.Count) return Result.Empty;
         var notes = new List<string>();
-        string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        string home = UserFolders.Home;
         int today = context.EffectiveToday;
 
         // Places: resolve to tree nodes once, mark descendants in one

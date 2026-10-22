@@ -129,12 +129,7 @@ public static class QuickWins
     private static string ExpandPath(string path)
     {
         // Support both "~/X" (user profile) and "%VAR%" environment syntax.
-        if (path.StartsWith("~/") || path.StartsWith(@"~\"))
-        {
-            string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            path = Path.Combine(home, path[2..]);
-        }
-        return Environment.ExpandEnvironmentVariables(path);
+        return UserFolders.Expand(path);
     }
 
     private static string SuffixTail(string suffix)

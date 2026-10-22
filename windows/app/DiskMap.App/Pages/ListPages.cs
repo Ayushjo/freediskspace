@@ -1197,8 +1197,7 @@ public sealed class SearchPage : FileListPage
 
     protected override List<int> Collect(FileTree tree, long[] totals, string rootPath)
     {
-        _lastParsed = FileQuery.Parse(Model.SearchQuery, home: Environment.GetFolderPath(
-            Environment.SpecialFolder.UserProfile), root: rootPath);
+        _lastParsed = FileQuery.Parse(Model.SearchQuery, home: UserFolders.Home, root: rootPath);
         _usedQuery = _lastParsed.Query.IsStructured;
         if (!_usedQuery)
         {

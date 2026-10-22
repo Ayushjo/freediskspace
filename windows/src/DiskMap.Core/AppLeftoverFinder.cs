@@ -39,11 +39,11 @@ public static class AppLeftoverFinder
 
     private static string[] SearchLocations =>
     [
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),      // %APPDATA%
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), // %LOCALAPPDATA%
+        UserFolders.RoamingAppData,                                                // %APPDATA%
+        UserFolders.LocalAppData,                                                  // %LOCALAPPDATA%
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),// %PROGRAMDATA%
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Documents"),
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs"),
+        Path.Combine(UserFolders.Home, "Documents"),
+        Path.Combine(UserFolders.LocalAppData, "Programs"),
     ];
 
     /// <summary>
@@ -146,7 +146,7 @@ public static class AppLeftoverFinder
     {
         var matches = new List<string>();
         var others = installed ?? Array.Empty<InstalledApp>();
-        string documents = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Documents");
+        string documents = Path.Combine(UserFolders.Home, "Documents");
 
         foreach (var location in SearchLocations)
         {
