@@ -502,19 +502,19 @@ public static class Rd
     }
 
     /// <summary>BoardGrid: a faint 24 pt grid (ink @ 4.5%) behind some surfaces.</summary>
-    public static Brush Grid24(Brush? tint = null)
+    public static Brush Grid24(Brush? tint = null, double step = 24)
     {
         var pen = new Pen(tint ?? WithOpacity(B("RdInk"), 0.045), 1);
         var lines = new GeometryGroup();
-        lines.Children.Add(new LineGeometry(new Point(0.5, 0), new Point(0.5, 24)));
-        lines.Children.Add(new LineGeometry(new Point(0, 0.5), new Point(24, 0.5)));
+        lines.Children.Add(new LineGeometry(new Point(0.5, 0), new Point(0.5, step)));
+        lines.Children.Add(new LineGeometry(new Point(0, 0.5), new Point(step, 0.5)));
         var group = new DrawingGroup();
-        group.Children.Add(new GeometryDrawing(Brushes.Transparent, null, new RectangleGeometry(new Rect(0, 0, 24, 24))));
+        group.Children.Add(new GeometryDrawing(Brushes.Transparent, null, new RectangleGeometry(new Rect(0, 0, step, step))));
         group.Children.Add(new GeometryDrawing(null, pen, lines));
         var brush = new DrawingBrush(group)
         {
             TileMode = TileMode.Tile,
-            Viewport = new Rect(0, 0, 24, 24),
+            Viewport = new Rect(0, 0, step, step),
             ViewportUnits = BrushMappingMode.Absolute,
             Stretch = Stretch.None,
         };
