@@ -77,6 +77,14 @@ public static class Dialogs
             Owner = owner,
             WindowStartupLocation = owner is null ? WindowStartupLocation.CenterScreen : WindowStartupLocation.CenterOwner,
         };
+        // Esc dismisses every sheet as its safe choice. IsCancel alone needed the focus on a
+        // button, and a click in the list or on a folding row took it away.
+        window.PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key != System.Windows.Input.Key.Escape) return;
+            e.Handled = true;
+            window.Close();
+        };
         return window;
     }
 
