@@ -69,9 +69,11 @@ struct SystemStorageCatalogTests {
         #expect(items.first?.isPartial == false)
     }
 
-    /// Live on this Mac: the models group matches du for the same folders
-    /// (allocated bytes, within 2% for files changing underneath).
-    @Test func liveModelsMatchDu() throws {
+    /// Opt-in (DISKMAP_LIVE_TESTS=1): on this Mac, the models group matches du
+    /// for the same folders (allocated bytes, within 2% for files changing
+    /// underneath). CI runners hold too few models for the size check.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["DISKMAP_LIVE_TESTS"] == "1"))
+    func liveModelsMatchDu() throws {
         let entry = try #require(SystemStorageCatalog.loadEntries().first { $0.id == "intelligence-siri" })
         let item = try #require(SystemStorageCatalog.measure(entries: [entry]).first)
         var duTotal: Int64 = 0
