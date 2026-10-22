@@ -60,6 +60,40 @@ internal static class Harness
 
     public static bool Deterministic => Env("DISKMAP_DETERMINISTIC") == "1";
 
+    /// <summary>A demo profile is in use (DISKMAP_HOME): nothing from this PC's own setup may show.</summary>
+    public static bool DemoProfile => Env(UserFolders.OverrideVariable) is { Length: > 0 };
+
+    /// <summary>
+    /// Applications on the demo PC, instead of this PC's registry (its real programs are personal).
+    /// Names match the demo profile's AppData folders, so their leftovers are found there.
+    /// </summary>
+    public static List<InstalledApp> DemoApplications()
+    {
+        string date(int daysAgo) => DateTime.Today.AddDays(-daysAgo).ToString("yyyyMMdd", CultureInfo.InvariantCulture);
+        const long MB = 1_000_000;
+        return
+        [
+            new("Google Chrome", "Google LLC", null, "Google Chrome", Version: "141.0.7390.66", InstallDate: date(40), EstimatedBytes: 612 * MB),
+            new("Spotify", "Spotify AB", null, "Spotify", Version: "1.2.74", InstallDate: date(120), EstimatedBytes: 402 * MB),
+            new("Slack", "Slack Technologies", null, "slack", Version: "4.46.99", InstallDate: date(75), EstimatedBytes: 371 * MB),
+            new("Android Studio", "Google LLC", null, "Android Studio", Version: "2025.1.4", InstallDate: date(200), EstimatedBytes: 2_840 * MB),
+            new("Microsoft Visual Studio Code", "Microsoft Corporation", null, "{EA457B21}_is1", Version: "1.105.1", InstallDate: date(30), EstimatedBytes: 418 * MB),
+            new("Python 3.13.7 (64-bit)", "Python Software Foundation", null, "{python-3.13}", Version: "3.13.7150.0", InstallDate: date(260), EstimatedBytes: 104 * MB),
+            new("Node.js", "Node.js Foundation", null, "{nodejs}", Version: "22.20.0", InstallDate: date(90), EstimatedBytes: 98 * MB),
+            new("7-Zip 25.01 (x64)", "Igor Pavlov", null, "7-Zip", Version: "25.01", InstallDate: date(330), EstimatedBytes: 6 * MB),
+        ];
+    }
+
+    /// <summary>"Last opened" for the demo applications (days ago); nil = never seen.</summary>
+    public static DateTimeOffset? DemoLastOpened(string name) => name switch
+    {
+        "Google Chrome" or "Microsoft Visual Studio Code" or "Slack" => DateTimeOffset.Now.AddHours(-3),
+        "Spotify" => DateTimeOffset.Now.AddDays(-2),
+        "Node.js" => DateTimeOffset.Now.AddDays(-9),
+        "Android Studio" => DateTimeOffset.Now.AddDays(-210),
+        _ => null,
+    };
+
     /// <summary>
     /// DISKMAP_FIND_DUPLICATES=1: Duplicates starts its search when it opens, so the board
     /// can be rendered (Mac harness: --find-duplicates).

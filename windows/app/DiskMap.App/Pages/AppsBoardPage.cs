@@ -160,17 +160,23 @@ public sealed class AppsBoardPage : UserControl
         var (installed, stubs, places, broad) = await Task.Run(() =>
         {
             var list = new List<InstalledApp>();
-            try
+            bool demo = Harness.DemoProfile;
+            if (demo) list.AddRange(Harness.DemoApplications());   // never this PC's own programs
+            else
             {
-                list.AddRange(AppLeftoverFinder.InstalledApplications());
-                list.AddRange(AppLeftoverFinder.StoreApplications());
+                try
+                {
+                    list.AddRange(AppLeftoverFinder.InstalledApplications());
+                    list.AddRange(AppLeftoverFinder.StoreApplications());
+                }
+                catch { /* no registry to read: no apps */ }
             }
-            catch { /* no registry to read: no apps */ }
             // One row per id (a key name can repeat across the registry views).
             list = list.GroupBy(ApplicationsCatalog.EntryId).Select(g => g.First()).ToList();
             var broadFolders = ApplicationsCatalog.BroadFolders();
-            var launches = ProgramUsage.ReadUserAssist();
-            var built = list.Select(a => ApplicationsCatalog.Stub(a, ProgramUsage.LastUsed(a, launches, broadFolders), broadFolders)).ToList();
+            var launches = demo ? [] : ProgramUsage.ReadUserAssist();
+            var built = list.Select(a => ApplicationsCatalog.Stub(a,
+                demo ? Harness.DemoLastOpened(a.Name) : ProgramUsage.LastUsed(a, launches, broadFolders), broadFolders)).ToList();
             return (list, built, ApplicationsCatalog.Places.Current(), broadFolders);
         });
         if (cts.IsCancellationRequested) return;
