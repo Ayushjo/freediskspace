@@ -10,6 +10,7 @@ Usage: python windows\\scripts\\make-demo-fixture.py [dir]   (default C:\\DemoPC
 """
 import ctypes
 import msvcrt
+from ctypes import wintypes
 import os
 import shutil
 import sys
@@ -67,17 +68,39 @@ FILES = [
 ]
 
 
+_kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+_kernel32.DeviceIoControl.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD,
+                                     wintypes.LPVOID, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), wintypes.LPVOID]
+_kernel32.SetFilePointerEx.argtypes = [wintypes.HANDLE, ctypes.c_longlong, ctypes.POINTER(ctypes.c_longlong), wintypes.DWORD]
+_kernel32.SetEndOfFile.argtypes = [wintypes.HANDLE]
+_kernel32.GetCompressedFileSizeW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(wintypes.DWORD)]
+_kernel32.GetCompressedFileSizeW.restype = wintypes.DWORD
+MAX_ON_DISK = 4 * 1024 * 1024  # a sparse file here should take a few KB; anything above this is a bug
+
+
+def on_disk_bytes(path: str) -> int:
+    high = wintypes.DWORD(0)
+    low = _kernel32.GetCompressedFileSizeW(path, ctypes.byref(high))
+    return (high.value << 32) + low
+
+
 def make_sparse(path: str, size: int) -> None:
+    """Mark the file sparse, then move its end with SetEndOfFile. Never Python's
+    truncate(): on Windows the CRT fills the extension with real zeros."""
     with open(path, "wb") as handle:
         handle.write(path.encode("utf-8"))  # a few real bytes so it isn't empty
         handle.flush()
-        returned = ctypes.c_ulong(0)
-        ok = ctypes.windll.kernel32.DeviceIoControl(
-            ctypes.c_void_p(msvcrt.get_osfhandle(handle.fileno())), FSCTL_SET_SPARSE,
-            None, 0, None, 0, ctypes.byref(returned), None)
-        if not ok:
-            raise OSError(ctypes.GetLastError(), f"couldn't mark {path} sparse; refusing to allocate {size} bytes")
-        handle.truncate(int(size))  # the rest is a hole: no disk used
+        native = wintypes.HANDLE(msvcrt.get_osfhandle(handle.fileno()))
+        returned = wintypes.DWORD(0)
+        if not _kernel32.DeviceIoControl(native, FSCTL_SET_SPARSE, None, 0, None, 0, ctypes.byref(returned), None):
+            raise OSError(ctypes.get_last_error(), f"couldn't mark {path} sparse")
+        if not _kernel32.SetFilePointerEx(native, int(size), None, 0):  # FILE_BEGIN
+            raise OSError(ctypes.get_last_error(), f"couldn't seek {path}")
+        if not _kernel32.SetEndOfFile(native):
+            raise OSError(ctypes.get_last_error(), f"couldn't size {path}")
+    used = on_disk_bytes(path)
+    if used > MAX_ON_DISK:
+        raise SystemExit(f"stopping: {path} takes {used} bytes on disk, it should be sparse")
 
 
 def main() -> None:
