@@ -374,9 +374,35 @@ public static class StorageClassifier
             [".appx"] = new(Installers, CleanupAdvice.Fine),
         };
 
-    /// <summary>Lower-cased path segments: "C:\Users\me" → ["c:", "users", "me"].</summary>
-    private static string[] Segments(string path) =>
-        path.ToLowerInvariant().Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries);
+    /// <summary>
+    /// Lower-cased path segments: "C:\Users\me" → ["c:", "users", "me"]. Under a DISKMAP_HOME
+    /// override (the demo PC) the home folder reads as a user profile, C:\Users\demo, so the
+    /// profile rules (Videos, AppData, Downloads…) apply to it as they would to a real one.
+    /// </summary>
+    private static string[] Segments(string path)
+    {
+        if (UserFolders.Override is { } home
+            && (path.Equals(home, StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith(home + "\\", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith(home + "/", StringComparison.OrdinalIgnoreCase)))
+            path = @"C:\Users\demo" + path[home.Length..];
+        return path.ToLowerInvariant().Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries);
+    }
+
+    /// <summary>
+    /// Cargo's build output: a "target" folder beside a Cargo.toml (Mac: the deps rule's
+    /// Cargo.toml sibling hint). Without the hint "target" is too common a name to claim.
+    /// </summary>
+    private static bool IsCargoTarget(FileTree tree, int node)
+    {
+        if (!tree.NameOf(node).Equals("target", StringComparison.OrdinalIgnoreCase)) return false;
+        int parent = tree.Parent[node];
+        if (parent < 0) return false;
+        for (int c = tree.FirstChild[parent]; c != -1; c = tree.NextSibling[c])
+            if (!tree.IsDirectory[c] && tree.NameOf(c).Equals("Cargo.toml", StringComparison.OrdinalIgnoreCase))
+                return true;
+        return false;
+    }
 
     /// <summary>
     /// The first folder rule whose pattern ends at <paramref name="count"/>
@@ -410,7 +436,13 @@ public static class StorageClassifier
     {
         if (FileNames.TryGetValue(name, out var byName)) return byName;
         int dot = name.LastIndexOf('.');
-        return dot > 0 && Extensions.TryGetValue(name[dot..], out var byExt) ? byExt : null;
+        if (dot > 0 && Extensions.TryGetValue(name[dot..], out var byExt)) return byExt;
+        // An .exe is usually a program, but one named like a setup is an installer you already ran.
+        if (dot > 0 && name[dot..].Equals(".exe", StringComparison.OrdinalIgnoreCase)
+            && (name.Contains("setup", StringComparison.OrdinalIgnoreCase)
+                || name.Contains("install", StringComparison.OrdinalIgnoreCase)))
+            return new StorageVerdict(Installers, CleanupAdvice.Fine);
+        return null;
     }
 
     /// <summary>
@@ -490,6 +522,7 @@ public static class StorageClassifier
                 segs[frame.Depth] = tree.NameOf(c).ToLowerInvariant();
                 var rule = MatchFolder(segs, frame.Depth + 1);
                 if (rule is { Claim: true }) { Add(rule.Class, c, size); continue; }
+                if (IsCargoTarget(tree, c)) { Add(Dependencies, c, size); continue; }
                 stack.Push((c, frame.Depth + 1, rule?.Class ?? frame.Area));
             }
         }

@@ -35,7 +35,7 @@ FILES = [
     (r"Pictures\Camera Roll\2025\IMG_0001.heic", 21.4 * GB, 30),
     (r"Pictures\Camera Roll\2025\IMG_0002.heic", 16.8 * GB, 30),
     (r"Music\FL Studio\Album sessions.flp", 4.3 * GB, 200),
-    (r"Downloads\Unity-2026.1-offline.zip", 11.2 * GB, 150),
+    (r"Downloads\UnitySetup-2026.1.exe", 11.2 * GB, 150),   # the Mac demo's Xcode_26.xip: an installer
     (r"Downloads\FigmaSetup-old.exe", 0.42 * GB, 300),
     (r"Downloads\ubuntu-24.04-desktop.iso", 6.1 * GB, 260),
     (r"Downloads\archive-2022.zip", 3.8 * GB, 800),

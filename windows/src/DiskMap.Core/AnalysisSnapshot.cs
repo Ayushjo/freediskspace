@@ -118,13 +118,15 @@ public sealed class AnalysisSnapshot
         SizeBasis basis = SizeBasis.Allocated,
         IReadOnlyList<QuickWins.Hit>? quickWins = null,
         Dictionary<string, long>? typeBreakdown = null,
-        int today = 0)
+        int today = 0,
+        Func<string, VolumeInfo?>? volumeOf = null)
     {
         var totals = basis == SizeBasis.Logical ? logical : allocated;
         if (tree.Count == 0 || totals.Length != tree.Count) return new AnalysisSnapshot();
         if (today == 0) today = AgeMap.Today();
 
-        var volume = VolumeStats.Of(rootPath);
+        // The render harness pins the volume (volumeOf); everything else asks Windows.
+        var volume = (volumeOf ?? VolumeStats.Of)(rootPath);
         long scanned = totals[0];
         var mode = DetectMode(tree, rootPath);
         var cats = mode == CategoryMode.Folder

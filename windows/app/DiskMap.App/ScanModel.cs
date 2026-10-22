@@ -309,7 +309,7 @@ public sealed class ScanModel : ViewModelBase
         var snapshot = await Task.Run(() =>
         {
             var totals = basis == SizeBasis.Logical ? _totalsLogical : _totalsAllocated;
-            return (AnalysisSnapshot.Build(tree, root, _totalsLogical, _totalsAllocated, basis, QuickWins),
+            return (AnalysisSnapshot.Build(tree, root, _totalsLogical, _totalsAllocated, basis, QuickWins, volumeOf: Harness.VolumeFor),
                 ReviewableCatalog.Build(tree, root, totals, QuickWins ?? []).Targets);
         });
         // A newer toggle or scan may have landed while this one ran.
@@ -349,7 +349,7 @@ public sealed class ScanModel : ViewModelBase
                 var a = scanned.Tree.RollUpSizes(SizeBasis.Allocated);
                 var c = scanned.Tree.RollUpCounts();
                 var qw = Core.QuickWins.Find(scanned.Tree, path, Core.QuickWins.BundledPatterns());
-                var snap = AnalysisSnapshot.Build(scanned.Tree, path, l, a, basis, qw);
+                var snap = AnalysisSnapshot.Build(scanned.Tree, path, l, a, basis, qw, volumeOf: Harness.VolumeFor);
                 var rv = ReviewableCatalog.Build(scanned.Tree, path, basis == SizeBasis.Logical ? l : a, qw).Targets;
                 return (l, a, c, qw, snap, rv);
             }, cts.Token);
@@ -434,7 +434,7 @@ public sealed class ScanModel : ViewModelBase
             var a = snapshot.Tree.RollUpSizes(SizeBasis.Allocated);
             var c = snapshot.Tree.RollUpCounts();
             var qw = Core.QuickWins.Find(snapshot.Tree, snapshot.RootPath, Core.QuickWins.BundledPatterns());
-            var s = AnalysisSnapshot.Build(snapshot.Tree, snapshot.RootPath, l, a, basis, qw);
+            var s = AnalysisSnapshot.Build(snapshot.Tree, snapshot.RootPath, l, a, basis, qw, volumeOf: Harness.VolumeFor);
             var rv = ReviewableCatalog.Build(snapshot.Tree, snapshot.RootPath, basis == SizeBasis.Logical ? l : a, qw).Targets;
             return (l, a, c, qw, s, rv);
         });
