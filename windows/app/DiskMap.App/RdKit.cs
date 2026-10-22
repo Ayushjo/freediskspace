@@ -612,8 +612,10 @@ public static class Rd
         link.MouseLeftButtonUp += (_, e) =>
         {
             link.Opacity = 1;
-            onClick();
             e.Handled = true;
+            // After the click has finished: a sheet opened from inside the mouse-up handler
+            // came up without the keyboard (Tab and Esc still went to the window behind it).
+            link.Dispatcher.BeginInvoke(onClick, System.Windows.Threading.DispatcherPriority.Input);
         };
         link.KeyDown += (_, e) => { if (e.Key is Key.Enter or Key.Space) { onClick(); e.Handled = true; } };
         System.Windows.Automation.AutomationProperties.SetName(link, text);

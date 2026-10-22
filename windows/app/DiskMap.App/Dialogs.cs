@@ -83,7 +83,9 @@ public static class Dialogs
         window.ContentRendered += (_, _) =>
         {
             window.Activate();
-            if (!window.IsKeyboardFocusWithin)
+            var target = window.Tag as IInputElement;   // the sheet's default button, when it names one
+            if (target is not null) System.Windows.Input.Keyboard.Focus(target);
+            else if (!window.IsKeyboardFocusWithin)
                 window.MoveFocus(new System.Windows.Input.TraversalRequest(System.Windows.Input.FocusNavigationDirection.First));
         };
         // Esc dismisses every sheet as its safe choice. IsCancel alone needed the focus on a
@@ -193,6 +195,8 @@ public static class Dialogs
         body.Children.Add(buttons);
 
         window = Sheet(body, 620, owner);
+        window.Title = title;
+        window.Tag = cancel;
         window.Loaded += (_, _) => cancel.Focus();   // the safe choice has focus
         window.ShowDialog();
         return result;
@@ -288,6 +292,8 @@ public static class Dialogs
         body.Children.Add(buttons);
 
         window = Sheet(body, 520, owner);
+        window.Title = $"Add {name} to the basket?";
+        window.Tag = keep;
         window.Loaded += (_, _) => keep.Focus();
         return window;
     }
@@ -346,6 +352,8 @@ public static class Dialogs
         body.Children.Add(done);
 
         window = Sheet(body, 520, owner);   // the Mac sheet's width
+        window.Title = "Where's the rest?";
+        window.Tag = done;
         window.Loaded += (_, _) => done.Focus();
         return window;
     }
