@@ -65,6 +65,10 @@ public sealed class SettingsWindow : Window
         Grid.SetColumn(_scroll, 2);
         _root.Children.Add(_scroll);
         _scroll.ScrollToVerticalOffset(offset);
+        // A rebuild drops the control that had the focus (the theme switch you just clicked);
+        // with nothing focused no key arrives at all, so Esc did nothing. Keep it in the window.
+        Dispatcher.InvokeAsync(() => { if (IsActive && !IsKeyboardFocusWithin) Focus(); },
+            System.Windows.Threading.DispatcherPriority.Loaded);
     }
 
     // ---- Sidebar ----

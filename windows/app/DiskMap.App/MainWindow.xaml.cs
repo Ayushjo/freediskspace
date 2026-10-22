@@ -767,6 +767,9 @@ public partial class MainWindow : Window
         BuildCaptionButtons();
         InspectorHost.Content = new Controls.InspectorPanel();
         SelectPage(_currentPage);
+        // The rebuilt pages dropped the focused control; keep the keyboard in the window.
+        Dispatcher.InvokeAsync(() => { if (IsActive && !IsKeyboardFocusWithin) Focus(); },
+            System.Windows.Threading.DispatcherPriority.Loaded);
         BasketWindow.ThemeChanged();
         _settingsWindow?.Rebuild();
     }

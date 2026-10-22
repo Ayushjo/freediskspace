@@ -69,6 +69,8 @@ public sealed class BasketWindow : Window
         if (_open is not { } window) return;
         window.Background = Ui.Brush("RdPage");
         window.Rebuild();
+        window.Dispatcher.InvokeAsync(() => { if (window.IsActive && !window.IsKeyboardFocusWithin) window.Focus(); },
+            System.Windows.Threading.DispatcherPriority.Loaded);
     }
 
     private void OnStaged(object? sender, EventArgs e) => Dispatcher.InvokeAsync(Rebuild);
