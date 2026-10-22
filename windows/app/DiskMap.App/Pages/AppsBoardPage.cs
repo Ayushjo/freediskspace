@@ -979,7 +979,7 @@ public sealed class AppsBoardPage : UserControl
 
     private void OnKey(object sender, KeyEventArgs e)
     {
-        if (e.OriginalSource is TextBox) return;
+        if (e.OriginalSource is TextBox or System.Windows.Controls.Primitives.ButtonBase) return;
         var rows = Visible();
         if (rows.Count == 0) return;
         var active = Active(rows);

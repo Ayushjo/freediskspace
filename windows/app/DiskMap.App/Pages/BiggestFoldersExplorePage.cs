@@ -40,6 +40,8 @@ public sealed class BiggestFoldersExplorePage : UserControl
     private SortMode _sort = SortMode.Size;
     private bool _showTechnical;
     private int? _selected;
+    private readonly ScrollMemory _scroll = new();
+    private FileTree? _selectedTree;
     private Rd.WidthClass _class = Rd.WidthClass.Regular;
     private readonly Grid _root = new();
     private TextBox? _search;
@@ -185,6 +187,7 @@ public sealed class BiggestFoldersExplorePage : UserControl
     {
         _class = Rd.ClassFor(WindowWidth);
         if (Model.Tree is not { } tree || Model.RootPath is not { } root) { Model.ShowPage("Overview"); return; }
+        if (!ReferenceEquals(_selectedTree, tree)) { _selected = null; _selectedTree = tree; }   // ids belong to one scan
         bool searchFocused = _search?.IsKeyboardFocusWithin == true;
         int caret = _search?.CaretIndex ?? 0;
 
@@ -397,7 +400,7 @@ public sealed class BiggestFoldersExplorePage : UserControl
             more.Margin = new Thickness(12, 10, 0, 10);
             list.Children.Add(more);
         }
-        var scroll = new ScrollViewer { Content = list, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false };
+        var scroll = _scroll.Wrap(list, $"{Current(tree)}|{_query}");
         Grid.SetRow(scroll, 1);
         grid.Children.Add(scroll);
 

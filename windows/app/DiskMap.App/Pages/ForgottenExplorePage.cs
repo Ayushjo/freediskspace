@@ -39,6 +39,8 @@ public sealed class ForgottenExplorePage : UserControl
     private FilterTab _tab = FilterTab.All;
     private SortMode _sort = SortMode.ReviewValue;
     private int? _selected;
+    private readonly ScrollMemory _scroll = new();
+    private FileTree? _selectedTree;
     private ForgottenAgeBucket? _age;
     private bool _onlyLarge, _onlyDownloads, _onlyMedia;
 
@@ -154,6 +156,7 @@ public sealed class ForgottenExplorePage : UserControl
     {
         _class = Rd.ClassFor(WindowWidth);
         if (Model.Tree is not { } tree || Model.RootPath is not { } root) { Model.ShowPage("Overview"); return; }
+        if (!ReferenceEquals(_selectedTree, tree)) { _selected = null; _selectedTree = tree; }   // ids belong to one scan
         if (!ReferenceEquals(_builtFor, Model.Totals)) Build();
         bool searchFocused = _search?.IsKeyboardFocusWithin == true;
         int caret = _search?.CaretIndex ?? 0;
@@ -300,7 +303,7 @@ public sealed class ForgottenExplorePage : UserControl
                 select: () => SelectRow(candidate.Id),
                 add: stageable ? () => StageOne(candidate) : null));
         }
-        var scroll = new ScrollViewer { Content = list, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false };
+        var scroll = _scroll.Wrap(list, $"{_query}|{_onlyLarge}|{_onlyDownloads}|{_onlyMedia}");
         Grid.SetRow(scroll, 1);
         grid.Children.Add(scroll);
 

@@ -125,6 +125,29 @@ public class DuplicateReviewTests
     }
 
     [Fact]
+    public void CopiesInTheBasketCountAsGone()
+    {
+        var trio = new DuplicateGroup("h", [1, 2, 3], 10, false);
+        static bool staged(int id) => id == 3;
+
+        // Ticking 2 when 1 is ticked and 3 is already in the basket would leave nothing.
+        var refused = DuplicateReview.Toggle(trio, 2, isKeeper: false, new HashSet<int> { 1 }, staged);
+        Assert.True(refused.KeepOneRefused);
+        Assert.Equal(new HashSet<int> { 1 }, refused.Checked);
+
+        // A swap never hands "kept" to a copy that is in the basket.
+        var swap = DuplicateReview.Swap(trio, 1, new HashSet<int>(), staged);
+        Assert.Equal(2, swap?.Keeper);
+
+        // ...and with every other copy in the basket there's nothing to swap to.
+        var pair = new DuplicateGroup("h", [1, 2], 10, false);
+        var stuck = DuplicateReview.Toggle(pair, 1, isKeeper: true, new HashSet<int>(), id => id == 2);
+        Assert.True(stuck.KeepOneRefused);
+        Assert.Null(stuck.NewKeeper);
+        Assert.Empty(stuck.Checked);
+    }
+
+    [Fact]
     public void ExtraCopiesStartTickedExceptStagedToolOwnedAndCloneGroups()
     {
         var content = new DuplicateGroup("a", [1, 2, 3, 4], 10, false);

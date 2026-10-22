@@ -77,10 +77,14 @@ public static class DuplicateReview
             ? [k, .. group.FileIDs.Where(id => id != k)]
             : [.. group.FileIDs];
 
-    /// <summary>Ticking the kept copy swaps: the first other unticked copy (else the first other) stays instead.</summary>
-    public static (int Keeper, HashSet<int> Checked)? Swap(DuplicateGroup group, int keeper, IReadOnlySet<int> isChecked)
+    /// <summary>
+    /// Ticking the kept copy swaps: the first other unticked copy (else the first other) stays
+    /// instead. A copy already in the basket can't stay; with no other copy left, no swap.
+    /// </summary>
+    public static (int Keeper, HashSet<int> Checked)? Swap(DuplicateGroup group, int keeper, IReadOnlySet<int> isChecked,
+        Func<int, bool>? isStaged = null)
     {
-        var others = group.FileIDs.Where(id => id != keeper).ToList();
+        var others = group.FileIDs.Where(id => id != keeper && isStaged?.Invoke(id) != true).ToList();
         if (others.Count == 0) return null;
         int next = others.FirstOrDefault(id => !isChecked.Contains(id), others[0]);
         var result = new HashSet<int>(isChecked) { keeper };
@@ -92,7 +96,8 @@ public static class DuplicateReview
     /// One click on a copy's box: untick it, tick it, or (on the kept copy) swap which stays.
     /// Never every copy of a file: a click that would tick the last one is undone and says so.
     /// </summary>
-    public static DuplicateToggle Toggle(DuplicateGroup group, int id, bool isKeeper, IReadOnlySet<int> isChecked)
+    public static DuplicateToggle Toggle(DuplicateGroup group, int id, bool isKeeper, IReadOnlySet<int> isChecked,
+        Func<int, bool>? isStaged = null)
     {
         var next = new HashSet<int>(isChecked);
         int? newKeeper = null;
@@ -102,7 +107,7 @@ public static class DuplicateReview
         }
         else if (isKeeper)
         {
-            if (Swap(group, id, isChecked) is not { } swapped) return new DuplicateToggle(next, null, false);
+            if (Swap(group, id, isChecked, isStaged) is not { } swapped) return new DuplicateToggle(next, null, true);
             newKeeper = swapped.Keeper;
             next = swapped.Checked;
         }
@@ -111,7 +116,8 @@ public static class DuplicateReview
             next.Add(id);
         }
         bool refused = false;
-        if (group.FileIDs.All(next.Contains))
+        // Ticked or already in the basket: either way that copy goes.
+        if (group.FileIDs.All(other => next.Contains(other) || isStaged?.Invoke(other) == true))
         {
             next.Remove(id);
             refused = true;

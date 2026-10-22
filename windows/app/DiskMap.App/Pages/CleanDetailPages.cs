@@ -318,7 +318,7 @@ public abstract class CleanDetailPage : UserControl
     /// <summary>Up/Down or J/K, Delete adds, Enter shows in File Explorer, Ctrl+A selects all, Esc clears (Mac: listKeyboard).</summary>
     private void OnKey(object sender, KeyEventArgs e)
     {
-        if (e.OriginalSource is TextBox || _shown.Count == 0) return;
+        if (e.OriginalSource is TextBox or System.Windows.Controls.Primitives.ButtonBase || _shown.Count == 0) return;
         int index = _selectedId is { } s ? _shown.FindIndex(r => r.Id == s) : -1;
         bool plain = Keyboard.Modifiers == ModifierKeys.None;
         switch (e.Key)

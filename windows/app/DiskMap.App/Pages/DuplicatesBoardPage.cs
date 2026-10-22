@@ -93,7 +93,13 @@ public sealed class DuplicatesBoardPage : UserControl
         KeyDown += OnKey;
     }
 
-    private void OnStaged(object? sender, EventArgs e) => Dispatcher.InvokeAsync(Rebuild);
+    private void OnStaged(object? sender, EventArgs e) => Dispatcher.InvokeAsync(() =>
+    {
+        _keeperCache.Clear();   // a kept copy that went into the basket can't stay the kept one
+        Rebuild();
+    });
+
+    private static bool IsStaged(int id) => Model.IsStaged(Model.PathOf(id));
     private void OnSearchChanged() => Dispatcher.InvokeAsync(Rebuild);
 
     private double WindowWidth =>
@@ -126,9 +132,12 @@ public sealed class DuplicatesBoardPage : UserControl
     private int? Keeper(FileTree tree, DuplicateGroup g)
     {
         if (_keeperCache.TryGetValue(g, out int? cached)) return cached;
-        int? keep = _keeperOverride.TryGetValue(DuplicateReview.GroupKey(g), out int chosen) && g.FileIDs.Contains(chosen)
+        // Only a copy that isn't in the basket can stay (while there is one).
+        var free = g.FileIDs.Where(id => !IsStaged(id)).ToList();
+        var pool = free.Count > 0 && free.Count < g.FileIDs.Count ? g with { FileIDs = free } : g;
+        int? keep = _keeperOverride.TryGetValue(DuplicateReview.GroupKey(g), out int chosen) && pool.FileIDs.Contains(chosen)
             ? chosen
-            : DuplicateReview.Keeper(g, _policy, id => tree.ModifiedDay[id], id => Model.PathOf(id).Length);
+            : DuplicateReview.Keeper(pool, _policy, id => tree.ModifiedDay[id], id => Model.PathOf(id).Length);
         _keeperCache[g] = keep;
         return keep;
     }
@@ -635,7 +644,7 @@ public sealed class DuplicatesBoardPage : UserControl
 
     private void Toggle(FileTree tree, int id, DuplicateGroup group, bool isKeeper)
     {
-        var result = DuplicateReview.Toggle(group, id, isKeeper, _checked);
+        var result = DuplicateReview.Toggle(group, id, isKeeper, _checked, IsStaged);
         _checked = result.Checked;
         if (result.NewKeeper is { } next)
         {
@@ -746,8 +755,17 @@ public sealed class DuplicatesBoardPage : UserControl
         try
         {
             var requests = new List<(int Id, string Reason, string? Group, int Count)>();
+            int keptWhole = 0;
+            var heldBack = new HashSet<int>();
             foreach (var group in AllGroups)
             {
+                // Never every copy: what's ticked plus what's already in the basket must leave one.
+                if (group.FileIDs.Any(_checked.Contains) && group.FileIDs.All(id => _checked.Contains(id) || IsStaged(id)))
+                {
+                    keptWhole++;
+                    heldBack.UnionWith(group.FileIDs.Where(_checked.Contains));
+                    continue;
+                }
                 foreach (int id in group.FileIDs.Where(_checked.Contains))
                 {
                     var set = group.CloneSetOf(id);
@@ -773,6 +791,7 @@ public sealed class DuplicatesBoardPage : UserControl
             }
             int added = 0, already = 0;
             var rejected = new HashSet<int>(requests.Except(safe).Select(r => r.Id));
+            rejected.UnionWith(heldBack);   // held back to keep a copy: stays ticked
             foreach (var (id, reason, group, count) in safe)
             {
                 if (Model.Stage(id, reason, group, count, notify: false)) added++;
@@ -785,7 +804,10 @@ public sealed class DuplicatesBoardPage : UserControl
                 string names = string.Join(", ", risky.Take(2)) + (risky.Count > 2 ? $" +{risky.Count - 2}" : "");
                 Model.Toast($"{(added > 0 ? addedText + " · " : "")}skipped {risky.Count} risky item{(risky.Count == 1 ? "" : "s")} ({names}) — add those one at a time to see the warning");
             }
+            else if (added > 0 && keptWhole > 0)
+                Model.Toast($"Added {added:N0} item{(added == 1 ? "" : "s")} to the basket · left {keptWhole:N0} group{(keptWhole == 1 ? "" : "s")} alone to keep one copy");
             else if (added > 0) Model.ToastAdded(added);
+            else if (keptWhole > 0) Model.Toast("Keep at least one copy");
             else if (already > 0) Model.Toast("Already in the basket");
             // What went in leaves the ticks; what was refused stays ticked.
             _checked = _checked.Where(rejected.Contains).ToHashSet();
@@ -812,7 +834,7 @@ public sealed class DuplicatesBoardPage : UserControl
 
     private void OnKey(object sender, KeyEventArgs e)
     {
-        if (e.OriginalSource is TextBox || Model.Tree is not { } tree || Content != _board) return;
+        if (e.OriginalSource is TextBox or System.Windows.Controls.Primitives.ButtonBase || Model.Tree is not { } tree || Content != _board) return;
         var ids = _shown.SelectMany(g => DuplicateReview.Ordered(g, Keeper(tree, g))).ToList();
         int selected = AllGroups.Any(g => g.FileIDs.Contains(Model.SelectedNode)) ? Model.SelectedNode : -1;
         int index = selected >= 0 ? ids.IndexOf(selected) : -1;

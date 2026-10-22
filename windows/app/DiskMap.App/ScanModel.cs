@@ -424,6 +424,7 @@ public sealed class ScanModel : ViewModelBase
             _counts = counts;
             _zoomedNode = 0;
             _selectedNode = -1;
+            MultiSelection.Clear();   // ids from the old tree name other files in the new one
             _zoomBack.Clear();
             _zoomForward.Clear();
             CloneProfile = scanned.CloneProfile;
@@ -491,6 +492,7 @@ public sealed class ScanModel : ViewModelBase
         _counts = counts;
         _zoomedNode = 0;
         _selectedNode = -1;
+        MultiSelection.Clear();
         _zoomBack.Clear();
         _zoomForward.Clear();
         RootPath = snapshot.RootPath;

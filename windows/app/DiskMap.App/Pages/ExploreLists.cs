@@ -11,6 +11,36 @@ namespace DiskMap.App.Pages;
 /// changed in" dropdown, the token search field with the hard shadow, and the two-line row
 /// with a "can be freed" note and an add button.
 /// </summary>
+/// <summary>
+/// A list's scroll position across rebuilds: every rebuild makes a new ScrollViewer, which
+/// would start at the top. A different key (a new search, another folder) does start there.
+/// </summary>
+internal sealed class ScrollMemory
+{
+    private double _offset;
+    private string? _key;
+
+    public ScrollViewer Wrap(UIElement list, string key)
+    {
+        if (key != _key) { _key = key; _offset = 0; }
+        var scroll = new ScrollViewer { Content = list, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false };
+        double restore = _offset;
+        bool restored = restore <= 0;
+        scroll.ScrollChanged += (_, e) =>
+        {
+            if (!restored) return;   // the first layout reports 0 before the old offset is back
+            _offset = e.VerticalOffset;
+        };
+        scroll.Loaded += (_, _) =>
+        {
+            if (restored) return;
+            scroll.ScrollToVerticalOffset(restore);
+            scroll.Dispatcher.InvokeAsync(() => restored = true, System.Windows.Threading.DispatcherPriority.Loaded);
+        };
+        return scroll;
+    }
+}
+
 internal static class ListKit
 {
     private static ScanModel Model => ScanModel.Shared;
@@ -185,6 +215,9 @@ internal static class ListKit
     /// One list row: type tile, name over place, kind, bar and size, last changed, can be
     /// freed, add. Selected rows get the accent wash and a 2 pt accent edge.
     /// </summary>
+    /// <summary>Set by an arrow-key move: the next selected row brings itself into view.</summary>
+    public static bool RevealSelection;
+
     public static FrameworkElement FileRow(string name, string place, string badge, string kind, double fraction, long bytes,
         string changed, Note note, bool accent, bool staged, bool selected, Columns columns,
         Action select, Action? add, Action? open = null)
@@ -285,6 +318,13 @@ internal static class ListKit
             else select();
         };
         System.Windows.Automation.AutomationProperties.SetName(host, $"{name}, {ByteFormat.Format(bytes)}, changed {changed}");
+        // An arrow-key move rebuilds the list; the new selected row scrolls into view once.
+        if (selected && RevealSelection)
+            host.Loaded += (_, _) =>
+            {
+                RevealSelection = false;
+                host.Dispatcher.InvokeAsync(host.BringIntoView, System.Windows.Threading.DispatcherPriority.Loaded);
+            };
         return host;
     }
 
@@ -593,7 +633,7 @@ internal static class ListKit
     public static bool ListKey(KeyEventArgs e, IReadOnlyList<int> ids, ref int? selected, Action<int> stage,
         Func<int, string?> path, Action selectAll)
     {
-        if (e.OriginalSource is TextBox || ids.Count == 0) return false;
+        if (e.OriginalSource is TextBox or System.Windows.Controls.Primitives.ButtonBase || ids.Count == 0) return false;
         int? current = selected;
         int index = current is { } s ? ids.ToList().IndexOf(s) : -1;
         switch (e.Key)
@@ -601,10 +641,12 @@ internal static class ListKit
             case Key.Down or Key.J when Keyboard.Modifiers == ModifierKeys.None:
                 selected = ids[Math.Min(ids.Count - 1, index + 1)];
                 Model.Select(selected.Value);
+                RevealSelection = true;
                 return true;
             case Key.Up or Key.K when Keyboard.Modifiers == ModifierKeys.None:
                 selected = ids[Math.Max(0, index - 1)];
                 Model.Select(selected.Value);
+                RevealSelection = true;
                 return true;
             case Key.Delete when index >= 0:
                 stage(ids[index]);
@@ -654,6 +696,7 @@ public sealed class BiggestFilesExplorePage : UserControl
     private AgeFilter _age = AgeFilter.Any;
     private string? _category;
     private int? _selected;
+    private readonly ScrollMemory _scroll = new();
     private List<Entry> _entries = [];
     private Dictionary<FileKind, int> _kindCounts = [];
     private object? _rankedFor;
@@ -699,6 +742,7 @@ public sealed class BiggestFilesExplorePage : UserControl
         var totals = Model.Totals;
         _rankedFor = totals;
         _preparing = true;
+        _selected = null;   // ranked again: the old ids may name other files now
         var (built, counts) = await Task.Run(() =>
         {
             var ids = TopSizes.Largest(1, tree.Count, 2_000, id => totals[id], id => !tree.IsDirectory[id] && totals[id] > 0);
@@ -932,7 +976,7 @@ public sealed class BiggestFilesExplorePage : UserControl
                 },
                 add: () => Stage(entry)));
         }
-        var scroll = new ScrollViewer { Content = list, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false };
+        var scroll = _scroll.Wrap(list, $"{_query}|{_kind}|{_age}|{_category}");
         Grid.SetRow(scroll, 1);
         grid.Children.Add(scroll);
 
@@ -1011,7 +1055,7 @@ public sealed class BiggestFilesExplorePage : UserControl
 
     private void OnKey(object sender, KeyEventArgs e)
     {
-        if (e.OriginalSource is TextBox) return;
+        if (e.OriginalSource is TextBox or System.Windows.Controls.Primitives.ButtonBase || _preparing) return;
         var parsed = ListQuery.Parse(_query);
         var rows = Filter(_entries, parsed, _kind, _age, _category, AgeMap.Today()).Take(500).ToList();
         if (rows.Count == 0) return;
@@ -1021,12 +1065,14 @@ public sealed class BiggestFilesExplorePage : UserControl
             case Key.Down or Key.J:
                 _selected = rows[Math.Min(rows.Count - 1, index + 1)].Id;
                 Model.Select(_selected.Value);
+                ListKit.RevealSelection = true;
                 Rebuild();
                 e.Handled = true;
                 break;
             case Key.Up or Key.K:
                 _selected = rows[Math.Max(0, index - 1)].Id;
                 Model.Select(_selected.Value);
+                ListKit.RevealSelection = true;
                 Rebuild();
                 e.Handled = true;
                 break;

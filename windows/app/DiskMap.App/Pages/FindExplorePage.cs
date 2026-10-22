@@ -82,6 +82,7 @@ public sealed class FindExplorePage : UserControl
     private string _text = Model.SearchQuery;
     private string _syncedQuery = Model.SearchQuery;
     private List<Row> _rows = [];
+    private FileTree? _rowsTree;
     private int _matchCount;
     /// <summary>Null when the name search answered and the bytes can't be summed honestly.</summary>
     private long? _matchedBytes = 0;
@@ -90,6 +91,7 @@ public sealed class FindExplorePage : UserControl
     private string? _runKey;
     private int _runVersion;
     private int? _selected;
+    private readonly ScrollMemory _scroll = new();
     private Dictionary<Guid, SavedSearches.Total> _savedTotals = [];
     private string? _savedKey;
 
@@ -172,6 +174,8 @@ public sealed class FindExplorePage : UserControl
     private async void Run(FileTree tree, string root, string key)
     {
         _runKey = key;
+        // Rows name nodes of the tree they came from: after a rescan they'd stage other files.
+        if (!ReferenceEquals(tree, _rowsTree)) { _rows = []; _selected = null; _rowsTree = tree; }
         string text = Trimmed;
         int version = ++_runVersion;
         if (text.Length == 0)
@@ -605,7 +609,7 @@ public sealed class FindExplorePage : UserControl
             element.ContextMenu = new ContextMenu { Items = { showInExplore } };
             list.Children.Add(element);
         }
-        var scroll = new ScrollViewer { Content = list, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false };
+        var scroll = _scroll.Wrap(list, _runKey ?? "");
         Grid.SetRow(scroll, 1);
         grid.Children.Add(scroll);
 
