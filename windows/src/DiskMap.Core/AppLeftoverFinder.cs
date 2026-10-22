@@ -19,7 +19,15 @@ public sealed record InstalledApp(
     /// <summary>The registry's own uninstall command line — revealable, never auto-run.</summary>
     string? UninstallString = null,
     /// <summary>True for MSIX/Store packages (from the AppModel hive, not Uninstall).</summary>
-    bool IsStorePackage = false);
+    bool IsStorePackage = false,
+    /// <summary>The registry's DisplayVersion.</summary>
+    string? Version = null,
+    /// <summary>The registry's InstallDate, "yyyyMMdd" when the installer wrote one.</summary>
+    string? InstallDate = null,
+    /// <summary>The registry's EstimatedSize (KB) in bytes: the size when there is no install folder to measure.</summary>
+    long? EstimatedBytes = null,
+    /// <summary>The registry's DisplayIcon: usually the program's own .exe (used only to match launches).</summary>
+    string? DisplayIcon = null);
 
 /// <summary>
 /// Finds files an app scattered outside its install directory when it was
@@ -84,7 +92,11 @@ public static class AppLeftoverFinder
                 subName,
                 // Quiet or classic — prefer the quiet form when present.
                 ((sub.GetValue("QuietUninstallString") as string)
-                    ?? (sub.GetValue("UninstallString") as string))?.Trim()));
+                    ?? (sub.GetValue("UninstallString") as string))?.Trim(),
+                Version: (sub.GetValue("DisplayVersion") as string)?.Trim(),
+                InstallDate: (sub.GetValue("InstallDate") as string)?.Trim(),
+                EstimatedBytes: sub.GetValue("EstimatedSize") is int kb && kb > 0 ? kb * 1024L : null,
+                DisplayIcon: (sub.GetValue("DisplayIcon") as string)?.Trim()));
         }
     }
 
