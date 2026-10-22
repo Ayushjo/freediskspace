@@ -85,7 +85,9 @@ public static class Theme
         Set(r, "RdCard", dark ? "#FF141417" : "#FFFFFFFF");          // a card on the page
         Set(r, "RdSoft", dark ? "#FF1E1E22" : "#FFF4F4F1");          // selected nav row, wells
         Set(r, "RdSegmentOn", dark ? "#FF34343A" : "#FFFFFFFF");     // selected segment
-        Set(r, "RdNight", dark ? "#FF1C1C21" : "#FF101113");         // the dark "You can free" panel
+        // The "You can free" panel. The Mac forces the dark appearance on it (colorScheme .dark),
+        // so its adaptive night colour resolves to the dark value in both themes.
+        Set(r, "RdNight", "#FF1C1C21");
         Set(r, "RdAccentBright", dark ? "#FFAA9CF5" : "#FF9B8AF0");  // violet on night, dark figures
         Set(r, "RdOnAccent", "#FFFFFFFF");
         Set(r, "RdAccentDeep", dark ? "#FFB4A8F8" : "#FF5B48B8");    // "rebuilds" text on hatching
