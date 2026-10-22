@@ -21,6 +21,8 @@ $repo = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 $exe = Join-Path $repo 'windows\app\DiskMap.App\bin\Debug\net10.0-windows\DiskMap.App.exe'
 if (-not (Test-Path $exe)) { throw "Build first: dotnet build windows\DiskMap.Win.slnx ($exe not found)" }
 if (-not (Test-Path $Demo)) { throw "Make the demo first: python windows\scripts\make-demo-fixture.py $Demo" }
+# `powershell -File` passes -Pages 'A','B' as one string "A,B"; split it back.
+$Pages = @($Pages | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim(" '`"") } | Where-Object { $_ })
 if ($Pages.Count -eq 0) {
     $Pages = @('Overview', 'Find', 'Biggest Files', 'Biggest Folders', 'Forgotten Files', 'Duplicates',
         'Safe to Review', 'Caches', 'Old Downloads', 'Large Media', 'File Browser', 'Visualize',
