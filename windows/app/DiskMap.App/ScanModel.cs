@@ -552,8 +552,8 @@ public sealed class ScanModel : ViewModelBase
     public event Action<string>? ToastRequested;
     public void Toast(string text) => ToastRequested?.Invoke(text);
     public void ToastAdded(int count) => Toast(count == 1
-        ? "Added to Cleanup — Ctrl+Shift+Delete to review"
-        : $"Added {count:N0} items to Cleanup — Ctrl+Shift+Delete to review");
+        ? "Added 1 item to the basket — Ctrl+Shift+Delete to review"
+        : $"Added {count:N0} items to the basket — Ctrl+Shift+Delete to review");
 
     /// <summary>What this node is and what removing it means (WSL disk, app, cache…).</summary>
     public StorageVerdict VerdictOf(int nodeId) =>
@@ -618,11 +618,14 @@ public sealed class ScanModel : ViewModelBase
             if (Stage(id, reason, notify: false)) added++;
             else already++;
         }
-        string addedText = added == 1 ? "Added 1 item to Cleanup" : $"Added {added:N0} items to Cleanup";
+        string addedText = added == 1 ? "Added 1 item" : $"Added {added:N0} items";
         if (skipped.Count > 0)
         {
             string names = string.Join(", ", skipped.Take(2)) + (skipped.Count > 2 ? $" +{skipped.Count - 2}" : "");
-            Toast($"{(added > 0 ? addedText + " · " : "")}skipped {skipped.Count} risky item{(skipped.Count == 1 ? "" : "s")} ({names}) — add those one at a time to see the warning");
+            string risky = $"{skipped.Count} risky item{(skipped.Count == 1 ? "" : "s")}";
+            Toast(added > 0
+                ? $"{addedText} · skipped {risky} ({names})"
+                : $"{risky} — add {(skipped.Count == 1 ? "it" : "them")} one at a time to see why");
         }
         else if (added > 0)
         {
@@ -630,7 +633,7 @@ public sealed class ScanModel : ViewModelBase
         }
         else if (already > 0)
         {
-            Toast("Already in Cleanup");
+            Toast("Already in the basket");
         }
         return added;
     }
@@ -656,11 +659,14 @@ public sealed class ScanModel : ViewModelBase
             id < _totals.Length ? _totals[id] : 0)).ToList();
         if (items.Count > 0)
         {
+            var riskyNames = ids.Where(id => VerdictOf(id).Advice is CleanupAdvice.Warn or CleanupAdvice.Never)
+                .Take(3).Select(id => Tree.NameOf(id)).ToList();
             string? footnote = risky > 0
-                ? $"{risky} risky item{(risky == 1 ? "" : "s")} (WSL/Docker disks, apps, browser data…) won't be added — add those one at a time to see the warning."
+                ? $"{risky} risky item{(risky == 1 ? "" : "s")} ({string.Join(", ", riskyNames)}{(risky > 3 ? "…" : "")}) won’t be added — add {(risky == 1 ? "it" : "them")} one at a time to see why."
                 : null;
-            bool ok = ConfirmBulk?.Invoke(title,
-                "These will be added to Cleanup. Nothing is deleted yet — you review the list on the Cleanup page and confirm again before anything moves to the Recycle Bin.",
+            // The Mac's sheet titles itself by count; the caller's title names the group in the toast.
+            bool ok = ConfirmBulk?.Invoke($"Add {items.Count:N0} item{(items.Count == 1 ? "" : "s")} to the basket?",
+                "Nothing is deleted yet — you review the basket and confirm again before anything moves to the Recycle Bin.",
                 items, footnote) == true;
             if (!ok) return 0;
         }

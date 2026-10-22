@@ -55,7 +55,7 @@ public partial class MainWindow : Window
         _model.ToastRequested += ShowToast;
         _model.ConfirmRisky = (name, verdict) => Dialogs.ConfirmRisky(this, name, verdict);
         _model.ConfirmBulk = (title, message, items, footnote) =>
-            Dialogs.Confirm(this, title, message, items, $"Add {items.Count:N0} to Cleanup", footnote: footnote);
+            Dialogs.Confirm(this, title, message, items, "Add to basket", footnote: footnote);
         _model.ScanRequested += async () => await PickAndScan();
         _model.StagedChanged += (_, _) => RefreshBasket();
         _model.PropertyChanged += OnModelChanged;
