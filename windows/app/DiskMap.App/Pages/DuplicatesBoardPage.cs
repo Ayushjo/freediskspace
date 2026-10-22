@@ -404,7 +404,6 @@ public sealed class DuplicatesBoardPage : UserControl
     private ItemsControl BuildList()
     {
         var factory = new FrameworkElementFactory(typeof(CardHost));
-        factory.SetValue(CardHost.PageProperty, this);
         var list = new ItemsControl
         {
             ItemTemplate = new DataTemplate { VisualTree = factory },
@@ -438,14 +437,17 @@ public sealed class DuplicatesBoardPage : UserControl
     /// <summary>One group card; the list's item template builds it from the page's state.</summary>
     internal sealed class CardHost : ContentControl
     {
-        public static readonly DependencyProperty PageProperty = DependencyProperty.Register(
-            nameof(Page), typeof(DuplicatesBoardPage), typeof(CardHost),
-            new PropertyMetadata(null, (d, _) => ((CardHost)d).Refresh()));
+        // The page that owns this card, found up the visual tree: a template factory can't hold
+        // the page itself (it's a Visual — "not a valid value for FrameworkElementFactory").
+        private DuplicatesBoardPage? _page;
 
-        public DuplicatesBoardPage? Page
+        public DuplicatesBoardPage? Page => _page ??= FindPage(this);
+
+        private static DuplicatesBoardPage? FindPage(DependencyObject from)
         {
-            get => (DuplicatesBoardPage?)GetValue(PageProperty);
-            set => SetValue(PageProperty, value);
+            for (var node = VisualTreeHelper.GetParent(from); node is not null; node = VisualTreeHelper.GetParent(node))
+                if (node is DuplicatesBoardPage page) return page;
+            return null;
         }
 
         private object? _builtFor;
@@ -456,7 +458,7 @@ public sealed class DuplicatesBoardPage : UserControl
             Focusable = false;
             DataContextChanged += (_, _) => Refresh();
             Loaded += (_, _) => { Page?._liveCards.Add(this); Refresh(); };
-            Unloaded += (_, _) => Page?._liveCards.Remove(this);
+            Unloaded += (_, _) => { Page?._liveCards.Remove(this); _page = null; };
         }
 
         /// <summary>Builds the card for its group unless it already shows this group at the page's version.</summary>

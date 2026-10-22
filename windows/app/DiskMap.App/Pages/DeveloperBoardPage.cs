@@ -123,7 +123,7 @@ public sealed class DeveloperBoardPage : UserControl
         string size = ByteFormat.Format(item.SuggestedBytes);
         if (item.Entry.PerChild)
             return count == 1 ? $"Add the older version to the basket · {size}" : $"Add {count} older versions to the basket · {size}";
-        return $"Add to the basket · {size}";
+        return $"Add to basket · {size}";
     }
 
     /// <summary>What a tool-storage row stages: only <c>trash</c> entries, never a kept version.</summary>

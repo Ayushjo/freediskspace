@@ -63,7 +63,7 @@ public class ExploreListPagesTests
         Assert.Equal("Very large file", ForgottenExplorePage.Why(["Not modified in 2 years", "Very large file"]));
         Assert.Equal("Worth a look", ForgottenExplorePage.ConfidenceLabel(ForgottenConfidence.WorthReviewing));
         Assert.Equal("45d ago", ForgottenExplorePage.AgeText(45));
-        Assert.Equal("1 month ago", ForgottenExplorePage.AgeText(60));
+        Assert.Equal("2 months ago", ForgottenExplorePage.AgeText(60));   // Mac: max(1, 60 / 30) months
         Assert.Equal("1 year ago", ForgottenExplorePage.AgeText(400));
         Assert.Equal("Very old", ForgottenExplorePage.AgeText(20 * 365));
     }
