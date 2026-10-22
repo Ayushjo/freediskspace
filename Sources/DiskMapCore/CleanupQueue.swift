@@ -142,6 +142,13 @@ public actor CleanupQueue {
         "/Library/Apple",
         "/private/var/db",
         NSHomeDirectory() + "/Library/Keychains",
+        // Aerial wallpaper and screen saver videos (macOS 26 and earlier
+        // locations) and the wallpaper agent's cache: macOS manages them and
+        // Apple calls deleting the cache risky. Added 2026-10-22 at the
+        // maintainer's request (rule 3); "What macOS keeps" guides instead.
+        NSHomeDirectory() + "/Library/Application Support/com.apple.wallpaper/aerials",
+        "/Library/Application Support/com.apple.idleassetsd",
+        NSHomeDirectory() + "/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches/com.apple.wallpaper.caches",
     ]
 
     public init() {}

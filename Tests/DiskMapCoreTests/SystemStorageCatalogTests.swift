@@ -111,4 +111,31 @@ struct SystemStorageCatalogTests {
         for staged in await queue.allItems() { await queue.unstage(id: staged.id) }
         #expect(await queue.allItems().isEmpty)
     }
+
+    /// Rule 3 (2026-10-22): the aerial videos and the wallpaper cache can't
+    /// be staged, even by hand from Explore — the folder or anything in it.
+    @Test func aerialsAndWallpaperCacheAreRefusedByTheQueue() async {
+        let home = NSHomeDirectory()
+        let queue = CleanupQueue()
+        for path in [home + "/Library/Application Support/com.apple.wallpaper/aerials/videos",
+                     home + "/Library/Application Support/com.apple.wallpaper/aerials/videos/ABC.mov",
+                     "/Library/Application Support/com.apple.idleassetsd/Customer",
+                     home + "/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches/com.apple.wallpaper.caches",
+                     home + "/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches/com.apple.wallpaper.caches/x"] {
+            #expect(await queue.stage(URL(fileURLWithPath: path), size: 1, reason: "test") == false, "\(path)")
+        }
+        #expect(await queue.allItems().isEmpty)
+    }
+
+    /// Every guide or never entry's paths are refused by the queue now, so
+    /// nothing in "What macOS keeps" except installers can reach Cleanup.
+    @Test func everyGuideOrNeverPathIsRefused() async {
+        let queue = CleanupQueue()
+        for entry in SystemStorageCatalog.loadEntries() where entry.action != .trash {
+            for pattern in entry.paths {
+                let path = pattern.replacingOccurrences(of: "*", with: "x").replacingOccurrences(of: "~", with: NSHomeDirectory())
+                #expect(await queue.stage(URL(fileURLWithPath: path), size: 1, reason: "test") == false, "\(entry.id): \(path)")
+            }
+        }
+    }
 }
