@@ -192,6 +192,7 @@ public sealed class DuplicatesBoardPage : UserControl
         if (!ReferenceEquals(_tickedFor, Model.Duplicates))
         {
             _tickedFor = Model.Duplicates;
+            _kindFilter = DuplicateKind.All;   // the switch may not even show for the new groups
             _keeperOverride.Clear();
             _keeperCache.Clear();
             SelectOtherCopies();

@@ -583,7 +583,8 @@ public sealed class AppsBoardPage : UserControl
         var menu = new ContextMenu();
         void item(string header, Action action, bool enabled = true)
         {
-            var mi = new MenuItem { Header = header, IsEnabled = enabled };
+            // "_" marks an access key in a menu header: "My_App" would show as "MyApp".
+            var mi = new MenuItem { Header = header.Replace("_", "__"), IsEnabled = enabled };
             mi.Click += (_, _) => action();
             System.Windows.Automation.AutomationProperties.SetName(mi, header);
             menu.Items.Add(mi);
@@ -1013,6 +1014,8 @@ public sealed class AppsBoardPage : UserControl
     {
         _selectedId = id;
         Rebuild();
-        if (_rowsById.TryGetValue(id, out var row)) row.BringIntoView();
+        // After the rebuilt rows are laid out, or there's nothing to scroll to yet.
+        Dispatcher.InvokeAsync(() => { if (_rowsById.TryGetValue(id, out var row)) row.BringIntoView(); },
+            System.Windows.Threading.DispatcherPriority.Loaded);
     }
 }

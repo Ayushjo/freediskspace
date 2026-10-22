@@ -239,15 +239,15 @@ public sealed class ForgottenExplorePage : UserControl
         add(ListKit.Chip("All", _summary.ReviewableCount, _tab == FilterTab.All, () => { _tab = FilterTab.All; Rebuild(); }));
         add(ListKit.Chip("Likely forgotten", _summary.LikelyCount, _tab == FilterTab.Likely,
             () => { _tab = _tab == FilterTab.Likely ? FilterTab.All : FilterTab.Likely; Rebuild(); }));
-        if (_class != Rd.WidthClass.Compact)
+        // A filter that's on always keeps its chip, or a narrow window couldn't turn it off.
+        if (_class != Rd.WidthClass.Compact || _tab == FilterTab.Worth)
             add(ListKit.Chip("Worth a look", _summary.WorthCount, _tab == FilterTab.Worth,
                 () => { _tab = _tab == FilterTab.Worth ? FilterTab.All : FilterTab.Worth; Rebuild(); }));
         add(ListKit.Chip("Over 1 GB", null, _onlyLarge, () => { _onlyLarge = !_onlyLarge; Rebuild(); }));
-        if (_class == Rd.WidthClass.Wide)
-        {
+        if (_class == Rd.WidthClass.Wide || _onlyDownloads)
             add(ListKit.Chip("Downloads", null, _onlyDownloads, () => { _onlyDownloads = !_onlyDownloads; Rebuild(); }));
+        if (_class == Rd.WidthClass.Wide || _onlyMedia)
             add(ListKit.Chip("Media", null, _onlyMedia, () => { _onlyMedia = !_onlyMedia; Rebuild(); }));
-        }
         dock.Children.Add(chips);
         return dock;
     }

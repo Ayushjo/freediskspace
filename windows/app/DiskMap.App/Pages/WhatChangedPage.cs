@@ -617,7 +617,8 @@ public sealed class WhatChangedPage : UserControl
         {
             Background = Ui.Brush(accent ? "RdAccentWash" : "RdSoft"), HorizontalAlignment = HorizontalAlignment.Left,
         };
-        var block = new Grid { HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center };
+        // The bar is a share of the whole name column, so rows compare (not of each name's width).
+        var block = new Grid { HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Center };
         double fraction = Math.Min(1, (double)Math.Abs(delta) / Math.Max(1, maxDelta));
         block.SizeChanged += (_, e) => bar.Width = e.NewSize.Width * fraction;
         block.Children.Add(bar);

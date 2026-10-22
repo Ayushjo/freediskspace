@@ -132,9 +132,14 @@ public sealed class DeveloperBoardPage : UserControl
 
     // ---- Data ----
 
+    private static readonly List<Action> _waiting = [];
+
     private static DeveloperCatalogResult? Catalog(FileTree tree, long[] totals, Action ready)
     {
         if (_built is { } done && ReferenceEquals(done.Tree, tree) && ReferenceEquals(done.Totals, totals)) return done.Result;
+        // Every page that asks while it builds hears when it's done — a theme change makes a
+        // new page mid-build, and only telling the first one left the new one loading.
+        _waiting.Add(ready);
         if (_building is { } b && ReferenceEquals(b.Tree, tree) && ReferenceEquals(b.Totals, totals)) return null;
         _building = (tree, totals);
         string root = Model.RootPath ?? "";
@@ -145,7 +150,9 @@ public sealed class DeveloperBoardPage : UserControl
             {
                 if (_building is { } now && ReferenceEquals(now.Tree, tree) && ReferenceEquals(now.Totals, totals)) _building = null;
                 _built = (tree, totals, result);
-                ready();
+                var waiting = _waiting.ToList();
+                _waiting.Clear();
+                foreach (var wake in waiting) wake();
             });
         }, TaskScheduler.Default);
         return null;

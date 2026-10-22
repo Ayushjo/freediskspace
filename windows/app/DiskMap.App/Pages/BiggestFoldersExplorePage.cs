@@ -432,7 +432,17 @@ public sealed class BiggestFoldersExplorePage : UserControl
         var targets = (Model.Reviewables ?? []).Where(t => t.IsGenerallySafe)
             .Select(t => (t.DisplayName, Ids: t.NodeIds.Where(n => n == current || FreeableIndex.IsAncestor(current, n, tree)).ToList()))
             .Where(t => t.Ids.Count > 0).ToList();
-        if (targets.Count == 0) return;
+        if (targets.Count == 0)
+        {
+            // Inside something that rebuilds by itself (a folder in node_modules or Temp): the
+            // footer counts this whole folder, so this folder is what goes in.
+            var around = (Model.Reviewables ?? []).Where(t => t.IsGenerallySafe)
+                .FirstOrDefault(t => t.NodeIds.Any(n => FreeableIndex.IsAncestor(n, current, tree)));
+            if (around is null) return;
+            Model.ConfirmStageMany([current], "Explore: " + around.DisplayName,
+                $"Things that rebuild by themselves in {tree.NameOf(current)}");
+            return;
+        }
         string reason = targets.Count == 1 ? "Explore: " + targets[0].DisplayName : "Explore: rebuilds by itself";
         Model.ConfirmStageMany(targets.SelectMany(t => t.Ids), reason,
             $"Things that rebuild by themselves in {tree.NameOf(current)}");
