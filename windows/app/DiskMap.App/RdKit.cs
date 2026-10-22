@@ -601,11 +601,15 @@ public static class Rd
         var link = Text(text, size, weight ?? FontWeights.Medium, color);
         link.Cursor = Cursors.Hand;
         link.Focusable = true;
+        // Acts on release alone: pages that redraw between press and release (the basket
+        // refreshes as sizes are measured) replace the element, and a press-then-release
+        // check on one element lost those clicks.
         link.MouseLeftButtonDown += (_, e) => { link.Opacity = 0.7; e.Handled = true; };
         link.MouseLeave += (_, _) => link.Opacity = 1;
         link.MouseLeftButtonUp += (_, e) =>
         {
-            if (link.Opacity < 1) { link.Opacity = 1; onClick(); }
+            link.Opacity = 1;
+            onClick();
             e.Handled = true;
         };
         link.KeyDown += (_, e) => { if (e.Key is Key.Enter or Key.Space) { onClick(); e.Handled = true; } };

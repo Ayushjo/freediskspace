@@ -20,6 +20,8 @@ public sealed class AppSettings
     [JsonPropertyName("showDusty")] public bool ShowDusty { get; set; } = true;
     /// <summary>Clean up ticks what rebuilds by itself for you (Mac: CleanUp.TickRebuilds); off = tick everything yourself.</summary>
     [JsonPropertyName("tickRebuilds")] public bool TickRebuilds { get; set; } = true;
+    /// <summary>The notification-area icon with free space and the last scan (Mac: ShowMenuBarExtra).</summary>
+    [JsonPropertyName("showTray")] public bool ShowTray { get; set; } = true;
 
     private static string Path0 => System.IO.Path.Combine(DiskMap.Core.UserFolders.StateDirectory, "settings.json");
 

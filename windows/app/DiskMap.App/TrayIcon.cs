@@ -19,6 +19,9 @@ public sealed class TrayIcon : IDisposable
     private Window? _flyout;
     private DateTime _closedAt;
 
+    /// <summary>Settings › General › Show free space in the notification area.</summary>
+    public bool Visible { get => _icon.Visible; set => _icon.Visible = value; }
+
     public TrayIcon(MainWindow window)
     {
         _window = window;
@@ -31,7 +34,7 @@ public sealed class TrayIcon : IDisposable
         {
             Icon = exeIcon,
             Text = "freedisk.space",
-            Visible = true,
+            Visible = AppSettings.Load().ShowTray,
         };
         _icon.MouseUp += (_, e) =>
         {

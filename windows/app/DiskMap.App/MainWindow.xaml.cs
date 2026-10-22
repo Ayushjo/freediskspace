@@ -743,6 +743,7 @@ public partial class MainWindow : Window
 
     internal void RebuildForTheme()
     {
+        if (_tray is not null) _tray.Visible = AppSettings.Load().ShowTray;
         _pages.Clear();
         _pageFactories.Clear();
         BuildNav();
