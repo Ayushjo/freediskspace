@@ -233,6 +233,12 @@ final class ScanModel: ObservableObject {
     /// main thread) and on disks that aren't APFS.
     @Published var spaceAccount: SpaceAccount?
     @Published var isSpaceAccountPresented = false
+    /// Time Machine snapshot deletion from "Where's the rest?" (decision D1).
+    enum SnapshotDeletion: Equatable {
+        case idle, running
+        case finished(deleted: Int, alreadyGone: Int = 0, failed: [String])
+    }
+    @Published var snapshotDeletion: SnapshotDeletion = .idle
     /// With clone accounting off (the default): where cloned copies probably
     /// inflate the totals, sampled after each scan. Allocated bytes.
     @Published var cloneSurvey: CloneSurvey = .empty
@@ -724,6 +730,7 @@ final class ScanModel: ObservableObject {
     private func startSpaceAccount(root: URL, generation: Int) {
         spaceAccount = nil
         isSpaceAccountPresented = false
+        if snapshotDeletion != .running { snapshotDeletion = .idle }
         let scanned = analysis.scannedOnDiskBytes
         let purgeable = Int64(clamping: analysis.volume?.purgeableBytes ?? 0)
         let denied = deniedDirectoryIDs.count
@@ -731,7 +738,13 @@ final class ScanModel: ObservableObject {
             spaceAccount = SpaceAccount.build(
                 breakdown: SnapshotHarness.fixedBreakdown, scanRootPath: root.path,
                 scanRootMountPoint: "/System/Volumes/Data", scannedOnDiskBytes: scanned,
-                purgeableBytes: 6_400_000_000, snapshots: [], unreadableFolders: denied)
+                purgeableBytes: 6_400_000_000, snapshots: SnapshotHarness.fixedSnapshots, unreadableFolders: denied)
+            switch SnapshotHarness.restState {
+            case "running": snapshotDeletion = .running
+            case "deleted": snapshotDeletion = .finished(deleted: 2, failed: [])
+            case "failed": snapshotDeletion = .finished(deleted: 1, failed: ["Failed to delete local snapshot '2026-10-21-101500'"])
+            default: break
+            }
             return
         }
         Task {
@@ -741,6 +754,39 @@ final class ScanModel: ObservableObject {
             }.value
             guard generation == scanGeneration else { return }
             spaceAccount = account
+        }
+    }
+
+    /// Deletes the account's Apple Time Machine local snapshots, then
+    /// re-reads the account so the freed space shows. The only direct
+    /// deletion in the app (AGENTS.md rule 1); the confirmation is the
+    /// caller's.
+    func deleteTimeMachineSnapshots() {
+        guard let account = spaceAccount, !account.timeMachineSnapshotNames.isEmpty,
+              snapshotDeletion != .running, let root = rootURL else { return }
+        let names = account.timeMachineSnapshotNames
+        snapshotDeletion = .running
+        let generation = scanGeneration
+        let scanned = analysis.scannedOnDiskBytes
+        let denied = deniedDirectoryIDs.count
+        Task {
+            let (results, refreshed) = await Task.detached(priority: .userInitiated) { () -> ([TimeMachineSnapshotRemoval.Result], SpaceAccount?) in
+                let results = TimeMachineSnapshotRemoval.delete(names: names, volume: "/")
+                let purgeable = Int64(clamping: VolumeStats.forPath(root.path, includePurgeable: true)?.purgeableBytes ?? 0)
+                let account = SpaceAccount.read(scanRootPath: root.path, scannedOnDiskBytes: scanned,
+                                                purgeableBytes: purgeable, unreadableFolders: denied)
+                return (results, account)
+            }.value
+            let deleted = results.filter { $0.outcome == .deleted }.count
+            let alreadyGone = results.filter { $0.outcome == .alreadyGone }.count
+            let failed = results.compactMap { result -> String? in
+                if case .failed(let reason) = result.outcome { return reason }
+                return nil
+            }
+            log("time machine snapshots: deleted=\(deleted) gone=\(alreadyGone) failed=\(failed.count)")
+            snapshotDeletion = .finished(deleted: deleted, alreadyGone: alreadyGone, failed: failed)
+            guard generation == scanGeneration else { return }
+            if let refreshed { spaceAccount = refreshed }
         }
     }
 

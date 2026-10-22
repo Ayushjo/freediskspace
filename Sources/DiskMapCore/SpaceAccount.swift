@@ -55,6 +55,9 @@ public struct SpaceAccount: Sendable, Equatable {
     /// The scan counted more than the volumes report used — APFS clones are
     /// counted once per copy in a walk.
     public var scanExceedsCovered: Bool
+    /// Apple Time Machine local snapshots on the covered volumes, newest
+    /// first: what `TimeMachineSnapshotRemoval` may delete.
+    public var timeMachineSnapshotNames: [String] = []
 
     public var total: Int64 { rows.reduce(0) { $0 + $1.bytes } }
 
@@ -103,8 +106,11 @@ public struct SpaceAccount: Sendable, Equatable {
             rows.append(Row(part: .notSeen, title: rootIsVolumeRoot ? "Not seen by the scan" : "Elsewhere on this disk",
                             bytes: notSeen, confidence: .remainder, detail: notSeenDetail(reasons)))
         }
+        let tmNames = Array(Set(snapshots.map(\.name).filter { TimeMachineSnapshotRemoval.date(forSnapshotName: $0) != nil }))
+            .sorted(by: >)
         return SpaceAccount(usedBytes: breakdown.containerUsedBytes, rows: rows, reasons: reasons,
-                            purgeableBytes: max(0, purgeableBytes), scanExceedsCovered: exceeds)
+                            purgeableBytes: max(0, purgeableBytes), scanExceedsCovered: exceeds,
+                            timeMachineSnapshotNames: tmNames)
     }
 
     /// Live: reads the container, the volumes the scan covered and their

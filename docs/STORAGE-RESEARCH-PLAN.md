@@ -100,7 +100,7 @@ Mac buckets, each with a confidence label:
   - OneDrive and compressed files (logical vs on disk)
   - NTFS metadata and the remainder
   - We never delete restore points; we open `SystemPropertiesProtection.exe` instead.
-- **Snapshot removal:** your memory notes that the maintainer OK'd direct Time Machine snapshot deletion as a rule 1 exception. **AGENTS.md doesn't record it and no code exists.** Decision D1 below.
+- **Snapshot removal: built (D1).** `TimeMachineSnapshotRemoval` + a confirm in the sheet; recorded in AGENTS.md rule 1. Measured 2026-10-22: `tmutil localsnapshot` and `tmutil deletelocalsnapshots <date>` both work without root; a non-date argument is read as a disk (would delete every snapshot), so only validated dates are passed.
 - **Tests:**
   - injected volume figures: buckets sum to used or less, and the remainder is 0 or more
   - `tmutil` and `diskutil` plist parser fixtures
@@ -424,4 +424,4 @@ Original questions, for reference:
 - The `simctl runtime list -j` fields and `--notUsedSinceDays` need a Mac with full Xcode.
 - Windows paths for Delivery Optimization, AI components and Recall subfolders are from third-party sources, and Windows readability is untested; a real Windows machine is needed (Fahmin?).
 - These need a dedicated pass before rules: wallpaper "100 GB+", the full aerial set size, installer app sizes, Android image sizes, Unity/Unreal/Visual Studio caches.
-- Whether `tmutil deletelocalsnapshots` and `thinlocalsnapshots` need root.
+- ~~Whether `tmutil deletelocalsnapshots` needs root~~: it doesn't (measured 2026-10-22). `thinlocalsnapshots` untested and unused.

@@ -32,6 +32,17 @@ in order, with acceptance criteria: `TASKS.md`.
    fallback is vetoed (`Shell32.RecycleOnlySink`), so nothing is ever
    destroyed without that confirmation. `PermanentDeleteTests` fails if
    `Directory.Delete` appears anywhere else in Core.
+   **Second exception (Mac, chosen by the maintainer, decision D1):** Apple
+   Time Machine local snapshots can't go to the Trash, so
+   `TimeMachineSnapshotRemoval` deletes them with
+   `tmutil deletelocalsnapshots <date>` — only names exactly
+   `com.apple.TimeMachine.<yyyy-MM-dd-HHmmss>.local` that are still listed,
+   never a disk argument (tmutil reads any non-date as a disk and would
+   delete all of them), never macOS-update or other apps' snapshots, and
+   only after the user confirms in "Where's the rest?". It doesn't touch the
+   backup disk. `TimeMachineSnapshotRemovalTests` fails if
+   `deletelocalsnapshots`, `thinlocalsnapshots` or `fs_snapshot_delete`
+   appears in any other source file.
 2. **Nothing calls the network — with one exception.** Grep for outbound
    `URLSession`/networking before merging anything. Fully offline is a stated
    product promise and a differentiator over closed competitors — don't
@@ -59,7 +70,11 @@ scripts/test.sh        # not bare `swift test` — see below
 swift run DiskMapApp
 ```
 
-Run `scripts/test.sh` after every change before calling a task done. It is
+Run `scripts/test.sh` after every change before calling a task done.
+Changes to snapshots, volumes or mounts also run `scripts/test-live.sh`
+(real diskutil/tmutil on this Mac; it creates and deletes one Time Machine
+snapshot). Never set `DISKMAP_LIVE_TESTS=1` on the full suite — the live
+tests disturb the timing-sensitive staging tests. It is
 `swift test` plus the framework search path and rpaths that Command Line Tools
 26.6+ needs: that release ships Swift Testing as `Testing.framework`, SwiftPM
 passes its directory with `-I` instead of `-F`, and bare `swift test` fails

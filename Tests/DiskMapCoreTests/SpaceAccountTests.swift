@@ -117,4 +117,16 @@ struct SpaceAccountTests {
         let none = SpaceAccount.notSeenDetail(.init())
         #expect(none.hasPrefix("Space no folder accounts for"))
     }
+
+    /// Only Apple Time Machine snapshots are offered for deletion, newest
+    /// first, once each even when listed on two volumes.
+    @Test func offersOnlyTimeMachineSnapshotsForDeletion() {
+        let tm1 = "com.apple.TimeMachine.2026-10-20-101500.local", tm2 = "com.apple.TimeMachine.2026-10-21-101500.local"
+        let snaps: [LocalSnapshots.Snapshot] = [tm1, tm2, "com.apple.os.update-ABC", "com.bombich.ccc.9"].map {
+            .init(name: $0, uuid: "", purgeable: true, kind: LocalSnapshots.kind(of: $0), volumeMountPoint: "/System/Volumes/Data")
+        } + [.init(name: tm2, uuid: "", purgeable: true, kind: LocalSnapshots.kind(of: tm2), volumeMountPoint: "/")]
+        let account = SpaceAccount.build(breakdown: mac, scanRootPath: "/", scanRootMountPoint: "/",
+                                         scannedOnDiskBytes: 100 * gb, purgeableBytes: 0, snapshots: snaps, unreadableFolders: 0)
+        #expect(account.timeMachineSnapshotNames == [tm2, tm1])
+    }
 }

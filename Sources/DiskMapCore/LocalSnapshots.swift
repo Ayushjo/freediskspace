@@ -28,6 +28,14 @@ public enum LocalSnapshots {
         public var kind: Kind
         public var volumeMountPoint: String
         public var id: String { uuid.isEmpty ? name : uuid }
+
+        public init(name: String, uuid: String, purgeable: Bool, kind: Kind, volumeMountPoint: String) {
+            self.name = name
+            self.uuid = uuid
+            self.purgeable = purgeable
+            self.kind = kind
+            self.volumeMountPoint = volumeMountPoint
+        }
     }
 
     /// Parses `diskutil apfs listSnapshots -plist <volume>` output. Unknown

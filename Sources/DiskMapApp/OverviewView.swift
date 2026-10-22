@@ -184,7 +184,8 @@ struct OverviewView: View {
                         get: { model.isSpaceAccountPresented && model.spaceAccount != nil },
                         set: { model.isSpaceAccountPresented = $0 })) {
                         if let account = model.spaceAccount {
-                            SpaceAccountSheet(account: account) { model.isSpaceAccountPresented = false }
+                            SpaceAccountSheet(model: model, account: account, onDone: { model.isSpaceAccountPresented = false },
+                                              confirming: SnapshotHarness.restState == "confirm")
                         }
                     }
                     .accessibilityHint("Explains the gap between this scan and the disk")

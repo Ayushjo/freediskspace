@@ -271,6 +271,18 @@ enum SnapshotHarness {
                 try? await Task.sleep(nanoseconds: UInt64(settle * 1_000_000_000))
                 if let sheet = window.attachedSheet {
                     write(window: sheet, to: dir.appendingPathComponent("\(sheetName)-\(appearanceName).png"))
+                    // `--rest-action delete` (live runs only, never with
+                    // --deterministic): delete the real Time Machine
+                    // snapshots the way the confirm button does, then
+                    // capture the sheet again once it has finished.
+                    if sheetName == "rest", value(after: "--rest-action") == "delete", !isDeterministic {
+                        model.deleteTimeMachineSnapshots()
+                        for _ in 0..<600 where model.snapshotDeletion == .running {
+                            try? await Task.sleep(nanoseconds: 100_000_000)
+                        }
+                        try? await Task.sleep(nanoseconds: 1_500_000_000)
+                        write(window: sheet, to: dir.appendingPathComponent("\(sheetName)-after-\(appearanceName).png"))
+                    }
                 }
                 model.isCleanupQueuePresented = false
                 model.isSpaceAccountPresented = false
@@ -564,6 +576,15 @@ enum SnapshotHarness {
 
     /// `--tab projects`: the tab a page with tabs opens on (Developer for now).
     static var requestedTab: String? { value(after: "--tab") }
+    /// `--rest-state confirm`: render "Where's the rest?" with the snapshot
+    /// confirmation open. `--rest-state deleted|failed|running`: with that
+    /// deletion state.
+    static var restState: String? { value(after: "--rest-state") }
+
+    /// Two Time Machine snapshots for deterministic renders of the sheet.
+    static let fixedSnapshots: [LocalSnapshots.Snapshot] = [
+        "com.apple.TimeMachine.2026-10-21-101500.local", "com.apple.TimeMachine.2026-10-22-091500.local",
+    ].map { .init(name: $0, uuid: "", purgeable: true, kind: LocalSnapshots.kind(of: $0), volumeMountPoint: "/System/Volumes/Data") }
 
     private static func value(after flag: String) -> String? {
         guard let index = arguments.firstIndex(of: flag), arguments.indices.contains(index + 1) else { return nil }
