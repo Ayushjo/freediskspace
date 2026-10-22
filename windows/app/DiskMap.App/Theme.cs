@@ -78,6 +78,26 @@ public static class Theme
         Set(r, "AppInkButtonFg", dark ? "#FF0B0B0C" : "#FFFFFFFF");
         Set(r, "AppBarTrack", dark ? "#FF26262A" : "#FFE4E3DF");
 
+        // WIN-102: the Mac v0.3.0 redesign palette (Sources/DiskMapApp/Kit/Redesign.swift),
+        // same values. Pages move to these as they're rebuilt to the Mac design.
+        Set(r, "RdPage", dark ? "#FF0E0E10" : "#FFFFFFFF");          // behind cards
+        Set(r, "RdSidebar", dark ? "#FF0B0B0C" : "#FFFCFCFB");       // sidebar, receipt column, inspector rail
+        Set(r, "RdCard", dark ? "#FF141417" : "#FFFFFFFF");          // a card on the page
+        Set(r, "RdSoft", dark ? "#FF1E1E22" : "#FFF4F4F1");          // selected nav row, wells
+        Set(r, "RdSegmentOn", dark ? "#FF34343A" : "#FFFFFFFF");     // selected segment
+        Set(r, "RdNight", dark ? "#FF1C1C21" : "#FF101113");         // the dark "You can free" panel
+        Set(r, "RdAccentBright", dark ? "#FFAA9CF5" : "#FF9B8AF0");  // violet on night, dark figures
+        Set(r, "RdOnAccent", "#FFFFFFFF");
+        Set(r, "RdAccentDeep", dark ? "#FFB4A8F8" : "#FF5B48B8");    // "rebuilds" text on hatching
+        Set(r, "RdAccentWash", dark ? "#FF24203A" : "#FFF3F0FD");    // behind hatching, selected rows
+        Set(r, "RdHover", dark ? "#FF19191B" : "#FFF5F5F6");         // ink/white @ 4.5% over the page
+        Set(r, "RdAccentSoft", dark ? "#FF1D1C29" : "#FFF0EEFB");    // accent @ 11% over the page
+        Set(r, "RdLine", line);
+        Set(r, "RdInk", dark ? "#FFF2F2F3" : "#FF252B31");
+        Set(r, "RdInk2", ink2);
+        Set(r, "RdInk3", ink3);
+        Set(r, "RdOnInk", dark ? "#FF0B0B0C" : "#FFFFFFFF");
+
         // Kept for existing references (pages rewritten to the new names).
         Set(r, "AppPanel", dark ? "#FF0B0B0C" : "#FFF8F7F4");
         Set(r, "AppBorder", line);
