@@ -236,6 +236,8 @@ final class ScanModel: ObservableObject {
     /// Storage macOS fills by itself (P2), measured where it lives. Nil
     /// until read; read with the space account after each scan.
     @Published var systemStorage: [SystemStorageCatalog.Item]?
+    /// Xcode and simulator storage (P3), measured where it lives.
+    @Published var xcodeStorage: [SystemStorageCatalog.Item]?
     /// Time Machine snapshot deletion from "Where's the rest?" (decision D1).
     enum SnapshotDeletion: Equatable {
         case idle, running
@@ -733,6 +735,7 @@ final class ScanModel: ObservableObject {
     private func startSpaceAccount(root: URL, generation: Int) {
         spaceAccount = nil
         systemStorage = nil
+        xcodeStorage = nil
         isSpaceAccountPresented = false
         if snapshotDeletion != .running { snapshotDeletion = .idle }
         let scanned = analysis.scannedOnDiskBytes
@@ -744,6 +747,7 @@ final class ScanModel: ObservableObject {
                 scanRootMountPoint: "/System/Volumes/Data", scannedOnDiskBytes: scanned,
                 purgeableBytes: 6_400_000_000, snapshots: SnapshotHarness.fixedSnapshots, unreadableFolders: denied)
             systemStorage = SnapshotHarness.fixedSystemStorage
+            xcodeStorage = SnapshotHarness.fixedXcodeStorage
             switch SnapshotHarness.restState {
             case "running": snapshotDeletion = .running
             case "deleted": snapshotDeletion = .finished(deleted: 2, failed: [])
@@ -762,6 +766,11 @@ final class ScanModel: ObservableObject {
             let system = await Task.detached(priority: .utility) { SystemStorageCatalog.measure() }.value
             guard generation == scanGeneration else { return }
             systemStorage = system
+            let xcode = await Task.detached(priority: .utility) {
+                SystemStorageCatalog.measure(entries: SystemStorageCatalog.loadEntries(resource: "developer-storage"))
+            }.value
+            guard generation == scanGeneration else { return }
+            xcodeStorage = xcode
         }
     }
 

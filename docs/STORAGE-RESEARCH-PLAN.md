@@ -212,6 +212,8 @@ We should **not** recommend or bundle third-party "remove Apple Intelligence" to
   - Windows Lxss registry parser fixture
 - **Not researched in depth yet:** Ollama, Hugging Face, Gradle, Maven, bun, conda, Unity, Unreal, Visual Studio caches, Android image sizes. They need their own pass before we add rules.
 
+**Status (2026-10-22): Mac built** as Developer › Xcode (`developer-storage.json`, same loader as §2): device support per version with the newest per platform kept (versions read from folder names; a folder with no version keeps everything), simulator caches and the Swift package cache to Cleanup, simulator devices / previews / runtimes / archives as commands or Xcode steps only. Runtimes are sized from their folders; `simctl runtime list -j` is **not** used yet — its fields are unverified and this Mac has no Xcode. Verified with fixtures and a fake DeviceSupport in the real home (then trashed). Windows WSL/Docker: not started.
+
 **Effort:** M (Mac runtimes and DeviceSupport), M (Windows WSL/Docker), S (rules and B3).
 
 ---

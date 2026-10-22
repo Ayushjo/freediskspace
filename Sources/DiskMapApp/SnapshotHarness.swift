@@ -595,6 +595,24 @@ enum SnapshotHarness {
         }.sorted { $0.bytes > $1.bytes }
     }()
 
+    /// Xcode storage for deterministic renders of the Developer › Xcode tab.
+    static let fixedXcodeStorage: [SystemStorageCatalog.Item] = {
+        let entries = Dictionary(uniqueKeysWithValues: SystemStorageCatalog.loadEntries(resource: "developer-storage").map { ($0.id, $0) })
+        let ds = "/Users/demo/Library/Developer/Xcode/iOS DeviceSupport/"
+        var items: [SystemStorageCatalog.Item] = []
+        if let e = entries["device-support"] {
+            items.append(.init(entry: e, found: [(ds + "17.10 (21X1)", 4_100_000_000), (ds + "17.4.1 (21E236)", 3_900_000_000),
+                                                 (ds + "16.7 (20H19)", 3_600_000_000)],
+                               isPartial: false, keep: [ds + "17.10 (21X1)"]))
+        }
+        for (id, bytes) in [("simulator-runtimes", Int64(18_400_000_000)), ("swiftui-previews", 6_200_000_000),
+                            ("simulator-devices", 5_300_000_000), ("simulator-caches", 2_900_000_000),
+                            ("xcode-archives", 1_700_000_000), ("swiftpm-cache", 640_000_000)] {
+            if let e = entries[id] { items.append(.init(entry: e, found: [(e.paths[0], bytes)], isPartial: false)) }
+        }
+        return items.sorted { $0.bytes > $1.bytes }
+    }()
+
     /// Two Time Machine snapshots for deterministic renders of the sheet.
     static let fixedSnapshots: [LocalSnapshots.Snapshot] = [
         "com.apple.TimeMachine.2026-10-21-101500.local", "com.apple.TimeMachine.2026-10-22-091500.local",

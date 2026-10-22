@@ -20,7 +20,7 @@ let package = Package(
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
     ],
     targets: [
-        .target(name: "DiskMapCore", resources: [.process("quick-wins-patterns.json"), .process("file-type-categories.json"), .process("developer-rules.json"), .process("cleanup-recipes.json"), .process("storage-categories.json"), .process("system-storage.json")]),
+        .target(name: "DiskMapCore", resources: [.process("quick-wins-patterns.json"), .process("file-type-categories.json"), .process("developer-rules.json"), .process("cleanup-recipes.json"), .process("storage-categories.json"), .process("system-storage.json"), .process("developer-storage.json")]),
         .target(name: "DiskMapBrand", resources: [.copy("Resources/dusty-peek-mark.svg")]),
         .executableTarget(
             name: "DiskMapApp",
