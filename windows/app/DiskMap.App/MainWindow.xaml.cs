@@ -103,6 +103,12 @@ public partial class MainWindow : Window
                         var risky = Dialogs.RiskyWindow(this, "ext4.vhdx", wsl, _ => { });
                         SaveWindowShot(risky, stem + "-risky.png");
                         risky.Close();
+                        if (_model.SpaceAccount is { } account)
+                        {
+                            var rest = Dialogs.SpaceAccountWindow(this, account);
+                            SaveWindowShot(rest, stem + "-rest.png");
+                            rest.Close();
+                        }
                     }
                     Trace("shot");
                     if (Environment.GetEnvironmentVariable("DISKMAP_SHOT_QUIT") != "0")

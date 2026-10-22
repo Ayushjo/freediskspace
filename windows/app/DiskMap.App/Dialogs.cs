@@ -281,7 +281,10 @@ public static class Dialogs
     /// The sheet Overview opens from "Where's the rest?": the drive's used space as one stacked
     /// bar, then a folding row per part, then Done.
     /// </summary>
-    public static void ShowSpaceAccount(Window? owner, SpaceAccount account)
+    public static void ShowSpaceAccount(Window? owner, SpaceAccount account) => SpaceAccountWindow(owner, account).ShowDialog();
+
+    /// <summary>The "Where's the rest?" sheet, not yet shown (the harness renders it to a file).</summary>
+    public static Window SpaceAccountWindow(Window? owner, SpaceAccount account)
     {
         var body = new StackPanel();
         var head = new DockPanel();
@@ -316,7 +319,7 @@ public static class Dialogs
 
         window = Sheet(body, 520, owner);   // the Mac sheet's width
         window.Loaded += (_, _) => done.Focus();
-        window.ShowDialog();
+        return window;
     }
 
     /// <summary>SpaceAccountBreakdown: one stacked bar, then a folding row per part, in a card.</summary>

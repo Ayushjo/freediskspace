@@ -3,6 +3,7 @@
 #
 #   python windows\scripts\make-demo-fixture.py          # once: builds C:\DemoPC
 #   powershell -File windows\scripts\render-parity.ps1 -Out C:\parity\win
+#   powershell -File windows\scripts\render-parity.ps1 -Pages Overview -Popups   # + overview-*-tray/-risky/-rest.png
 #
 # Each page is one launch: the app scans the demo (logical sizes, fixed 500 GB volume),
 # opens the page, saves the content area at 1440x900 @2x and quits. It runs un-elevated
@@ -14,7 +15,9 @@ param(
     [string[]]$Pages = @(),
     [string]$Size = '1440x900',
     [int]$Settle = 2500,
-    [int]$TimeoutSeconds = 240
+    [int]$TimeoutSeconds = 240,
+    # Also render the popups next to the Overview shot: tray flyout, risky warning, "Where's the rest?".
+    [switch]$Popups
 )
 $ErrorActionPreference = 'Stop'
 $repo = Resolve-Path (Join-Path $PSScriptRoot '..\..')
@@ -50,6 +53,7 @@ foreach ($theme in $Themes) {
             'DISKMAP_SIZE_BASIS' = 'logical'; 'DISKMAP_DETERMINISTIC' = '1'; 'DISKMAP_TRACE' = $trace;
             'DISKMAP_STATE_DIR' = $state
         }
+        if ($Popups -and $page -eq 'Overview') { $vars['DISKMAP_SHOT_POPUPS'] = '1' }
         foreach ($name in $vars.Keys) { $info.EnvironmentVariables[$name] = $vars[$name] }
         $started = Get-Date
         $process = [System.Diagnostics.Process]::Start($info)
