@@ -122,6 +122,7 @@ public static class StorageClassifier
     private const string AppInstead = "Uninstall from Settings → Apps → Installed apps.";
     private const string BrowserNote = "A browser profile: history, saved logins, extensions and settings live here.";
     private const string BrowserInstead = "Clear cached data from the browser's own settings instead.";
+    private const string BrowserCacheNote = "The browser's cache: it fills again as you browse. Logins, history and extensions are elsewhere in the profile.";
     private const string GitNote = "Repository history — anything not pushed is lost with it.";
     private const string GameNote = "An installed game library.";
     private const string GameInstead = "Uninstall games from their launcher (Steam, Epic, Xbox app).";
@@ -262,14 +263,46 @@ public static class StorageClassifier
         Claim("appdata/roaming/cursor", DevTools, CleanupAdvice.Review),
         Claim("appdata/local/jetbrains", DevTools, CleanupAdvice.Review),
         Claim("appdata/roaming/jetbrains", DevTools, CleanupAdvice.Review),
-        Claim("appdata/local/google/chrome", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
-        Claim("appdata/local/microsoft/edge", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
-        Claim("appdata/local/bravesoftware", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
-        Claim("appdata/local/vivaldi", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
-        Claim("appdata/local/thebrowsercompany", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
-        Claim("appdata/roaming/mozilla", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
-        Claim("appdata/local/mozilla", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
-        Claim("appdata/roaming/opera software", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
+        // A browser's own cache folders rebuild by themselves (the Mac's ~/Library/Caches/Google/Chrome);
+        // only the profile around them (logins, history, extensions) is the warning below — an
+        // area, not a claim, so these deeper claims win inside it.
+        Claim("appdata/local/google/chrome/user data/?/cache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/google/chrome/user data/?/code cache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/google/chrome/user data/?/gpucache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/google/chrome/user data/shadercache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/google/chrome/user data/grshadercache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/google/chrome/user data/graphitedawncache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/google/chrome/user data/dawn*", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/microsoft/edge/user data/?/cache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/microsoft/edge/user data/?/code cache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/microsoft/edge/user data/?/gpucache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/microsoft/edge/user data/shadercache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/microsoft/edge/user data/grshadercache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/microsoft/edge/user data/graphitedawncache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/microsoft/edge/user data/dawn*", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/bravesoftware/brave-browser/user data/?/cache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/bravesoftware/brave-browser/user data/?/code cache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/bravesoftware/brave-browser/user data/?/gpucache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/bravesoftware/brave-browser/user data/shadercache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/bravesoftware/brave-browser/user data/grshadercache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/bravesoftware/brave-browser/user data/graphitedawncache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/bravesoftware/brave-browser/user data/dawn*", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/vivaldi/user data/?/cache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/vivaldi/user data/?/code cache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/vivaldi/user data/?/gpucache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/vivaldi/user data/shadercache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/vivaldi/user data/grshadercache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/vivaldi/user data/graphitedawncache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/vivaldi/user data/dawn*", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/mozilla/firefox/profiles/?/cache2", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Area("appdata/local/google/chrome", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
+        Area("appdata/local/microsoft/edge", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
+        Area("appdata/local/bravesoftware", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
+        Area("appdata/local/vivaldi", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
+        Area("appdata/local/thebrowsercompany", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
+        Area("appdata/roaming/mozilla", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
+        Area("appdata/local/mozilla", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
+        Area("appdata/roaming/opera software", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
         Area("appdata", AppData),
 
         // Home-folder toolchains (Users\you\.cargo …).
