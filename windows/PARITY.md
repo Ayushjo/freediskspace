@@ -893,40 +893,40 @@ reachable here, and its behaviour has xUnit coverage.
 - [x] WIN-100 Render harness parity: DISKMAP_HOME demo profile (`UserFolders`), DISKMAP_THEME,
   DISKMAP_SIZE, DISKMAP_SHOT_SCALE, DISKMAP_SIZE_BASIS, DISKMAP_DETERMINISTIC, demo fixture,
   render script, diff tool.
-- [ ] WIN-101 Harness reach: page sub-states (Explore modes, Developer tabs, Clean up
+- [x] WIN-101 Harness reach: page sub-states (Explore modes, Developer tabs, Clean up
   sub-pages), sheets (basket, bulk, risky, Where's the rest), Settings, Ctrl+K, seeded
   history and cleanups, staged items, so every Mac reference has a Windows counterpart.
-- [ ] WIN-102 Design tokens: add the redesign palette (page, sidebar, card, soft, segmentOn,
+- [x] WIN-102 Design tokens: add the redesign palette (page, sidebar, card, soft, segmentOn,
   night, accentBright, accentDeep, accentWash) and type scale (pageTitle 26, cardTitle 14,
   hero) from `Kit/Redesign.swift`; replace hard-coded page hexes; WidthClass paddings.
-- [ ] WIN-103 Kit controls: BoardCard, AccentButton (hard shadow), BoardTag, IconTile,
+- [x] WIN-103 Kit controls: BoardCard, AccentButton (hard shadow), BoardTag, IconTile,
   SegmentSwitch, MonoLabel, ListChip/Dropdown/SearchField, BoardBanner, hatch fill, Receipt.
-- [ ] WIN-104 Shell: Mac sidebar IA (Overview, Clean up, Explore, Developer, Duplicates, What
+- [x] WIN-104 Shell: Mac sidebar IA (Overview, Clean up, Explore, Developer, Duplicates, What
   changed · MORE · Applications, History & Put Back), nav figures, accent bar, basket card,
   "Ctrl+K Find anything" footer and settings gear; top bar with page context, "Scanned X ago"
   and the Rescan menu; adaptive sidebar width and inspector rules.
-- [ ] WIN-105 Overview: free card + "Where's the rest", night "You can free" card, usage bar
+- [x] WIN-105 Overview: free card + "Where's the rest", night "You can free" card, usage bar
   card with legend, Biggest places, Ready to free; first-scan hero and scanning board.
-- [ ] WIN-106 Clean up: grouped tickable list (Rebuilds by itself / Comes back, but check
+- [x] WIN-106 Clean up: grouped tickable list (Rebuilds by itself / Comes back, but check
   first / Old downloads / Your files), the receipt column, Move to Recycle Bin; sub-pages
   Caches / Old downloads / Large media with the back link and switch.
-- [ ] WIN-107 Explore: Map | Rings | List + More (Flame, Bubbles, Mind Map, Age Map), Color
+- [x] WIN-107 Explore: Map | Rings | List + More (Flame, Bubbles, Mind Map, Age Map), Color
   (Can be freed / By type / By folder / By age), Size menu, contents table, inspector; List =
   Folders | Files | Forgotten; Find from Ctrl+K.
-- [ ] WIN-108 Developer: Where it lives | Projects | By tool | (Windows tool tab) + More,
+- [x] WIN-108 Developer: Where it lives | Projects | By tool | (Windows tool tab) + More,
   hatch legend, Developer inspector.
-- [ ] WIN-109 Duplicates: header, clone banner, kind filter, keep policy.
-- [ ] WIN-110 What changed: Scan size chart, compare picker, change cards, save sheet.
-- [ ] WIN-111 Applications: sort/show segments, App / Data columns, uninstall bar.
-- [ ] WIN-112 History & Put Back: multi-cleanup history with item states (port
+- [x] WIN-109 Duplicates: header, clone banner, kind filter, keep policy.
+- [x] WIN-110 What changed: Scan size chart, compare picker, change cards, save sheet.
+- [x] WIN-111 Applications: sort/show segments, App / Data columns, uninstall bar.
+- [x] WIN-112 History & Put Back: multi-cleanup history with item states (port
   `CleanupHistory`), search, Put Back per item and per cleanup.
-- [ ] WIN-113 Where's the rest: per-volume breakdown for Windows (scanned, Windows, pagefile,
+- [x] WIN-113 Where's the rest: per-volume breakdown for Windows (scanned, Windows, pagefile,
   hibernation file, System Restore / shadow copies, recovery, elsewhere), plus "What Windows
   keeps"; any new removal follows AGENTS.md rule 1.
-- [ ] WIN-114 Sheets and dialogs: basket with receipt, bulk / risky / path-list confirms,
+- [x] WIN-114 Sheets and dialogs: basket with receipt, bulk / risky / path-list confirms,
   explain sheet, save-scan sheet, styled as the Mac sheets.
-- [ ] WIN-115 Settings, tray flyout, Ctrl+K palette, toasts, empty and error states.
-- [ ] WIN-116 Storage-accuracy halves (Mac P1-P3 equivalents for Windows) with tests.
+- [x] WIN-115 Settings, tray flyout, Ctrl+K palette, toasts, empty and error states.
+- [x] WIN-116 Storage-accuracy halves (Mac P1-P3 equivalents for Windows) with tests.
 - [ ] WIN-117 Final sweep: every page and state light/dark, text scales, compact widths,
   high contrast, keyboard; diff report attached to the PR.
 
