@@ -241,7 +241,7 @@ public partial class MainWindow : Window
     {
         _pageFactories["Overview"] = () => new OverviewPage();
         _pageFactories["Find"] = () => new SearchPage();
-        _pageFactories["Biggest Files"] = () => new BiggestFilesPage();
+        _pageFactories["Biggest Files"] = () => new BiggestFilesExplorePage();   // Mac: Explore → List → Files
         _pageFactories["Biggest Folders"] = () => new BiggestFoldersPage();
         _pageFactories["Forgotten Files"] = () => new ForgottenFilesPage();
         _pageFactories["Duplicates"] = () => new DuplicatesPage();
@@ -250,7 +250,7 @@ public partial class MainWindow : Window
         _pageFactories["Old Downloads"] = () => new OldDownloadsPage();
         _pageFactories["Large Media"] = () => new LargeMediaPage();
         _pageFactories["File Browser"] = () => new FileBrowserPage();
-        _pageFactories["Visualize"] = () => new VisualizePage();
+        _pageFactories["Visualize"] = () => new ExplorePage();   // Mac: Explore → Map
         _pageFactories["Developer Storage"] = () => new DeveloperStoragePage();
         _pageFactories["Applications"] = () => new ApplicationsPage();
         _pageFactories["Snapshots"] = () => new SnapshotsPage();
