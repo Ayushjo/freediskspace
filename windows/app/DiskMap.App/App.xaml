@@ -364,7 +364,14 @@
                                 BorderBrush="{DynamicResource AppCardBorder}"
                                 BorderThickness="1" CornerRadius="6" Padding="8,5"
                                 MaxWidth="380">
-                            <ContentPresenter />
+                            <!-- Text wraps at the box's width; unwrapped, a long path was cut off. -->
+                            <ContentPresenter>
+                                <ContentPresenter.Resources>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="TextWrapping" Value="Wrap" />
+                                    </Style>
+                                </ContentPresenter.Resources>
+                            </ContentPresenter>
                         </Border>
                     </ControlTemplate>
                 </Setter.Value>
