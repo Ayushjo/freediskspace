@@ -27,6 +27,11 @@ if ($Pages.Count -eq 0) {
         'Developer Storage', 'Applications', 'Snapshots', 'Cleanup')
 }
 New-Item -ItemType Directory -Force -Path $Out | Out-Null
+# A clean, private state folder: the user's settings (text size, appearance), scan cache,
+# history and Put Back record never leak into a render, and renders never write them.
+$state = Join-Path $env:TEMP 'freedisk-render-state'
+if (Test-Path $state) { Remove-Item -Recurse -Force $state }
+New-Item -ItemType Directory -Force -Path $state | Out-Null
 
 foreach ($theme in $Themes) {
     foreach ($page in $Pages) {
@@ -40,7 +45,8 @@ foreach ($theme in $Themes) {
             '__COMPAT_LAYER' = 'RunAsInvoker'; 'DISKMAP_HOME' = $Demo; 'DISKMAP_AUTOSCAN' = $Demo;
             'DISKMAP_PAGE' = $page; 'DISKMAP_SHOT' = $shot; 'DISKMAP_SHOT_SETTLE' = "$Settle";
             'DISKMAP_SHOT_SCALE' = '2'; 'DISKMAP_SIZE' = $Size; 'DISKMAP_THEME' = $theme;
-            'DISKMAP_SIZE_BASIS' = 'logical'; 'DISKMAP_DETERMINISTIC' = '1'; 'DISKMAP_TRACE' = $trace
+            'DISKMAP_SIZE_BASIS' = 'logical'; 'DISKMAP_DETERMINISTIC' = '1'; 'DISKMAP_TRACE' = $trace;
+            'DISKMAP_STATE_DIR' = $state
         }
         foreach ($name in $vars.Keys) { $info.EnvironmentVariables[$name] = $vars[$name] }
         $started = Get-Date

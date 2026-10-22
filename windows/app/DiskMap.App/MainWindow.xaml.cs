@@ -352,12 +352,12 @@ public partial class MainWindow : Window
     {
         static (string, bool)? Bytes(long value, bool accent = false) =>
             value > 0 ? (Rd.CompactBytes(value), accent) : null;
-        var totals = _model.Totals;
         switch (title)
         {
             case "Clean up":
-                if (_model.QuickWins is not { } wins || _model.Tree is not { } t || totals.Length != t.Count) return null;
-                return Bytes(wins.Sum(h => totals[h.Id]), accent: true);
+                // What Clean up ticks for you (AppShellView: safeReclaimableBytes).
+                if (_model.Reviewables is null) return null;
+                return Bytes(_model.SafeReclaimableBytes, accent: true);
             case "Duplicates":
                 if (!_model.DuplicatesSearched) return null;
                 return Bytes(_model.Duplicates.Sum(g => (long)Math.Max(0, g.FileIDs.Count - 1) * g.SizeEach));

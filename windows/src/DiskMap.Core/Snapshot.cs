@@ -205,8 +205,7 @@ public static class SnapshotStore
 {
     public static string DefaultDirectory()
     {
-        string baseDir = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        return Path.Combine(baseDir, "DiskMap", "snapshots");
+        return Path.Combine(UserFolders.StateDirectory, "snapshots");
     }
 
     public static string Save(DiskSnapshot snapshot, string directory)

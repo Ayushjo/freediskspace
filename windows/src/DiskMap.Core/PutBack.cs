@@ -21,9 +21,7 @@ public sealed record CleanupRecord(
     public sealed record Item(string OriginalPath, string TrashedPath, long Bytes);
 
     public static string DefaultPath() =>
-        Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "DiskMap", "last-cleanup.json");
+        Path.Combine(UserFolders.StateDirectory, "last-cleanup.json");
 
     public static CleanupRecord? Load(string? path = null)
     {

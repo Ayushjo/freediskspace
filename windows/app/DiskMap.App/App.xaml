@@ -313,9 +313,12 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="MenuItem">
+                        <!-- A MenuItem's text is its Header: without ContentSource="Header" every
+                             menu drew as an empty box. -->
                         <Border x:Name="bg" Background="Transparent" CornerRadius="5"
                                 Padding="9,6" Margin="1">
-                            <ContentPresenter VerticalAlignment="Center" />
+                            <ContentPresenter ContentSource="Header" RecognizesAccessKey="True"
+                                              VerticalAlignment="Center" />
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsHighlighted" Value="True">

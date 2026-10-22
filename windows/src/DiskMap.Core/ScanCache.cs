@@ -26,9 +26,7 @@ public static class ScanCache
         [JsonPropertyName("savedUtc")] public long SavedUtc { get; set; }
     }
 
-    public static string DirectoryPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "DiskMap", "ScanCache");
+    public static string DirectoryPath => Path.Combine(UserFolders.StateDirectory, "ScanCache");
 
     private static string Key(string rootPath) => StorageHistory.Hash(rootPath);
     private static string TreePath(string rootPath) =>

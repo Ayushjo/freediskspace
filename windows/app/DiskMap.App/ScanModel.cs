@@ -200,6 +200,34 @@ public sealed class ScanModel : ViewModelBase
     private List<QuickWins.Hit>? _quickWins;
     public List<QuickWins.Hit>? QuickWins { get => _quickWins; set { if (Set(ref _quickWins, value)) Changed(); } }
 
+    /// <summary>
+    /// What Clean up and Overview offer — app caches grouped per app, then quick-win folders —
+    /// measured on the current size basis. Null until a scan is summarized (Mac: cachedReviewables).
+    /// </summary>
+    private List<ReviewableTarget>? _reviewables;
+    public List<ReviewableTarget>? Reviewables { get => _reviewables; private set { if (Set(ref _reviewables, value)) Changed(); } }
+
+    /// <summary>What Clean up ticks for you: the targets that rebuild by themselves.</summary>
+    public long SafeReclaimableBytes => Reviewables?.Where(t => t.IsGenerallySafe).Sum(t => t.Bytes) ?? 0;
+
+    public List<ReviewableTarget> SafeReclaimables =>
+        Reviewables?.Where(t => t.IsGenerallySafe).OrderByDescending(t => t.Bytes).ToList() ?? [];
+
+    /// <summary>Build output and dependencies that come back with a rebuild or reinstall, left unticked.</summary>
+    public long ReviewFirstReclaimableBytes => Reviewables?.Where(t => t.IsReviewFirst).Sum(t => t.Bytes) ?? 0;
+
+    /// <summary>Overview's line when nothing is ticked for you.</summary>
+    public string NothingTickedLine
+    {
+        get
+        {
+            long review = ReviewFirstReclaimableBytes;
+            return review > 0
+                ? $"Nothing is ticked for you here. {ByteFormat.Format(review)} of build files and dependencies comes back with a rebuild or reinstall — check it in Clean up."
+                : "Nothing here rebuilds by itself right now. Clean up still lists old downloads and big files to review.";
+        }
+    }
+
     // ---- WIN-052: chart multi-selection ----
 
     /// <summary>
@@ -275,13 +303,15 @@ public sealed class ScanModel : ViewModelBase
         var snapshot = await Task.Run(() =>
         {
             var totals = basis == SizeBasis.Logical ? _totalsLogical : _totalsAllocated;
-            return AnalysisSnapshot.Build(tree, root, _totalsLogical, _totalsAllocated, basis, QuickWins);
+            return (AnalysisSnapshot.Build(tree, root, _totalsLogical, _totalsAllocated, basis, QuickWins),
+                ReviewableCatalog.Build(tree, root, totals, QuickWins ?? []).Targets);
         });
         // A newer toggle or scan may have landed while this one ran.
         if (ReferenceEquals(tree, _tree) && basis == _sizeBasis)
         {
             Totals = basis == SizeBasis.Logical ? _totalsLogical : _totalsAllocated;
-            Snapshot = snapshot;
+            Snapshot = snapshot.Item1;
+            Reviewables = snapshot.Item2;
         }
     }
 
@@ -306,14 +336,15 @@ public sealed class ScanModel : ViewModelBase
                 () => _engine.ScanAsync(path, progress, cts.Token, settings.CloneAccounting),
                 cts.Token);
             ScanPhase = "summarizing";
-            var (logical, allocated, counts, quickWins, snapshot) = await Task.Run(() =>
+            var (logical, allocated, counts, quickWins, snapshot, reviewables) = await Task.Run(() =>
             {
                 var l = scanned.Tree.RollUpSizes(SizeBasis.Logical);
                 var a = scanned.Tree.RollUpSizes(SizeBasis.Allocated);
                 var c = scanned.Tree.RollUpCounts();
                 var qw = Core.QuickWins.Find(scanned.Tree, path, Core.QuickWins.BundledPatterns());
                 var snap = AnalysisSnapshot.Build(scanned.Tree, path, l, a, basis, qw);
-                return (l, a, c, qw, snap);
+                var rv = ReviewableCatalog.Build(scanned.Tree, path, basis == SizeBasis.Logical ? l : a, qw).Targets;
+                return (l, a, c, qw, snap, rv);
             }, cts.Token);
             cts.Token.ThrowIfCancellationRequested();
             // History record — one JSON line per scan, feeds "what grew".
@@ -343,6 +374,7 @@ public sealed class ScanModel : ViewModelBase
             Duplicates = [];
             _duplicatesRan = false;
             QuickWins = quickWins;
+            Reviewables = reviewables;
             Snapshot = snapshot;
             // Totals before Tree: a view refreshed by the Tree change must
             // never pair the new tree with the old totals.
@@ -388,14 +420,15 @@ public sealed class ScanModel : ViewModelBase
     public async Task LoadSnapshot(DiskSnapshot snapshot)
     {
         var basis = _sizeBasis;
-        var (logical, allocated, counts, quickWins, snap) = await Task.Run(() =>
+        var (logical, allocated, counts, quickWins, snap, reviewables) = await Task.Run(() =>
         {
             var l = snapshot.Tree.RollUpSizes(SizeBasis.Logical);
             var a = snapshot.Tree.RollUpSizes(SizeBasis.Allocated);
             var c = snapshot.Tree.RollUpCounts();
             var qw = Core.QuickWins.Find(snapshot.Tree, snapshot.RootPath, Core.QuickWins.BundledPatterns());
             var s = AnalysisSnapshot.Build(snapshot.Tree, snapshot.RootPath, l, a, basis, qw);
-            return (l, a, c, qw, s);
+            var rv = ReviewableCatalog.Build(snapshot.Tree, snapshot.RootPath, basis == SizeBasis.Logical ? l : a, qw).Targets;
+            return (l, a, c, qw, s, rv);
         });
         ItemCount = snapshot.Tree.Count;
         Elapsed = 0;
@@ -408,6 +441,7 @@ public sealed class ScanModel : ViewModelBase
         Duplicates = [];
         _duplicatesRan = false;
         QuickWins = quickWins;
+        Reviewables = reviewables;
         Snapshot = snap;
         _totalsLogical = logical;
         _totalsAllocated = allocated;

@@ -37,9 +37,7 @@ public static class SavedSearches
     ];
 
     public static string DefaultPath() =>
-        Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "DiskMap", "saved-searches.json");
+        Path.Combine(UserFolders.StateDirectory, "saved-searches.json");
 
     public static List<SavedSearch> Load(string? path = null)
     {

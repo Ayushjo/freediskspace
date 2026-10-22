@@ -19,9 +19,7 @@ public sealed class AppSettings
     [JsonPropertyName("cloneAccounting")] public bool CloneAccounting { get; set; }
     [JsonPropertyName("showDusty")] public bool ShowDusty { get; set; } = true;
 
-    private static string Path0 => System.IO.Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "DiskMap", "settings.json");
+    private static string Path0 => System.IO.Path.Combine(DiskMap.Core.UserFolders.StateDirectory, "settings.json");
 
     public static AppSettings Load()
     {

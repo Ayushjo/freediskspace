@@ -9,9 +9,11 @@
         AllowDrop="True" DragOver="Window_DragOver" Drop="Window_Drop">
     <!-- The Mac window hides its title bar (.hiddenTitleBar): the page colour runs to the top
          edge and the traffic lights sit in a 32 pt strip above the page bar. Same here: the
-         caption is drawn into the client area, with the caption buttons at the strip's right. -->
+         caption is drawn into the client area, with the caption buttons at the strip's right.
+         The caption covers the strip and the 44 pt page bar, so both drag the window; the
+         bar's controls opt out with IsHitTestVisibleInChrome. -->
     <WindowChrome.WindowChrome>
-        <WindowChrome CaptionHeight="32" ResizeBorderThickness="6" GlassFrameThickness="0,0,0,1"
+        <WindowChrome CaptionHeight="76" ResizeBorderThickness="6" GlassFrameThickness="0,0,0,1"
                       CornerRadius="0" UseAeroCaptionButtons="False" />
     </WindowChrome.WindowChrome>
     <!-- WIN-104: the Mac v0.3.0 shell (AppShellView.swift): the caption strip, a 44 pt page

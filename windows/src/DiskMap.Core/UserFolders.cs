@@ -23,6 +23,19 @@ public static class UserFolders
         }
     }
 
+    /// <summary>Set by the test suite and the render harness so they never touch the user's state.</summary>
+    public const string StateVariable = "DISKMAP_STATE_DIR";
+
+    /// <summary>
+    /// Where the app keeps its own files: settings, scan history, the scan cache, snapshots,
+    /// saved searches and the last cleanup's Put Back record. %LOCALAPPDATA%\DiskMap (the
+    /// real one — DISKMAP_HOME never moves it) unless DISKMAP_STATE_DIR points elsewhere.
+    /// </summary>
+    public static string StateDirectory =>
+        Environment.GetEnvironmentVariable(StateVariable) is { Length: > 0 } dir
+            ? Path.GetFullPath(dir)
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DiskMap");
+
     public static string Home =>
         Override ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
