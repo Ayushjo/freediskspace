@@ -541,7 +541,7 @@ public sealed class CleanUpPage : UserControl
             if (risky.Count > 0)
                 Model.Toast($"Skipped {risky.Count} risky item{(risky.Count == 1 ? "" : "s")} — add {(risky.Count == 1 ? "it" : "them")} one at a time to see why");
             _ticked.ExceptWith(picked.Select(p => p.Id));
-            Model.ShowPage("Cleanup");
+            Model.OpenBasket();
         }
         finally { _isMoving = false; }
     }

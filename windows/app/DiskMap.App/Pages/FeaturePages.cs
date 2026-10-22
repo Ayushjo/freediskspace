@@ -714,7 +714,7 @@ public sealed class DeveloperStoragePage : ListPage
 
         if (staged)
         {
-            var inCleanup = Ui.Button("In Cleanup ✓", null, Ui.ButtonStyle.Outline, () => Model.ShowPage("Cleanup"));
+            var inCleanup = Ui.Button("In Cleanup ✓", null, Ui.ButtonStyle.Outline, () => Model.OpenBasket());
             inCleanup.Background = Ui.Brush("AppAccentSoft");
             inCleanup.BorderBrush = Ui.Brush("AppAccent");
             inCleanup.Padding = new Thickness(10, 3, 10, 3);

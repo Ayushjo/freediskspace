@@ -343,7 +343,7 @@ internal static class ExploreInspector
             add = Rd.AccentButton(staged ? "In basket" : $"Add {ShellFormat.Bytes(insight.Bytes)} to basket",
                 () =>
                 {
-                    if (staged) Model.ShowPage("Cleanup");
+                    if (staged) Model.OpenBasket();
                     else Model.Stage(id, "Explore: " + name);
                 },
                 large: true, fullWidth: true, hard: !staged);
@@ -465,7 +465,7 @@ internal static class ExploreInspector
             staged ? "In the basket" : "Add to basket", staged, allowTrash,
             () =>
             {
-                if (staged) Model.ShowPage("Cleanup");
+                if (staged) Model.OpenBasket();
                 else Model.Stage(id, "Explore: " + name);
             },
             path,

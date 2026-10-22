@@ -182,7 +182,7 @@ public sealed class TrayIcon : IDisposable
         Action(Icons.Folder, "Scan Folder…", "Ctrl+O", !model.IsScanning,
             () => { ShowWindow(); _ = _window.ScanFolder(); });
         Action(Icons.Cleanup, "Review Cleanup", null, staged > 0,
-            () => { ShowWindow(); model.ShowPage("Cleanup"); });
+            () => { ShowWindow(); model.OpenBasket(); });
         Action(Icons.Snapshots, "Export Scan…", null, hasScan, () => { ShowWindow(); _window.ExportScan(); });
         body.Children.Add(new Border { Height = 1, Background = Ui.Brush("AppBorder"), Margin = new Thickness(-4, 6, -4, 6) });
         Action(Icons.Settings, "Settings…", "Ctrl+,", true, () => { ShowWindow(); _window.OpenSettings(); });

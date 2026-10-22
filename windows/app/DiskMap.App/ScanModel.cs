@@ -305,6 +305,10 @@ public sealed class ScanModel : ViewModelBase
     public event Action<string>? PageRequested;
     public void ShowPage(string name) => PageRequested?.Invoke(name);
 
+    /// <summary>Raised to open the basket (Mac: isCleanupQueuePresented); the window shows it.</summary>
+    public event Action? BasketRequested;
+    public void OpenBasket() => BasketRequested?.Invoke();
+
     /// <summary>Raised when a page wants a folder picked (it can't show the dialog itself).</summary>
     public event Action? ScanRequested;
     public void RequestScan() => ScanRequested?.Invoke();

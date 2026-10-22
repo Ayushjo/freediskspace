@@ -51,6 +51,7 @@ public partial class MainWindow : Window
         _tray = new TrayIcon(this);
         Closed += (_, _) => _tray.Dispose();
         _model.PageRequested += SelectPage;
+        _model.BasketRequested += () => BasketWindow.Show(this);
         _model.ToastRequested += ShowToast;
         _model.ConfirmRisky = (name, verdict) => Dialogs.ConfirmRisky(this, name, verdict);
         _model.ConfirmBulk = (title, message, items, footnote) =>
@@ -402,7 +403,7 @@ public partial class MainWindow : Window
             stack.Children.Add(after);
         }
         var open = Rd.PrimaryButton(count == 0 ? "Open basket" : "Review basket",
-            () => SelectPage("Cleanup"), fullWidth: true);
+            () => BasketWindow.Show(this), fullWidth: true);
         open.Margin = new Thickness(0, 9, 0, 0);
         stack.Children.Add(open);
         BasketHost.Content = new Border
@@ -526,7 +527,7 @@ public partial class MainWindow : Window
         }
         if (e.Key == Key.Delete && mods == (ModifierKeys.Control | ModifierKeys.Shift))
         {
-            SelectPage("Cleanup");
+            BasketWindow.Show(this);
             e.Handled = true;
             return;
         }
