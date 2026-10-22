@@ -14,6 +14,12 @@ struct AppShellView: View {
     private var hasCompletedScan: Bool { model.tree != nil }
 
     static let comfortablePageHeight: CGFloat = 720
+
+    /// The boards' sidebar widths: 13" Air, 14" Pro, a large display.
+    static func sidebarWidth(_ windowWidth: CGFloat) -> CGFloat {
+        let base: CGFloat = windowWidth < 1_400 ? 200 : windowWidth < 1_700 ? 220 : 236
+        return (base * max(1, DiskMapType.scale)).rounded()
+    }
     /// Destinations whose list lives in its own scroll view under a fixed
     /// header. Pages that already scroll as a whole are not listed.
     static let pageScrollsWhenShort: Set<AppDestination> = [
@@ -24,6 +30,7 @@ struct AppShellView: View {
     var body: some View {
         GeometryReader { window in
             let compactSidebar = window.size.width < 1_000
+            let sideW = Self.sidebarWidth(window.size.width)
             ZStack(alignment: .topLeading) {
                 VStack(spacing: 0) {
                     topBar(compactSidebar: compactSidebar)
@@ -31,14 +38,15 @@ struct AppShellView: View {
                     HStack(spacing: 0) {
                         if !compactSidebar {
                             sidebar
-                                .frame(width: DiskMapMetric.sidebarWidth)
+                                .frame(width: sideW)
                             Rectangle().fill(DiskMapTheme.line).frame(width: 1)
                         }
                         GeometryReader { geo in
                             let page = destinationBody
+                                .environment(\.widthClass, WidthClass(window.size.width))
                                 .environment(
                                     \.diskMapContentWidth,
-                                    geo.size.width + (compactSidebar ? 0 : DiskMapMetric.sidebarWidth + 1)
+                                    geo.size.width + (compactSidebar ? 0 : sideW + 1)
                                 )
                             // Screens built as "fixed header + inner list" squeezed the
                             // list to nothing in a short window (Safe to Review's list
@@ -90,18 +98,17 @@ struct AppShellView: View {
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: showCompactSidebar)
         }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: model.toastMessage)
-        .background(DiskMapTheme.canvas)
+        .background(DiskMapTheme.page)
         .frame(minWidth: 880, minHeight: 600)
         .onChange(of: model.destination) { _, _ in model.clearMultiSelection() }
         .sheet(isPresented: $model.isCleanupQueuePresented) {
+            // Sized by the basket itself: its items beside the receipt.
             CleanupQueueView(model: model)
-                .frame(minWidth: 640, minHeight: 480)
         }
         .sheet(item: $model.pendingBulkStage) { BulkStageSheet(proposal: $0) }
         .sheet(item: $model.pendingRiskyStage) { RiskyStageSheet(proposal: $0) }
         .sheet(isPresented: $showExplain) {
             ExplainStorageSheet(model: model)
-                .frame(minWidth: 520, minHeight: 420)
         }
         .overlay {
             if showPalette {
@@ -143,48 +150,9 @@ struct AppShellView: View {
                 .buttonStyle(IconButtonStyle())
                 .help(showCompactSidebar ? "Hide Sidebar" : "Show Sidebar")
             }
-            // One search field: typing opens the palette (⌘K anywhere).
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: DiskMapType.scaled(11.5), weight: .medium))
-                    .foregroundStyle(DiskMapTheme.ink3)
-                    .accessibilityHidden(true)
-                TextField("Search files, folders and actions", text: $searchText)
-                    .textFieldStyle(.plain)
-                    .font(DiskMapType.body)
-                    .accessibilityLabel("Search storage")
-                    .disabled(!hasCompletedScan)
-                    .onSubmit {
-                        guard hasCompletedScan else { return }
-                        showPalette = true
-                    }
-                    // Typing opens the palette with what was typed so far.
-                    .onChange(of: searchText) { _, text in
-                        if hasCompletedScan, !text.isEmpty, !showPalette { showPalette = true }
-                    }
-                Button {
-                    guard hasCompletedScan else { return }
-                    showPalette = true
-                } label: {
-                    Kbd("⌘K")
-                }
-                .buttonStyle(.plain)
-                .keyboardShortcut("k", modifiers: .command)
-                .disabled(!hasCompletedScan)
-                .help(hasCompletedScan ? "Command palette" : "Scan first to search")
-                .accessibilityLabel("Command palette")
-            }
-            .padding(.horizontal, 10)
-            .frame(maxWidth: 460)
-            .frame(height: DiskMapMetric.searchHeight)
-            .background(
-                RoundedRectangle(cornerRadius: DiskMapRadius.control, style: .continuous)
-                    .fill(DiskMapTheme.raised.opacity(0.55))
-                    .overlay(RoundedRectangle(cornerRadius: DiskMapRadius.control, style: .continuous)
-                        .stroke(DiskMapTheme.line, lineWidth: 1))
-            )
-            .opacity(hasCompletedScan ? 1 : 0.5)
-            Spacer()
+            pageContext
+                .layoutPriority(1)
+            Spacer(minLength: 12)
             if model.isScanning, model.tree != nil {
                 // The first scan shows its own counter on the page.
                 HStack(spacing: 6) {
@@ -194,36 +162,15 @@ struct AppShellView: View {
                         .foregroundStyle(DiskMapTheme.ink2)
                         .lineLimit(1)
                 }
-                .layoutPriority(1)
                 .accessibilityElement(children: .combine)
-            }
-            // Light / Dark / Match System, one click away (it was only in
-            // View ▸ Appearance after the Calm UI pass, and nobody found it).
-            AppearanceMenuButton()
-            Button {
-                model.isCleanupQueuePresented = true
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "trash")
-                    Text("Cleanup")
-                    if !model.stagedItems.isEmpty {
-                        Text("\(model.stagedItems.count)")
-                            .font(DiskMapType.figureSmall)
-                            .foregroundStyle(DiskMapTheme.onInk)
-                            .padding(.horizontal, 5)
-                            .frame(minWidth: 18, minHeight: 16)
-                            .background(Capsule().fill(DiskMapTheme.accent))
-                    }
+            } else if hasCompletedScan, let finished = model.lastScanFinishedAt {
+                TimelineView(.periodic(from: .now, by: 30)) { context in
+                    Text("Scanned \(RelativeTime.string(since: finished, now: context.date))")
+                        .font(DiskMapType.secondary)
+                        .foregroundStyle(DiskMapTheme.ink3)
+                        .lineLimit(1)
                 }
             }
-            .buttonStyle(QuietButtonStyle(tint: model.stagedItems.isEmpty ? DiskMapTheme.ink2 : DiskMapTheme.ink))
-            .disabled(!hasCompletedScan)
-            .help(!hasCompletedScan
-                  ? "Scan first to stage cleanup"
-                  : (model.stagedItems.isEmpty
-                     ? "Review items staged for Trash"
-                     : "\(countLabel(model.stagedItems.count, "item")) · \(ByteFormat.string(model.reclaimableBytes)) reclaimable"))
-            .accessibilityLabel(model.stagedItems.isEmpty ? "Cleanup" : "Cleanup, \(countLabel(model.stagedItems.count, "item"))")
             if hasCompletedScan {
                 Menu {
                     Button("Quick Update — re-read what changed") {
@@ -233,79 +180,102 @@ struct AppShellView: View {
                         if let root = model.rootURL { Task { await model.scan(root, mode: .full) } }
                     }
                 } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: DiskMapType.scaled(12.5), weight: .medium))
-                        .foregroundStyle(DiskMapTheme.ink2)
-                        .frame(width: 28, height: 28)
-                        .contentShape(Rectangle())
+                    Text("Rescan")
                 } primaryAction: {
                     if let root = model.rootURL { Task { await model.scan(root) } } else { pickFolder() }
                 }
-                .menuStyle(.borderlessButton)
+                .menuStyle(.button)
+                .buttonStyle(SecondaryButtonStyle())
                 .menuIndicator(.hidden)
                 .fixedSize()
                 .disabled(model.isScanning)
                 .help("Rescan — re-reads only what changed. Hold for a full rescan.")
                 .accessibilityLabel("Rescan")
             }
+            // ⌘K stays global even though the field moved to the sidebar foot.
+            Button { if hasCompletedScan { showPalette = true } } label: { EmptyView() }
+                .buttonStyle(.plain)
+                .keyboardShortcut("k", modifiers: .command)
+                .frame(width: 0, height: 0)
+                .accessibilityHidden(true)
         }
-        .padding(.horizontal, 14)
+        .padding(.leading, 14)
+        .padding(.trailing, 12)
         .frame(height: DiskMapMetric.topBarHeight)
-        .background(DiskMapTheme.canvas)
+        .background(DiskMapTheme.page)
+    }
+
+    /// The left side of the page bar: what this page is looking at.
+    @ViewBuilder
+    private var pageContext: some View {
+        switch model.destination.navParent {
+        case .overview:
+            if let vol = model.analysis.volume, hasCompletedScan {
+                HStack(spacing: 8) {
+                    Text(vol.volumeName).font(DiskMapType.bodyEmphasis).foregroundStyle(DiskMapTheme.ink)
+                    Text(ByteFormat.string(Int64(vol.totalBytes))).font(DiskMapType.figureSmall).foregroundStyle(DiskMapTheme.ink3)
+                }
+                .lineLimit(1)
+            } else {
+                Text(hasCompletedScan ? (model.rootURL?.lastPathComponent ?? "Overview") : "freedisk.space")
+                    .font(DiskMapType.bodyEmphasis).foregroundStyle(DiskMapTheme.ink)
+            }
+        default:
+            Text(model.destination.navParent.navTitle)
+                .font(DiskMapType.bodyEmphasis)
+                .foregroundStyle(DiskMapTheme.ink)
+                .lineLimit(1)
+        }
     }
 
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            DiskMapWordmark(height: DiskMapType.scaled(30))
-            .padding(.horizontal, 18)
-            .padding(.top, 16)
-            .padding(.bottom, 14)
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    ForEach(AppNavSection.allCases) { section in
-                        VStack(alignment: .leading, spacing: 1) {
-                            MonoLabel(section.rawValue)
-                                .padding(.horizontal, 18)
-                                .padding(.bottom, 5)
-                            ForEach(section.items) { dest in
-                                navRow(dest)
-                            }
-                        }
-                        // TASK-081: saved Find queries, outside the numbered list.
-                        if section == .find {
-                            SavedSearchSection(model: model, enabled: hasCompletedScan)
-                        }
-                    }
-                }
-                .padding(.bottom, 12)
-            }
-
-            Spacer(minLength: 0)
-            volumeFooter
+        VStack(alignment: .leading, spacing: 1) {
+            ForEach(AppDestination.primaryNav) { navRow($0) }
+            MonoLabel("More")
+                .padding(.horizontal, 10)
+                .padding(.top, 14)
+                .padding(.bottom, 6)
+            ForEach(AppDestination.moreNav) { navRow($0) }
+            Spacer(minLength: 12)
+            if hasCompletedScan { basketCard }
+            sidebarFooter
         }
-        .background(DiskMapTheme.canvas)
+        .padding(.horizontal, 9)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(DiskMapTheme.sidebar)
+    }
+
+    /// Compact size for a nav figure: "31.6G".
+    static func compactBytes(_ bytes: Int64) -> String {
+        let g = Double(bytes) / 1_000_000_000
+        if g >= 100 { return String(format: "%.0fG", g) }
+        if g >= 0.95 { return String(format: "%.1fG", g) }
+        return String(format: "%.0fM", max(1, Double(bytes) / 1_000_000))
     }
 
     /// A quiet figure beside a nav item, read from catalogs already built —
     /// never builds one (catalogs stay lazy, TASK-043).
-    private func navFigure(_ dest: AppDestination) -> String? {
-        func bytes(_ value: Int64) -> String? { value > 0 ? ByteFormat.string(value) : nil }
+    private func navFigure(_ dest: AppDestination) -> (text: String, accent: Bool)? {
+        func bytes(_ value: Int64, accent: Bool = false) -> (String, Bool)? { value > 0 ? (Self.compactBytes(value), accent) : nil }
         switch dest {
-        case .cleanSafe: return model.isCatalogReady(.reviewables) ? bytes(model.cachedReviewableSummary.totalBytes) : nil
-        case .cleanCaches: return model.isCatalogReady(.reviewables) ? bytes(model.cachedReviewableSummary.cacheBytes) : nil
-        case .cleanDownloads: return model.isCatalogReady(.oldDownloads) ? bytes(model.cachedOldDownloads.summary.totalBytes) : nil
-        case .cleanMedia: return model.isCatalogReady(.largeMedia) ? bytes(model.cachedLargeMedia.summary.totalBytes) : nil
-        case .forgottenFiles: return model.isCatalogReady(.forgotten) ? bytes(model.cachedForgottenSummary.reviewableBytes) : nil
-        case .developerStorage: return model.isCatalogReady(.developer) ? bytes(model.cachedDeveloper.summary.reclaimableBytes) : nil
-        case .duplicates: return model.duplicateDidRun && !model.duplicateGroups.isEmpty ? "\(model.duplicateGroups.count)" : nil
+        case .cleanSafe: return model.isCatalogReady(.reviewables) ? bytes(model.safeReclaimableBytes, accent: true) : nil
+        case .developerStorage: return model.isCatalogReady(.developer) ? bytes(model.cachedDeveloper.summary.totalBytes) : nil
+        case .duplicates:
+            guard model.duplicateDidRun else { return nil }
+            return bytes(model.duplicateGroups.reduce(Int64(0)) { $0 + Int64(max(0, $1.physicalCopies - 1)) * $1.sizeEach })
+        case .snapshots:
+            guard let c = model.weekComparison, abs(c.freeDelta) >= OverviewView.growthNoise else { return nil }
+            let used = -c.freeDelta
+            return ((used >= 0 ? "+" : "−") + Self.compactBytes(abs(used)), false)
         default: return nil
         }
     }
 
     private func navRow(_ dest: AppDestination) -> some View {
         let locked = dest.requiresScan && !hasCompletedScan
-        let selected = model.destination == dest && !locked
+        let selected = model.destination.navParent == dest && !locked
         return Button {
             guard !locked else { return }
             showCompactSidebar = false
@@ -315,76 +285,94 @@ struct AppShellView: View {
             if dest == .applications { model.topNav = .applications }
             if dest == .snapshots { model.topNav = .snapshots }
         } label: {
-            HStack(spacing: 9) {
-                Image(systemName: dest.symbol)
-                    .font(.system(size: DiskMapType.scaled(11.5), weight: .regular))
-                    .foregroundStyle(selected ? DiskMapTheme.accent : DiskMapTheme.ink3)
-                    .frame(width: 16)
-                let label = Text(dest.label)
+            HStack(spacing: 10) {
+                Image(systemName: dest.navSymbol)
+                    .font(.system(size: DiskMapType.scaled(12.5), weight: .regular))
+                    .foregroundStyle(locked ? DiskMapTheme.ink3 : selected ? DiskMapTheme.ink : DiskMapTheme.ink2)
+                    .frame(width: 17)
+                Text(dest.navTitle)
                     .font(selected ? DiskMapType.bodyEmphasis : DiskMapType.body)
                     .foregroundStyle(locked ? DiskMapTheme.ink3 : selected ? DiskMapTheme.ink : DiskMapTheme.ink2)
                     .lineLimit(1)
-                // The figure gives way when the name needs the room.
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 4) {
-                        label.fixedSize()
-                        Spacer(minLength: 4)
-                        if !locked, let figure = navFigure(dest) {
-                            Text(figure)
-                                .font(DiskMapType.figureSmall)
-                                .foregroundStyle(DiskMapTheme.ink3)
-                                .lineLimit(1)
-                                .fixedSize()
-                        }
-                    }
-                    HStack(spacing: 0) {
-                        label
-                        Spacer(minLength: 0)
-                    }
+                Spacer(minLength: 4)
+                if !locked, let figure = navFigure(dest) {
+                    Text(figure.text)
+                        .font(DiskMapType.figureSmall)
+                        .foregroundStyle(figure.accent ? DiskMapTheme.accent : DiskMapTheme.ink3)
+                        .lineLimit(1)
+                        .fixedSize()
                 }
             }
             .padding(.horizontal, 10)
-            .frame(height: 28)
+            .frame(height: DiskMapType.scaled(30))
             .background(
-                RoundedRectangle(cornerRadius: DiskMapRadius.control, style: .continuous)
-                    .fill(selected ? DiskMapTheme.accentSoft : Color.clear)
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(selected ? DiskMapTheme.soft : Color.clear)
             )
+            .overlay(alignment: .leading) {
+                if selected {
+                    UnevenRoundedRectangle(topLeadingRadius: 7, bottomLeadingRadius: 7)
+                        .fill(DiskMapTheme.accent).frame(width: 2)
+                }
+            }
             .contentShape(Rectangle())
-            .padding(.horizontal, 8)
         }
         .buttonStyle(.plain)
         .disabled(locked)
-        .help(locked ? "Scan your Mac first." : dest.label)
-        .accessibilityLabel(locked ? "\(dest.label), scan first" : navFigure(dest).map { "\(dest.label), \($0)" } ?? dest.label)
-        .accessibilityAddTraits(model.destination == dest ? .isSelected : [])
+        .help(locked ? "Scan your Mac first." : dest.navTitle)
+        .accessibilityLabel(locked ? "\(dest.navTitle), scan first" : navFigure(dest).map { "\(dest.navTitle), \($0.text)" } ?? dest.navTitle)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
-    /// The disk at the foot of the sidebar: name, a 2 pt bar, free space.
-    private var volumeFooter: some View {
-        let vol = model.analysis.volume
-        return VStack(alignment: .leading, spacing: 7) {
-            Hairline()
-                .padding(.bottom, 5)
-            HStack(spacing: 6) {
-                Image(systemName: "internaldrive")
-                    .font(.system(size: DiskMapType.scaled(11), weight: .regular))
-                    .foregroundStyle(DiskMapTheme.ink3)
-                Text(vol?.volumeName ?? "Macintosh HD")
-                    .font(DiskMapType.secondary)
-                    .foregroundStyle(DiskMapTheme.ink2)
-                    .lineLimit(1)
+    /// What's staged for the Trash, and what free space it leaves.
+    private var basketCard: some View {
+        let count = model.stagedItems.count
+        let freeAfter = model.analysis.volume.map { Int64($0.freeBytes) + model.reclaimableBytes }
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                MonoLabel("Basket")
+                Spacer()
+                MonoLabel(count == 0 ? "Empty" : "\(count) item\(count == 1 ? "" : "s")")
             }
-            ProportionBar(fraction: vol?.usedFraction ?? 0, tint: DiskMapTheme.ink.opacity(0.4), height: 2)
-            Text(vol.map { "\(ByteFormat.string(Int64($0.freeBytes))) free of \(ByteFormat.string(Int64($0.totalBytes)))" } ?? "Scan to see capacity")
-                .font(DiskMapType.figureSmall)
-                .foregroundStyle(DiskMapTheme.ink3)
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
+            Text(count == 0 ? "Nothing yet" : ByteFormat.string(model.reclaimableBytes))
+                .font(.system(size: DiskMapType.scaled(count == 0 ? 15 : 21), weight: .semibold))
+                .foregroundStyle(count == 0 ? DiskMapTheme.ink3 : DiskMapTheme.ink)
+                .padding(.top, 1)
+            if count > 0, let freeAfter {
+                MonoLabel("Free after · \(ByteFormat.string(freeAfter))")
+            }
+            Button(count == 0 ? "Open basket" : "Review basket") { model.isCleanupQueuePresented = true }
+                .buttonStyle(PrimaryButtonStyle(fullWidth: true))
+                .padding(.top, 7)
         }
-        .padding(.horizontal, 18)
-        .padding(.bottom, 16)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(vol.map { "\($0.volumeName), \(ByteFormat.string(Int64($0.freeBytes))) free" } ?? "Volume capacity unavailable until scan")
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(DiskMapTheme.card))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(DiskMapTheme.line, lineWidth: 1))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(count == 0 ? "Basket, empty" : "Basket, \(count) items, \(ByteFormat.string(model.reclaimableBytes))")
+    }
+
+    private var sidebarFooter: some View {
+        HStack(spacing: 6) {
+            Button { if hasCompletedScan { showPalette = true } } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass").font(.system(size: DiskMapType.scaled(10), weight: .medium))
+                    MonoLabel("⌘K Find anything")
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(!hasCompletedScan)
+            .help(hasCompletedScan ? "Find files, folders and actions (⌘K)" : "Scan first to search")
+            Spacer()
+            SettingsLink { Image(systemName: "gearshape").font(.system(size: DiskMapType.scaled(11.5))) }
+                .buttonStyle(.plain)
+                .foregroundStyle(DiskMapTheme.ink3)
+                .help("Settings")
+                .accessibilityLabel("Settings")
+        }
+        .foregroundStyle(DiskMapTheme.ink3)
+        .padding(.horizontal, 6)
+        .padding(.top, 10)
     }
 
     @ViewBuilder
@@ -409,7 +397,7 @@ struct AppShellView: View {
             } else { needsScan }
         case .fileBrowser:
             if let tree = model.tree, let root = model.rootURL {
-                FileBrowserView(model: model, tree: tree, rootURL: root)
+                BiggestFoldersView(model: model, tree: tree, rootURL: root)
             } else { needsScan }
         case .visualize:
             VisualizeView(model: model, pickFolder: pickFolder)
@@ -430,10 +418,7 @@ struct AppShellView: View {
                 DuplicatesView(model: model, tree: tree, rootURL: root)
             } else { needsScan }
         case .cleanSafe:
-            SafeToReviewView(
-                model: model,
-                onOpenCaches: { model.destination = .cleanCaches }
-            )
+            CleanUpView(model: model, pickFolder: pickFolder)
         case .cleanCaches:
             CachesReviewView(
                 model: model
@@ -457,6 +442,8 @@ struct AppShellView: View {
             AppsView(model: model)
         case .snapshots:
             SnapshotsView(model: model)
+        case .history:
+            HistoryView(model: model)
         }
     }
 
@@ -493,71 +480,92 @@ struct ExplainStorageSheet: View {
         let stories = StorageNarrator.stories(from: snap)
         let recs = StorageNarrator.recommendations(from: snap)
         return VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .center, spacing: DiskMapSpace.sm) {
-                if showDusty {
-                    Dusty(pose: .smallCurious, width: DiskMapType.scaled(40))
-                }
+            HStack(alignment: .center, spacing: 14) {
+                if showDusty { Dusty(pose: .smallCurious, width: DiskMapType.scaled(40)) }
                 VStack(alignment: .leading, spacing: 4) {
-                    MonoLabel("From your last scan")
-                    Text("Explain my storage")
-                        .font(DiskMapType.title)
-                        .foregroundStyle(DiskMapTheme.ink)
+                    Text("Explain my storage").font(DiskMapType.pageTitle).foregroundStyle(DiskMapTheme.ink)
+                    Text("From your last scan, on this Mac. Nothing is estimated beyond it.")
+                        .font(DiskMapType.body).foregroundStyle(DiskMapTheme.ink2)
                 }
                 Spacer()
                 Button("Done") { dismiss() }
                     .buttonStyle(SecondaryButtonStyle())
                     .keyboardShortcut(.cancelAction)
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 18)
-            Hairline()
+            .padding(.horizontal, 26)
+            .padding(.top, 22)
+            .padding(.bottom, 16)
             ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    Group {
-                        if let vol = snap.volume {
-                            Text("Your Mac has \(ByteFormat.string(Int64(vol.freeBytes))) free of \(ByteFormat.string(Int64(vol.totalBytes))) — \(snap.health.title.lowercased()).")
-                        } else {
-                            Text("This covers \(ByteFormat.string(snap.scannedBytes)) from your last scan.")
-                        }
-                    }
-                    .font(DiskMapType.heading)
-                    .foregroundStyle(DiskMapTheme.ink)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        SectionHeader(label: "What’s going on")
-                        ForEach(stories) { story in
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(story.title)
-                                    .font(DiskMapType.bodyEmphasis)
-                                    .foregroundStyle(DiskMapTheme.ink)
-                                Text(story.detail)
-                                    .font(DiskMapType.secondary)
-                                    .foregroundStyle(DiskMapTheme.ink2)
-                                    .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 20) {
+                    headline(snap)
+                    if !stories.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("What’s going on").font(DiskMapType.cardTitle).foregroundStyle(DiskMapTheme.ink)
+                            VStack(spacing: 0) {
+                                ForEach(Array(stories.enumerated()), id: \.element.id) { index, story in
+                                    HStack(alignment: .top, spacing: 14) {
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            Text(story.title).font(DiskMapType.bodyEmphasis).foregroundStyle(DiskMapTheme.ink)
+                                            Text(Self.shortenPaths(story.detail)).font(DiskMapType.body).foregroundStyle(DiskMapTheme.ink2)
+                                                .fixedSize(horizontal: false, vertical: true)
+                                        }
+                                        Spacer(minLength: 0)
+                                    }
+                                    .padding(.horizontal, 16).padding(.vertical, 12)
+                                    .overlay(alignment: .top) { if index > 0 { Rectangle().fill(DiskMapTheme.line).frame(height: 1) } }
+                                }
                             }
+                            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(DiskMapTheme.card))
+                            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(DiskMapTheme.line, lineWidth: 1))
                         }
                     }
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        SectionHeader(label: "Next steps")
-                        ForEach(recs) { rec in
-                            NextStepRow(rec: rec) {
-                                model.destination = rec.destination
-                                dismiss()
+                    if !recs.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Next steps").font(DiskMapType.cardTitle).foregroundStyle(DiskMapTheme.ink)
+                            VStack(spacing: 0) {
+                                ForEach(Array(recs.enumerated()), id: \.element.id) { index, rec in
+                                    NextStepRow(rec: rec) {
+                                        model.destination = rec.destination
+                                        dismiss()
+                                    }
+                                    .overlay(alignment: .top) { if index > 0 { Rectangle().fill(DiskMapTheme.line).frame(height: 1) } }
+                                }
                             }
+                            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(DiskMapTheme.card))
+                            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(DiskMapTheme.line, lineWidth: 1))
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         }
                     }
-
-                    Text("Every figure here comes from your last local scan — nothing is estimated beyond it.")
-                        .font(DiskMapType.figureSmall)
-                        .foregroundStyle(DiskMapTheme.ink3)
+                    Text("Opening a step shows the list first. Nothing is removed from here.")
+                        .font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink3)
                 }
-                .padding(24)
+                .padding(.horizontal, 26)
+                .padding(.bottom, 26)
             }
         }
-        .frame(minWidth: 520, minHeight: 440)
-        .background(DiskMapTheme.canvas)
+        .frame(width: 640, height: 720)
+        .background(DiskMapTheme.page)
+    }
+
+    @ViewBuilder
+    private func headline(_ snap: AnalysisSnapshot) -> some View {
+        if let vol = snap.volume {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(ByteFormat.hero(Int64(vol.freeBytes))).font(DiskMapType.hero(44)).foregroundStyle(DiskMapTheme.ink)
+                    Text("free of \(ByteFormat.hero(Int64(vol.totalBytes)))").font(.system(size: DiskMapType.scaled(17))).foregroundStyle(DiskMapTheme.ink3)
+                }
+                Text("Your Mac is \(snap.health.title.lowercased()).").font(DiskMapType.body).foregroundStyle(DiskMapTheme.ink2)
+            }
+        } else {
+            Text("This covers \(ByteFormat.hero(snap.scannedBytes)) from your last scan.")
+                .font(DiskMapType.heading).foregroundStyle(DiskMapTheme.ink)
+        }
+    }
+
+    /// Paths in the narration read like the rest of the app ("~/Pictures/…").
+    static func shortenPaths(_ text: String) -> String {
+        text.replacingOccurrences(of: NSHomeDirectory(), with: "~")
     }
 }
 
@@ -569,36 +577,27 @@ private struct NextStepRow: View {
 
     var body: some View {
         Button(action: open) {
-            HStack(spacing: 12) {
-                Circle().fill(rec.safety == .safe ? DiskMapTheme.safe : DiskMapTheme.review).frame(width: 6, height: 6)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(rec.title)
-                        .font(DiskMapType.bodyEmphasis)
-                        .foregroundStyle(DiskMapTheme.ink)
-                    Text(rec.detail)
-                        .font(DiskMapType.secondary)
-                        .foregroundStyle(DiskMapTheme.ink3)
+            HStack(spacing: 14) {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text(rec.title).font(DiskMapType.bodyEmphasis).foregroundStyle(DiskMapTheme.ink)
+                        BoardTag(text: rec.safety == .safe ? "Rebuilds" : "Look first", tone: rec.safety == .safe ? .accent : .neutral)
+                    }
+                    Text(rec.detail).font(DiskMapType.body).foregroundStyle(DiskMapTheme.ink2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                Text(ByteFormat.string(rec.bytes))
-                    .font(DiskMapType.figure)
-                    .foregroundStyle(DiskMapTheme.ink)
-                Text("Review")
-                    .font(DiskMapType.secondary)
-                    .foregroundStyle(DiskMapTheme.accent)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: DiskMapType.scaled(10), weight: .semibold))
-                    .foregroundStyle(DiskMapTheme.accent)
+                Text(ByteFormat.hero(rec.bytes)).font(DiskMapType.figure)
+                    .foregroundStyle(rec.safety == .safe ? DiskMapTheme.accentDeep : DiskMapTheme.ink)
+                Image(systemName: "chevron.right").font(.system(size: DiskMapType.scaled(10), weight: .semibold)).foregroundStyle(DiskMapTheme.ink3)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(RowBackground(selected: false, hovering: hovering))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(hovering ? DiskMapTheme.soft.opacity(0.6) : Color.clear)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .padding(.horizontal, -10)
         .accessibilityLabel("\(rec.title), \(ByteFormat.string(rec.bytes)). Review")
     }
 }

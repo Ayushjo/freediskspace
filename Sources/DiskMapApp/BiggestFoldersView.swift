@@ -2,35 +2,68 @@ import AppKit
 import DiskMapCore
 import SwiftUI
 
-/// Find → Biggest Folders: storage-area investigation with select vs drill + inspector.
+/// Explore → List → Folders (redesign board 05): what's inside the current
+/// folder, biggest first, with what can be freed in each. Double-click opens.
 struct BiggestFoldersView: View {
     @ObservedObject var model: ScanModel
-    @Environment(\.diskMapContentWidth) private var contentWidth
     let tree: FileTree
     let rootURL: URL
     var onOpenCleanup: () -> Void = {}
 
     @State private var query = ""
+    @State private var sortMode: SortMode = .size
     @State private var showTechnical = false
     @State private var selectedID: Int32?
+    @Environment(\.widthClass) private var widthClass
+    @FocusState private var searchFocused: Bool
 
     private var totals: [Int64] { model.selectedTotals }
+    private var parsed: ListQuery { ListQuery.parse(query) }
 
-    private var usedDenominator: Int64 {
-        if let vol = model.analysis.volume { return max(1, Int64(vol.usedBytes)) }
-        return max(1, model.analysis.scannedBytes)
+    private var current: Int32 {
+        model.currentNode >= 0 && Int(model.currentNode) < tree.count ? model.currentNode : 0
     }
 
     private var parentTotal: Int64 {
-        guard model.currentNode >= 0, Int(model.currentNode) < totals.count else { return 1 }
-        return max(totals[Int(model.currentNode)], 1)
+        Int(current) < totals.count ? max(totals[Int(current)], 1) : 1
+    }
+
+    /// Size first, like the rest of Explore; the file browser's other orders too.
+    enum SortMode: String, CaseIterable, Identifiable {
+        case size, name, changed, kind
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .size: return "Largest"
+            case .name: return "Name"
+            case .changed: return "Recently changed"
+            case .kind: return "Kind"
+            }
+        }
     }
 
     private var rawRows: [(id: Int32, size: Int64)] {
-        guard model.currentNode >= 0,
-              Int(model.currentNode) < tree.count,
-              totals.count == tree.count else { return [] }
-        return tree.children(of: model.currentNode, totals: totals).sorted { $0.size > $1.size }
+        guard tree.count > 0, totals.count == tree.count else { return [] }
+        return Self.sorted(tree.children(of: current, totals: totals), by: sortMode, tree: tree)
+    }
+
+    /// Folders before files when sorting by kind; ties fall back to size.
+    static func sorted(_ rows: [(id: Int32, size: Int64)], by mode: SortMode, tree: FileTree) -> [(id: Int32, size: Int64)] {
+        rows.sorted { a, b in
+            switch mode {
+            case .size: return a.size != b.size ? a.size > b.size : a.id < b.id
+            case .name: return tree.name(of: a.id).localizedStandardCompare(tree.name(of: b.id)) == .orderedAscending
+            case .changed:
+                let da = tree.modifiedDay[Int(a.id)], db = tree.modifiedDay[Int(b.id)]
+                return da != db ? da > db : a.size > b.size
+            case .kind:
+                let fa = tree.isDirectory[Int(a.id)], fb = tree.isDirectory[Int(b.id)]
+                if fa != fb { return fa }
+                let ea = (tree.name(of: a.id) as NSString).pathExtension.lowercased()
+                let eb = (tree.name(of: b.id) as NSString).pathExtension.lowercased()
+                return ea != eb ? ea < eb : a.size > b.size
+            }
+        }
     }
 
     private static let hiddenTechnical: Set<String> = [
@@ -38,221 +71,264 @@ struct BiggestFoldersView: View {
         "home", "net",
     ]
 
+    private var atScannedVolumeRoot: Bool {
+        current == 0 && (rootURL.path == "/" || rootURL.standardizedFileURL.path == "/")
+    }
+
     private var rows: [(id: Int32, size: Int64)] {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let atRoot = model.currentNode == 0
-        let scanningRoot = rootURL.path == "/" || rootURL.standardizedFileURL.path == "/"
+        let q = parsed
+        let today = AgeMap.today()
+        let hideTechnical = atScannedVolumeRoot && !showTechnical
         return rawRows.filter { row in
             let name = tree.name(of: row.id)
-            if atRoot, scanningRoot, !showTechnical {
-                if row.size <= 0 { return false }
-                if Self.hiddenTechnical.contains(name) { return false }
-            }
+            if hideTechnical, row.size <= 0 || Self.hiddenTechnical.contains(name) { return false }
             if q.isEmpty { return true }
             let abs = tree.path(of: row.id, root: rootURL).path
             let display = CanonicalPath.displayPath(absolutePath: abs).lowercased()
-            return name.lowercased().contains(q) || display.contains(q)
+            let day = tree.modifiedDay[Int(row.id)]
+            return q.matches(searchText: name.lowercased() + "\n" + display, folderPath: display, size: row.size,
+                             kind: tree.isDirectory[Int(row.id)] ? .other : FileKind.classify(fileName: name, path: abs),
+                             ageDays: day > 0 ? Int(today - day) : nil)
         }
-    }
-
-    private var activeSelection: Int32? {
-        if let selectedID {
-            if tree.isDirectory[Int(selectedID)] { return selectedID }
-        }
-        if model.selectedNode >= 0,
-           Int(model.selectedNode) < tree.count,
-           tree.isDirectory[Int(model.selectedNode)] {
-            return model.selectedNode
-        }
-        if model.currentNode >= 0, Int(model.currentNode) < tree.count {
-            return model.currentNode
-        }
-        return rows.first(where: { tree.isDirectory[Int($0.id)] })?.id
     }
 
     var body: some View {
-        AdaptiveInspectorSplit(windowWidth: contentWidth, inspectionToken: selectedID.map(String.init), main: mainColumn, inspector: inspector)
-        .background(DiskMapTheme.canvas)
-        .onChange(of: model.currentNode) { _, newValue in
-            selectedID = newValue
-            model.selectedNode = newValue
-        }
-    }
-
-    private var mainColumn: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 18) {
-                PageHeader(eyebrow: "Find", title: "Biggest Folders",
-                           subtitle: "Click to inspect, double-click or › to open.") {
-                    HeaderSummary(parts: [countLabel(rows.count, "folder"), ByteFormat.string(parentTotal) + " here"])
-                }
-                navBar
-                filterBar
+            VStack(alignment: .leading, spacing: 12) {
+                header
+                filterRow
+                searchRow
             }
-            .padding(.horizontal, 28)
-            .padding(.top, DiskMapSpace.pageTop)
-            .padding(.bottom, 12)
-            Hairline()
-            if rows.isEmpty {
+            .padding(.horizontal, widthClass.pagePadding)
+            .padding(.top, widthClass == .compact ? 14 : 20)
+            .padding(.bottom, 10)
+            let shown = rows
+            if shown.isEmpty {
                 DiskMapEmptyState(
                     symbol: "folder",
                     title: rawRows.isEmpty ? "Nothing with a size in this folder" : "No folders match",
                     message: rawRows.isEmpty ? "Try another folder, or go back up." : "Clear the search or show technical folders."
                 )
             } else {
-                MultiSelectAllBar(model: model, ids: rows.map(\.id))
-                list
+                VStack(spacing: 0) {
+                    columnHeader
+                    list(shown)
+                    footer(shown)
+                }
+                .padding(.horizontal, widthClass.pagePadding)
             }
             NodeSelectionToolbar(model: model)
         }
+        .background(DiskMapTheme.page)
+        .task(id: model.catalogGeneration) { await model.ensureCatalog(.reviewables) }
     }
 
-    private var atScannedVolumeRoot: Bool {
-        model.currentNode == 0 && (rootURL.path == "/" || rootURL.standardizedFileURL.path == "/")
-    }
+    // MARK: Header and filters
 
-    private var filterBar: some View {
-        HStack(spacing: 10) {
-            DiskMapSearchField(placeholder: "Search folders by name or path", text: $query)
-                .frame(maxWidth: 340)
-            if atScannedVolumeRoot {
-                Chip(title: "Show technical", isOn: showTechnical) { showTechnical.toggle() }
-                    .help("Show zero-size and technical system stubs at the volume root")
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text("Biggest folders").font(DiskMapType.pageTitle).foregroundStyle(DiskMapTheme.ink).fixedSize()
+            Text("\(tree.count > 0 ? tree.name(of: current) : "") · \(ByteFormat.hero(parentTotal))")
+                .font(DiskMapType.figure).foregroundStyle(DiskMapTheme.ink)
+                .lineLimit(1)
+            if widthClass != .compact {
+                Text("What's inside, biggest first. Double-click a folder to open it.")
+                    .font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink3)
+                    .lineLimit(1).truncationMode(.tail)
             }
-            Spacer(minLength: 0)
+            Spacer(minLength: 8)
+            ExploreViewSwitch(model: model)
         }
     }
 
-    private var navBar: some View {
+    private var filterRow: some View {
         HStack(spacing: 8) {
-            Button(action: goBack) { Label("Back", systemImage: "chevron.left") }
+            ListPageSwitch(model: model)
+            .padding(.trailing, 4)
+            Button(action: goBack) { Label("Up", systemImage: "chevron.left") }
                 .buttonStyle(IconButtonStyle())
                 .disabled(!canGoBack)
-                .help("Back to parent folder")
-                .accessibilityLabel("Back to parent folder")
-            BreadcrumbBar(tree: tree, currentNode: model.currentNode) { id in
-                model.currentNode = id
-                selectedID = id
-                model.selectedNode = id
+                .help("Up to the enclosing folder")
+                .accessibilityLabel("Up to the enclosing folder")
+            BreadcrumbBar(tree: tree, currentNode: current) { id in open(id) }
+            Spacer(minLength: 8)
+            if atScannedVolumeRoot {
+                ListChip(title: "Show technical", count: nil, isOn: showTechnical) { showTechnical.toggle() }
+                    .help("Show zero-size and technical system stubs at the volume root")
             }
         }
     }
 
-    private var canGoBack: Bool {
-        guard model.currentNode >= 0, Int(model.currentNode) < tree.count else { return false }
-        return tree.parent[Int(model.currentNode)] >= 0
+    private var searchRow: some View {
+        HStack(spacing: 12) {
+            ListSearchField(text: $query, tokens: parsed.tokens, matchCount: parsed.isEmpty ? nil : rows.count,
+                            placeholder: "Search here, or try size>1GB  changed>1y",
+                            focused: $searchFocused)
+                .frame(maxWidth: widthClass == .compact ? .infinity : 760)
+            Spacer(minLength: 0)
+            ListDropdown(label: "Sort", options: SortMode.allCases, selection: $sortMode, title: \.title)
+        }
     }
 
-    private func goBack() {
-        guard canGoBack else { return }
-        let p = tree.parent[Int(model.currentNode)]
-        model.currentNode = p
-        selectedID = p
-        model.selectedNode = p
+    // MARK: Table
+
+    private var columns: ListColumns { ListColumns(widthClass) }
+
+    private var columnHeader: some View {
+        HStack(spacing: 0) {
+            Text("Name").frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 12)
+            Text("Kind").frame(width: columns.kind, alignment: .leading)
+            Text(sortMode == .size ? "Size ↓" : "Size").foregroundStyle(sortMode == .size ? DiskMapTheme.ink : DiskMapTheme.ink3).frame(width: columns.bar + columns.size, alignment: .trailing)
+            Text("Last changed").frame(width: columns.changed, alignment: .leading).padding(.leading, 24)
+            if columns.showFree { Text("Can be freed").frame(minWidth: columns.free, maxWidth: columns.freeMax, alignment: .leading) }
+            Color.clear.frame(width: columns.add)
+        }
+        .font(DiskMapType.secondary)
+        .foregroundStyle(DiskMapTheme.ink3)
+        .frame(height: 30)
+        .overlay(alignment: .bottom) { Rectangle().fill(DiskMapTheme.ink.opacity(0.85)).frame(height: 1) }
     }
 
-    private var list: some View {
-        let ordered = rows.map(\.id)
+    private func list(_ shown: [(id: Int32, size: Int64)]) -> some View {
+        let ordered = shown.map(\.id)
+        let multi = model.multiSelection
+        let index = model.freeableIndex
+        let staged = Set(model.stagedItems.map { $0.url.standardizedFileURL.path })
+        let today = AgeMap.today()
         return ScrollView {
             LazyVStack(spacing: 0) {
-                ForEach(rows, id: \.id) { row in
-                    folderRow(row, ordered: ordered)
-                    RowSeparator(indent: 10 + 14 + 12 + 24 + 12)
+                ForEach(shown, id: \.id) { row in
+                    let i = Int(row.id)
+                    let isDir = tree.isDirectory[i]
+                    let name = tree.name(of: row.id)
+                    let abs = tree.path(of: row.id, root: rootURL).path
+                    let verdict = StorageClassifier.classify(path: abs, isDirectory: isDir)
+                    let contained = index.contains(row.id, tree: tree)
+                    let freeBytes = index.bytes(under: row.id, tree: tree, totals: totals)
+                    let protected = SafetyClassifier.assess(path: abs, name: name, isDirectory: isDir).level == .protected
+                    let kind = isDir ? FileKind.other : FileKind.classify(fileName: name, path: abs)
+                    ListFileRow(
+                        name: name, place: isDir ? contents(i) : Self.place(abs, rootURL: rootURL),
+                        badge: isDir ? "DIR" : BiggestFilesView.badge(name, kind: kind),
+                        kind: isDir ? Self.folderKind(verdict.storageClass) : BiggestFilesView.kindText(kind, verdict.storageClass),
+                        fraction: Double(row.size) / Double(parentTotal), bytes: row.size,
+                        changed: VisualizeView.lastUsed(tree.modifiedDay[i], today: today),
+                        note: Self.folderNote(contained: contained, freeBytes: freeBytes, size: row.size, verdict: verdict),
+                        accent: contained || (row.size > 0 && Double(freeBytes) / Double(row.size) >= 0.6),
+                        staged: staged.contains(URL(fileURLWithPath: abs).standardizedFileURL.path),
+                        selected: row.id == selectedID || multi.contains(row.id), columns: columns,
+                        select: {
+                            selectedID = row.id
+                            model.select(row.id, ordered: ordered)
+                        },
+                        add: protected ? nil : { model.stageRow(path: abs, size: row.size, reason: "Biggest folder: " + name) },
+                        open: isDir ? { open(row.id) } : nil
+                    )
+                    .accessibilityLabel("\(name), \(ByteFormat.string(row.size))")
+                    .rowActions(path: abs, stage: protected ? nil : { model.stageRow(path: abs, size: row.size, reason: "Biggest folder: " + name) })
                 }
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 4)
         }
         .listKeyboard(
             ids: ordered, selection: $selectedID,
             path: { tree.path(of: $0, root: rootURL).path },
             stage: { id in
-                model.stageRow(path: tree.path(of: id, root: rootURL).path, size: model.selectedTotals[Int(id)],
+                model.stageRow(path: tree.path(of: id, root: rootURL).path, size: totals[Int(id)],
                                reason: "Biggest folder: " + tree.name(of: id))
             },
             selectAll: { model.multiSelection = Set(ordered) },
             clearSelection: { model.clearMultiSelection() }
         )
+        .onChange(of: selectedID) { _, id in if let id { model.selectedNode = id } }
     }
 
-    private func folderRow(_ row: (id: Int32, size: Int64), ordered: [Int32]) -> some View {
-        let i = Int(row.id)
-        let isDir = tree.isDirectory[i]
-        let name = tree.name(of: row.id)
-        let inMulti = model.multiSelection.contains(row.id)
-        let selected = row.id == (selectedID ?? activeSelection) || inMulti
-        let frac = Double(row.size) / Double(parentTotal)
-        let fileCount = model.descendantFileCounts.indices.contains(i) ? model.descendantFileCounts[i] : 0
-        let folderCount = model.descendantFolderCounts.indices.contains(i) ? model.descendantFolderCounts[i] : 0
-        let abs = tree.path(of: row.id, root: rootURL).path
-        let safety = SafetyClassifier.assess(path: abs, name: name, isDirectory: isDir)
-        let stage: (() -> Void)? = safety.level == .protected ? nil : {
-            model.stageRow(path: abs, size: row.size, reason: "Biggest folder: " + name)
-        }
-        var subtitle = isDir ? countLabel(fileCount, "file") + " · " + countLabel(folderCount, "folder")
-            : FileKind.classify(fileName: name, path: abs).title
-        // Its storage category, with ⚠ where removing it breaks something.
-        let verdict = StorageClassifier.classify(path: abs, isDirectory: isDir)
-        if verdict.storageClass.id != "other" {
-            subtitle += " · " + (verdict.advice.isRisky ? "⚠ " : "") + verdict.storageClass.title
-        }
-        if isDir, let shared = model.cloneSharedBytes(of: row.id), i < model.allocatedTotals.count {
-            subtitle += " · about \(ByteFormat.string(max(0, model.allocatedTotals[i] - shared))) on disk (shared copies)"
-        }
-        return HStack(spacing: 0) {
-            Button {
-                selectedID = row.id
-                model.select(row.id, ordered: ordered)
-            } label: {
-                KitRow(title: name, subtitle: subtitle, selected: selected, path: abs, onStage: stage) {
-                    MultiSelectMark(on: inMulti)
-                    Group {
-                        if isDir {
-                            Image(systemName: "folder")
-                                .font(.system(size: DiskMapType.scaled(14)))
-                                .foregroundStyle(DiskMapTheme.ink2)
-                                .frame(width: 24, height: 24)
-                        } else {
-                            FileIdentityIcon(url: URL(fileURLWithPath: abs), size: 24)
-                        }
-                    }
-                } trailing: {
-                    if safety.level == .protected {
-                        SafetyLabel(level: .protected)
-                    }
-                    ProportionBar(fraction: frac)
-                        .frame(width: 90)
-                    MonoColumn(text: ByteFormat.string(row.size), width: 74, emphasis: true)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: DiskMapType.scaled(10), weight: .semibold))
-                        .foregroundStyle(isDir ? DiskMapTheme.ink3 : .clear)
-                        .frame(width: 12)
-                }
+    private func footer(_ shown: [(id: Int32, size: Int64)]) -> some View {
+        let index = model.freeableIndex
+        let freeBytes = index.bytes(under: current, tree: tree, totals: totals)
+        let folders = shown.filter { tree.isDirectory[Int($0.id)] }.count
+        return HStack(spacing: 14) {
+            (Text("\(Self.footerCount(folders: folders, files: shown.count - folders)) · \(ByteFormat.hero(parentTotal))")
+             + Text(freeBytes > 0 ? "  ·  " : "")
+             + Text(freeBytes > 0 ? "\(ByteFormat.hero(freeBytes)) can be freed here" : "").foregroundColor(DiskMapTheme.accentDeep))
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 8)
+            if freeBytes > 0 {
+                Button("Add \(ByteFormat.hero(freeBytes)) to basket") { Task { await stageFreeable() } }
+                    .buttonStyle(SecondaryButtonStyle())
             }
-            .buttonStyle(.plain)
-            .simultaneousGesture(TapGesture(count: 2).onEnded { if isDir { drill(into: row.id) } })
-            .accessibilityLabel("\(name), \(ByteFormat.string(row.size))\(isDir ? ", \(subtitle)" : "")")
-            .accessibilityAction(named: "Open") { if isDir { drill(into: row.id) } }
-            .rowActions(path: abs, stage: stage)
         }
+        .font(DiskMapType.figure)
+        .foregroundStyle(DiskMapTheme.ink2)
+        .padding(.vertical, 10)
+        .overlay(alignment: .top) { Rectangle().fill(DiskMapTheme.ink.opacity(0.85)).frame(height: 1) }
     }
 
-    private func drill(into id: Int32) {
+    /// Everything that rebuilds by itself under the current folder, through the bulk-add sheet.
+    private func stageFreeable() async {
+        let id = current
+        let requests: [CleanupStageRequest] = model.cachedReviewables.filter(\.isGenerallySafe).flatMap { t in
+            t.nodeIDs.filter { $0 == id || FreeableIndex.isAncestor(id, of: $0, tree: tree) }.map { node in
+                CleanupStageRequest(url: tree.path(of: node, root: rootURL), size: Int(node) < totals.count ? totals[Int(node)] : 0,
+                                    reason: "Explore: " + t.displayName)
+            }
+        }
+        _ = await model.confirmStageMany(requests, title: "Things that rebuild by themselves in \(tree.name(of: id))")
+    }
+
+    // MARK: Words
+
+    private func contents(_ i: Int) -> String {
+        let files = model.descendantFileCounts.indices.contains(i) ? model.descendantFileCounts[i] : 0
+        let folders = model.descendantFolderCounts.indices.contains(i) ? model.descendantFolderCounts[i] : 0
+        return Self.contents(files: files, folders: folders)
+    }
+
+    /// "1,204 files · 31 folders".
+    static func contents(files: Int, folders: Int) -> String {
+        var parts = ["\(files.formatted()) file\(files == 1 ? "" : "s")"]
+        if folders > 0 { parts.append("\(folders.formatted()) folder\(folders == 1 ? "" : "s")") }
+        return parts.joined(separator: " · ")
+    }
+
+    /// "8 folders", "3 folders, 1 file", "2 files".
+    static func footerCount(folders: Int, files: Int) -> String {
+        var parts: [String] = []
+        if folders > 0 { parts.append("\(folders.formatted()) folder\(folders == 1 ? "" : "s")") }
+        if files > 0 || folders == 0 { parts.append("\(files.formatted()) file\(files == 1 ? "" : "s")") }
+        return parts.joined(separator: ", ")
+    }
+
+    static func folderKind(_ storageClass: StorageClass) -> String {
+        storageClass.id == "other" ? "Folder" : storageClass.title
+    }
+
+    /// The "Can be freed" column for a folder: all of it, part of it, look first, or nothing.
+    static func folderNote(contained: Bool, freeBytes: Int64, size: Int64, verdict: StorageVerdict) -> BiggestFilesView.FreeNote {
+        if contained { return .accent("\(ByteFormat.hero(size)) rebuilds by itself") }
+        if freeBytes > 0 { return .accent("\(ByteFormat.hero(freeBytes)) can be freed") }
+        if verdict.advice.isRisky { return .review(verdict.instead) }
+        return .none
+    }
+
+    private static func place(_ abs: String, rootURL: URL) -> String {
+        BiggestFilesView.trimmedPlace(relativeParent(of: abs, root: rootURL))
+    }
+
+    // MARK: Navigation
+
+    private var canGoBack: Bool { current > 0 && tree.parent[Int(current)] >= 0 }
+
+    private func goBack() {
+        guard canGoBack else { return }
+        open(tree.parent[Int(current)])
+    }
+
+    private func open(_ id: Int32) {
         guard tree.isDirectory[Int(id)] else { return }
         model.currentNode = id
-        selectedID = id
+        selectedID = nil
         model.selectedNode = id
-    }
-
-    private var inspector: some View {
-        Group {
-            if let id = activeSelection, tree.isDirectory[Int(id)] {
-                FolderInspector(model: model, tree: tree, rootURL: rootURL, id: id,
-                                reason: "Biggest folder: " + tree.name(of: id))
-            } else {
-                DiskMapEmptyState(symbol: "folder", title: "Select a folder", message: "Its details and actions appear here.")
-            }
-        }
-        .background(DiskMapTheme.canvas)
+        query = ""
     }
 }

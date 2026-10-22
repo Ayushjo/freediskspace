@@ -73,14 +73,14 @@ struct PageHeader<Trailing: View>: View {
 
     var body: some View {
         HStack(alignment: .bottom, spacing: DiskMapSpace.md) {
+            // The redesign drops the eyebrow ("FIND"): the sidebar and top bar already say where you are.
             VStack(alignment: .leading, spacing: 6) {
-                if let eyebrow { MonoLabel(eyebrow) }
                 Text(title)
-                    .font(DiskMapType.title)
+                    .font(DiskMapType.pageTitle)
                     .foregroundStyle(DiskMapTheme.ink)
                 if let subtitle {
                     Text(subtitle)
-                        .font(DiskMapType.secondary)
+                        .font(DiskMapType.body)
                         .foregroundStyle(DiskMapTheme.ink2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -342,8 +342,8 @@ struct RowHoverActions: View {
             }
             .help("Reveal in Finder")
             if let onStage {
-                Button(action: onStage) { Label("Add to Cleanup", systemImage: "plus.circle") }
-                    .help("Add to Cleanup")
+                Button(action: onStage) { Label("Add to basket", systemImage: "plus.circle") }
+                    .help("Add to basket")
             }
         }
         .buttonStyle(IconButtonStyle(size: 24))
@@ -451,7 +451,7 @@ struct InspectorActions<More: View>: View {
             Button(action: primary) {
                 Label(primaryTitle, systemImage: primaryDone ? "checkmark" : "plus")
             }
-            .buttonStyle(primaryDone ? AnyButtonStyleBox(SecondaryButtonStyle(fullWidth: true)) : AnyButtonStyleBox(PrimaryButtonStyle(fullWidth: true)))
+            .buttonStyle(primaryDone ? AnyButtonStyleBox(SecondaryButtonStyle(fullWidth: true)) : AnyButtonStyleBox(AccentButtonStyle(fullWidth: true)))
             .disabled(!primaryEnabled)
             HStack(spacing: 2) {
                 if let path {
@@ -506,7 +506,7 @@ struct InspectorColumn<Content: View>: View {
             .padding(DiskMapMetric.inspectorPadding)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(DiskMapTheme.canvas)
+        .background(DiskMapTheme.sidebar)
     }
 }
 

@@ -33,7 +33,6 @@ struct SavedSearchAppTests {
     @Test func numberedShortcutsIgnoreSavedSearches() {
         let model = ScanModel()
         model.saveSearch(name: "A", query: "size>1GB", sort: .largest)
-        #expect(KeyboardCommands.numberedDestinations == Array(AppNavSection.allCases.flatMap(\.items).prefix(9)))
-        #expect(KeyboardCommands.numberedDestinations.count == 9)
+        #expect(KeyboardCommands.numberedDestinations == AppDestination.primaryNav + AppDestination.moreNav)
     }
 }

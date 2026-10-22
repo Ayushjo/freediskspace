@@ -82,7 +82,7 @@ extension View {
     /// (the queue — never the Trash), Reveal in Finder, Quick Look.
     func rowActions(path: String, stage: (() -> Void)?) -> some View {
         accessibilityActions {
-            if let stage { Button("Add to Cleanup", action: stage) }
+            if let stage { Button("Add to basket", action: stage) }
             Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
             Button("Quick Look") { DiskMapQuickLook.shared.show(URL(fileURLWithPath: path)) }
         }

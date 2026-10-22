@@ -17,6 +17,8 @@ enum AppDestination: Hashable, Identifiable {
     /// PR #16's ecosystem-grouped Quick Wins page, kept beside Developer Storage.
     case applications
     case snapshots
+    /// Every past cleanup, with Put Back (redesign).
+    case history
 
     var id: String { label }
 
@@ -42,6 +44,7 @@ enum AppDestination: Hashable, Identifiable {
         case .developerStorage: return "Developer Storage"
         case .applications: return "Applications"
         case .snapshots: return "Snapshots"
+        case .history: return "History & Put Back"
         }
     }
 
@@ -62,6 +65,50 @@ enum AppDestination: Hashable, Identifiable {
         case .developerStorage: return "chevron.left.forwardslash.chevron.right"
         case .applications: return "app"
         case .snapshots: return "camera"
+        case .history: return "arrow.uturn.backward.circle"
+        }
+    }
+}
+
+extension AppDestination {
+    /// The redesign's sidebar: six pages, then More. Pages that moved inside
+    /// these (Find, Biggest Files, Caches…) stay reachable from ⌘K and links.
+    static let primaryNav: [AppDestination] = [.overview, .cleanSafe, .visualize, .developerStorage, .duplicates, .snapshots]
+    static let moreNav: [AppDestination] = [.applications, .history]
+
+    /// The sidebar's name for a page.
+    var navTitle: String {
+        switch self {
+        case .cleanSafe: return "Clean up"
+        case .visualize: return "Explore"
+        case .developerStorage: return "Developer"
+        case .snapshots: return "What changed"
+        default: return label
+        }
+    }
+
+    /// The sidebar's line icon.
+    var navSymbol: String {
+        switch self {
+        case .overview: return "house"
+        case .cleanSafe: return "trash"
+        case .visualize: return "square.split.2x2"
+        case .developerStorage: return "chevron.left.forwardslash.chevron.right"
+        case .duplicates: return "square.on.square"
+        case .snapshots: return "chart.line.uptrend.xyaxis"
+        case .applications: return "square.grid.2x2"
+        case .history: return "clock.arrow.circlepath"
+        default: return symbol
+        }
+    }
+
+    /// The sidebar row that should look selected for this page (pages folded
+    /// into Clean up and Explore light up their parent).
+    var navParent: AppDestination {
+        switch self {
+        case .cleanCaches, .cleanDownloads, .cleanMedia: return .cleanSafe
+        case .find, .biggestFiles, .biggestFolders, .fileBrowser, .forgottenFiles: return .visualize
+        default: return self
         }
     }
 }
