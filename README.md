@@ -9,14 +9,14 @@
 A free, open source disk space analyzer for Mac and Windows.<br>
 See what's filling your disk, learn what each thing is, and free space without the fear of losing something.
 
-[![Latest release](https://img.shields.io/github/v/release/Ayushjo/Diskmap?label=release&color=7966DA)](https://github.com/Ayushjo/Diskmap/releases/latest)
-[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-14151A?logo=apple&logoColor=white)](https://github.com/Ayushjo/Diskmap/releases/latest/download/freedisk.space.dmg)
-[![Windows 10 and 11](https://img.shields.io/badge/Windows-10%20%7C%2011-14151A?logo=windows&logoColor=white)](https://github.com/Ayushjo/Diskmap/releases/download/v0.2.3/freedisk.space-0.2.3-windows-x64.exe)
+[![Latest release](https://img.shields.io/github/v/release/Ayushjo/freediskspace?label=release&color=7966DA)](https://github.com/Ayushjo/freediskspace/releases/latest)
+[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-14151A?logo=apple&logoColor=white)](https://github.com/Ayushjo/freediskspace/releases/latest/download/freedisk.space.dmg)
+[![Windows 10 and 11](https://img.shields.io/badge/Windows-10%20%7C%2011-14151A?logo=windows&logoColor=white)](https://github.com/Ayushjo/freediskspace/releases/download/v0.2.3/freedisk.space-0.2.3-windows-x64.exe)
 [![MIT license](https://img.shields.io/badge/license-MIT-14151A)](LICENSE)
 [![Works offline](https://img.shields.io/badge/works-offline-14151A)](#privacy)
 
-**[Download for Mac](https://github.com/Ayushjo/Diskmap/releases/latest/download/freedisk.space.dmg)** &nbsp;·&nbsp;
-**[Download for Windows](https://github.com/Ayushjo/Diskmap/releases/download/v0.2.3/freedisk.space-0.2.3-windows-x64.exe)** &nbsp;·&nbsp;
+**[Download for Mac](https://github.com/Ayushjo/freediskspace/releases/latest/download/freedisk.space.dmg)** &nbsp;·&nbsp;
+**[Download for Windows](https://github.com/Ayushjo/freediskspace/releases/download/v0.2.3/freedisk.space-0.2.3-windows-x64.exe)** &nbsp;·&nbsp;
 [freedisk.space](https://www.freedisk.space)
 
 </div>
@@ -92,7 +92,7 @@ Every cleanup is recorded. While an item is still in the Trash, Put Back returns
 
 ### Mac
 
-1. Download **[freedisk.space.dmg](https://github.com/Ayushjo/Diskmap/releases/latest/download/freedisk.space.dmg)**. It runs on macOS 14 or later, on Apple silicon and Intel.
+1. Download **[freedisk.space.dmg](https://github.com/Ayushjo/freediskspace/releases/latest/download/freedisk.space.dmg)**. It runs on macOS 14 or later, on Apple silicon and Intel.
 2. Drag freedisk.space to Applications.
 3. The app isn't notarized yet, so macOS asks once. Open it, then go to **System Settings › Privacy & Security** and choose **Open Anyway**.
 
@@ -100,10 +100,10 @@ For a complete scan, grant Full Disk Access in **System Settings › Privacy & S
 
 ### Windows
 
-1. Download **[freedisk.space-0.2.3-windows-x64.exe](https://github.com/Ayushjo/Diskmap/releases/download/v0.2.3/freedisk.space-0.2.3-windows-x64.exe)** for Windows 10 or 11 (x64). It's a single file, and .NET doesn't need to be installed.
+1. Download **[freedisk.space-0.2.3-windows-x64.exe](https://github.com/Ayushjo/freediskspace/releases/download/v0.2.3/freedisk.space-0.2.3-windows-x64.exe)** for Windows 10 or 11 (x64). It's a single file, and .NET doesn't need to be installed.
 2. The file isn't code signed yet, so SmartScreen may warn about an unknown publisher. Choose **More info › Run anyway**.
 
-Checksums are listed on each [release](https://github.com/Ayushjo/Diskmap/releases).
+Checksums are listed on each [release](https://github.com/Ayushjo/freediskspace/releases).
 
 ## How cleanup stays safe
 
