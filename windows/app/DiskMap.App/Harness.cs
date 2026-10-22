@@ -13,6 +13,7 @@ namespace DiskMap.App;
 ///   DISKMAP_SHOT_SCALE     render scale for DISKMAP_SHOT, e.g. 2 (default: screen DPI)
 ///   DISKMAP_SIZE_BASIS     logical | ondisk (default: ondisk)
 ///   DISKMAP_DETERMINISTIC  1 = fixed 500 GB volume with 120 GB free, like the Mac harness
+///   DISKMAP_FIND_DUPLICATES 1 = Duplicates searches as soon as it opens
 /// A harness run never writes the user's scan history.
 /// </summary>
 internal static class Harness
@@ -58,6 +59,12 @@ internal static class Harness
     };
 
     public static bool Deterministic => Env("DISKMAP_DETERMINISTIC") == "1";
+
+    /// <summary>
+    /// DISKMAP_FIND_DUPLICATES=1: Duplicates starts its search when it opens, so the board
+    /// can be rendered (Mac harness: --find-duplicates).
+    /// </summary>
+    public static bool FindDuplicates => Env("DISKMAP_FIND_DUPLICATES") == "1";
 
     /// <summary>The Mac harness's fixed volume: 500 GB with 120 GB free.</summary>
     public static VolumeInfo FixedVolume(string? path)

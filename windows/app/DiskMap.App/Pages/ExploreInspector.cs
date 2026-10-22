@@ -797,7 +797,7 @@ internal static class ExploreInspector
     /// Quick Look's Windows stand-in: a folder opens in File Explorer, a document in its app.
     /// Programs and scripts are revealed rather than run.
     /// </summary>
-    private static void OpenItem(string path, bool isDirectory)
+    internal static void OpenItem(string path, bool isDirectory)
     {
         try
         {
@@ -931,7 +931,7 @@ internal static class ExploreInspector
     /// <paramref name="lines"/> lines of the width it is given, cut in the middle
     /// (.truncationMode(.middle)) or at the end. Refits when the width changes.
     /// </summary>
-    private static TextBlock Fitted(TextBlock block, int lines, bool middle)
+    internal static TextBlock Fitted(TextBlock block, int lines, bool middle)
     {
         string full = block.Text;
         double fittedWidth = -1;
