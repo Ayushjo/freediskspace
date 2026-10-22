@@ -237,6 +237,7 @@ public sealed class BasketWindow : Window
         name.TextTrimming = TextTrimming.CharacterEllipsis;
         text.Children.Add(name);
         var where = Rd.Text(ParentDisplay(item.Path), 12, null, "RdInk3");
+        where.ToolTip = item.Path;   // the row shortens it; the whole path on hover
         where.TextTrimming = TextTrimming.CharacterEllipsis;
         where.Margin = new Thickness(0, 2, 0, 0);
         text.Children.Add(where);
