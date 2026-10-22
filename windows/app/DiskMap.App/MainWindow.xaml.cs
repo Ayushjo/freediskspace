@@ -901,148 +901,25 @@ public partial class MainWindow : Window
 
     // ---- WIN-053: command palette (⌘K port) ----
 
-    private Popup? _palette;
+    private CommandPalette? _palette;
 
+    /// <summary>Ctrl+K: the command palette over the whole window (Mac: an overlay with a dim backdrop).</summary>
     private void OpenCommandPalette()
     {
-        var card = new Border
-        {
-            Background = Ui.Brush("AppCard"),
-            BorderBrush = Ui.Brush("AppCardBorder"),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(10),
-            Padding = new Thickness(14),
-            Width = 520,
-            Effect = new System.Windows.Media.Effects.DropShadowEffect
-            {
-                BlurRadius = 18, Opacity = 0.18, ShadowDepth = 4,
-            },
-        };
-        var body = new StackPanel();
-        var (searchBox, input) = Ui.SearchBox("type a query — size>500MB age>1y, or plain words…", 460);
-        input.Text = _model.SearchQuery;
-        body.Children.Add(searchBox);
-        var meaning = Ui.Faint("");
-        meaning.Margin = new Thickness(0, 6, 0, 0);
-        body.Children.Add(meaning);
-        var results = new StackPanel { Margin = new Thickness(0, 8, 0, 0) };
-        body.Children.Add(results);
-        var footer = new StackPanel { Margin = new Thickness(0, 8, 0, 0) };
-        body.Children.Add(footer);
-        card.Child = body;
+        if (_palette is not null || _model.Tree is null) return;
+        _palette = new CommandPalette("", ClosePalette);
+        Grid.SetRowSpan(_palette, 5);
+        Panel.SetZIndex(_palette, 20);
+        WindowChrome.SetIsHitTestVisibleInChrome(_palette, true);
+        ShellRoot.Children.Add(_palette);
+    }
 
-        var popup = new Popup
-        {
-            // Mac: the palette floats over the window's upper middle.
-            PlacementTarget = ShellRoot,
-            Placement = PlacementMode.Relative,
-            HorizontalOffset = Math.Max(0, (ShellRoot.ActualWidth - 520) / 2),
-            VerticalOffset = 120,
-            StaysOpen = false,
-            AllowsTransparency = true,
-            Child = card,
-        };
-        _palette = popup;
-
-        void repopulate()
-        {
-            results.Children.Clear();
-            footer.Children.Clear();
-            string q = input.Text.Trim();
-            var tree = _model.Tree;
-            if (q.Length > 0 && tree is not null && _model.Totals.Length == tree.Count)
-            {
-                var parsed = FileQuery.Parse(q,
-                    home: UserFolders.Home,
-                    root: _model.RootPath ?? "");
-                meaning.Text = parsed.Query.IsStructured
-                    ? string.Join("  ·  ", parsed.Query.Describe())
-                    : $"matching \"{q}\" by name, largest first";
-                var ctx = new FileQuery.Context(DuplicateFileIDs: _model.DuplicateFileIDs);
-                var hits = parsed.Query.IsStructured
-                    ? parsed.Query.Run(tree, _model.RootPath ?? "", _model.Totals, ctx, limit: 8).Ids
-                    : FileSearch.Search(tree, _model.Totals, q, limit: 8);
-                if (parsed.Problems.Count > 0)
-                    meaning.Text += " — not understood: "
-                        + string.Join("; ", parsed.Problems.Select(p => $"{p.Token} ({p.Message})"));
-                foreach (var id in hits)
-                {
-                    string name = tree.NameOf(id);
-                    long size = _model.Totals[id];
-                    var row = new DockPanel { Margin = new Thickness(0, 3, 0, 3) };
-                    var sz = Ui.T(ByteFormat.Format(size), 11.5, FontWeights.Medium);
-                    DockPanel.SetDock(sz, Dock.Right);
-                    row.Children.Add(sz);
-                    row.Children.Add(Ui.T($"{name}  —  {_model.DisplayPath(id)}", 12));
-                    row.Cursor = Cursors.Hand;
-                    int captured = id;
-                    row.MouseLeftButtonDown += (_, _) =>
-                    {
-                        popup.IsOpen = false;
-                        _model.Select(captured);
-                    };
-                    results.Children.Add(row);
-                }
-                var all = Ui.T("Show all results in Find →", 12, FontWeights.Medium, Ui.Brush("AppAccent"));
-                all.Cursor = Cursors.Hand;
-                all.MouseLeftButtonDown += (_, _) =>
-                {
-                    popup.IsOpen = false;
-                    _model.SearchQuery = q;
-                    SelectPage("Find");
-                };
-                footer.Children.Add(all);
-            }
-            else
-            {
-                meaning.Text = tree is null
-                    ? "Scan a folder first — the palette searches the scan."
-                    : "Saved searches and quick filters — Enter runs the query.";
-                var saved = SavedSearches.Load();
-                if (saved.Count > 0)
-                {
-                    footer.Children.Add(Ui.SectionLabel("SAVED SEARCHES"));
-                    foreach (var s in saved)
-                    {
-                        var row = new DockPanel { Margin = new Thickness(0, 3, 0, 3) };
-                        row.Children.Add(Ui.T($"{s.Name}  —  {s.Query}", 12));
-                        row.Cursor = Cursors.Hand;
-                        string query = s.Query;
-                        row.MouseLeftButtonDown += (_, _) =>
-                        {
-                            popup.IsOpen = false;
-                            _model.SearchQuery = query;
-                            SelectPage("Find");
-                        };
-                        // Saved searches left the sidebar (the Mac has none there); manage them here.
-                        Guid id = s.Id;
-                        var remove = new MenuItem { Header = "Remove saved search" };
-                        remove.Click += (_, _) =>
-                        {
-                            SavedSearches.Save(SavedSearches.Load().Where(x => x.Id != id));
-                            repopulate();
-                        };
-                        row.ContextMenu = new ContextMenu { Items = { remove } };
-                        footer.Children.Add(row);
-                    }
-                }
-            }
-        }
-        repopulate();
-        input.TextChanged += (_, _) => repopulate();
-        input.KeyDown += (_, e) =>
-        {
-            if (e.Key == Key.Enter && input.Text.Trim().Length > 0)
-            {
-                popup.IsOpen = false;
-                _model.SearchQuery = input.Text.Trim();
-                SelectPage("Find");
-                e.Handled = true;
-            }
-            else if (e.Key == Key.Escape) { popup.IsOpen = false; e.Handled = true; }
-        };
-        popup.Opened += (_, _) => Dispatcher.BeginInvoke(() => input.Focus());
-        popup.IsOpen = true;
+    private void ClosePalette()
+    {
+        if (_palette is null) return;
+        ShellRoot.Children.Remove(_palette);
+        _palette = null;
+        PageHost.Focus();
     }
 
     /// <summary>
