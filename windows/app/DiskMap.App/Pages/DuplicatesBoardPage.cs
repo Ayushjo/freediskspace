@@ -96,6 +96,10 @@ public sealed class DuplicatesBoardPage : UserControl
     private void OnStaged(object? sender, EventArgs e) => Dispatcher.InvokeAsync(() =>
     {
         _keeperCache.Clear();   // a kept copy that went into the basket can't stay the kept one
+        // ...and the copy that stays instead is the kept one now, so it isn't ticked.
+        if (Model.Tree is { } tree)
+            foreach (var group in AllGroups)
+                if (Keeper(tree, group) is { } keep) _checked.Remove(keep);
         Rebuild();
     });
 
