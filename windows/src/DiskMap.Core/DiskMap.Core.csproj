@@ -17,6 +17,7 @@
     <EmbeddedResource Include="developer-storage.json" />
     <EmbeddedResource Include="system-storage-windows.json" />
     <EmbeddedResource Include="cleanup-recipes.json" />
+    <EmbeddedResource Include="profiles.json" />
     <InternalsVisibleTo Include="DiskMap.Core.Tests" />
   </ItemGroup>
 

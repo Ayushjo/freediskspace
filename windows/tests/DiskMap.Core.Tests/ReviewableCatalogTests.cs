@@ -22,7 +22,9 @@ public class ReviewableCatalogTests
         (@"Projects\webapp\node_modules\react\index.js", 800 * MB),
         (@"Projects\webapp\node_modules\typescript\lib\tsc.js", 600 * MB),
         (@"Projects\rust-tool\target\debug\deps\rust_tool.rlib", 9_600 * MB),
+        (@"Projects\rust-tool\Cargo.toml", 2_000),   // the evidence that makes target build output
         (@"Projects\ml-experiments\.venv\Lib\site-packages\torch\lib\torch_cpu.dll", 4_100 * MB),
+        (@"Projects\ml-experiments\.venv\pyvenv.cfg", 200),   // what makes .venv a virtualenv
         (@".gradle\caches\transforms-4\objects.bin", 14_800 * MB),
         (@"AppData\Local\Android\Sdk\system-images\android-35\google_apis\x86_64\system.img", 4_100 * MB),
         (@"AppData\Local\Android\Sdk\system-images\android-33\google_apis\x86_64\system.img", 3_600 * MB),
@@ -91,7 +93,7 @@ public class ReviewableCatalogTests
         [
             ("Rust target", 9_600 * MB),
             ("Android system images", 7_700 * MB),
-            (".venv", 4_100 * MB),
+            (".venv", 4_100 * MB + 200),
             ("Node modules", 2_300 * MB),
             ("Node modules", 1_400 * MB),
         ], review);

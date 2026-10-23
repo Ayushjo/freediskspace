@@ -1,10 +1,8 @@
 {
-  "_comment": "Developer Storage rules (AGENTS.md rule 6: patterns are data). Matched against directory names, case-insensitive; a later rule wins for a duplicate name. Ported from macOS developer-rules.json — xcode/cocoapods dropped, dotnet/nuget and Windows-resident caches added.",
+  "_comment": "Developer Storage rules (AGENTS.md rule 6: patterns are data). Matched against directory names, case-insensitive; `*` in a name is a wildcard (*.runs, Project Outputs for *). Several rules may share a name: the first whose evidence holds wins. Evidence: requiresSibling = something next to the folder matches one of these globs (a .csproj next to bin); requiresChild = something inside it matches (pyvenv.cfg in a venv); requiresParent = the containing folder's name matches; forbidSibling = none of these may sit next to it; skipIfTracked = inside a git working tree the folder must be git-ignored, or it is source, not output. A name alone is never enough for a generic name like bin or build — that is how a Flutter SDK's bin and packages were once offered as .NET output. Rules with projectFromParent are never matched inside installed tools (AppData, Program Files, home dot-folders, SDK roots).",
   "rules": [
     {
-      "names": [
-        "node_modules"
-      ],
+      "names": ["node_modules"],
       "category": "dependencies",
       "ecosystem": "node",
       "reclaimability": "reviewFirst",
@@ -15,11 +13,7 @@
       "lockEcosystem": "node"
     },
     {
-      "names": [
-        ".npm",
-        "npm-cache",
-        "_cacache"
-      ],
+      "names": [".npm", "npm-cache", "_cacache"],
       "category": "caches",
       "ecosystem": "node",
       "reclaimability": "reclaimable",
@@ -29,11 +23,7 @@
       "rebuildCost": "networked"
     },
     {
-      "names": [
-        ".pnpm-store",
-        ".pnpm",
-        "pnpm-store"
-      ],
+      "names": [".pnpm-store", "pnpm-store"],
       "category": "caches",
       "ecosystem": "node",
       "reclaimability": "reclaimable",
@@ -43,24 +33,43 @@
       "rebuildCost": "networked"
     },
     {
-      "names": [
-        ".yarn"
-      ],
+      "names": [".yarn"],
+      "forbidSibling": ["package.json"],
+      "skipIfTracked": true,
       "category": "caches",
       "ecosystem": "node",
       "reclaimability": "reclaimable",
       "isToolRoot": true,
       "projectFromParent": false,
-      "whyLarge": "Yarn cache / Berry install state.",
+      "whyLarge": "Yarn's global cache. (A project's own .yarn folder holds the Yarn release it runs — never offered.)",
       "rebuildCost": "networked"
     },
     {
-      "names": [
-        ".nvm",
-        ".fnm",
-        ".volta",
-        "nvm"
-      ],
+      "names": [".turbo", ".parcel-cache", ".svelte-kit", ".angular", ".expo", ".nx", ".vite"],
+      "requiresSibling": ["package.json"],
+      "skipIfTracked": true,
+      "category": "buildArtifacts",
+      "ecosystem": "node",
+      "reclaimability": "reclaimable",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "Framework build and dev-server caches — recreated on the next build.",
+      "rebuildCost": "free"
+    },
+    {
+      "names": ["coverage", "storybook-static"],
+      "requiresSibling": ["package.json"],
+      "skipIfTracked": true,
+      "category": "buildArtifacts",
+      "ecosystem": "node",
+      "reclaimability": "reclaimable",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "Test-coverage reports or a static Storybook build — re-run the tool to recreate them.",
+      "rebuildCost": "cheap"
+    },
+    {
+      "names": [".nvm", ".fnm", ".volta", "nvm"],
       "category": "sdksSimulators",
       "ecosystem": "node",
       "reclaimability": "keep",
@@ -70,11 +79,9 @@
       "rebuildCost": "networked"
     },
     {
-      "names": [
-        "bin",
-        "obj",
-        "publish"
-      ],
+      "names": ["bin", "obj", "publish"],
+      "requiresSibling": ["*.csproj", "*.fsproj", "*.vbproj", "*.sln", "*.slnx"],
+      "skipIfTracked": true,
       "category": "buildArtifacts",
       "ecosystem": "dotnet",
       "reclaimability": "reclaimable",
@@ -84,9 +91,8 @@
       "rebuildCost": "cheap"
     },
     {
-      "names": [
-        ".vs"
-      ],
+      "names": [".vs"],
+      "requiresSibling": ["*.sln", "*.slnx", "*.csproj", "*.vcxproj", "CMakeLists.txt"],
       "category": "buildArtifacts",
       "ecosystem": "dotnet",
       "reclaimability": "reclaimable",
@@ -96,9 +102,9 @@
       "rebuildCost": "cheap"
     },
     {
-      "names": [
-        "TestResults"
-      ],
+      "names": ["TestResults"],
+      "requiresSibling": ["*.sln", "*.slnx", "*.csproj", "*.fsproj", "*.vbproj"],
+      "skipIfTracked": true,
       "category": "buildArtifacts",
       "ecosystem": "dotnet",
       "reclaimability": "reclaimable",
@@ -108,9 +114,9 @@
       "rebuildCost": "free"
     },
     {
-      "names": [
-        "packages"
-      ],
+      "names": ["packages"],
+      "requiresSibling": ["*.sln", "*.slnx"],
+      "skipIfTracked": true,
       "category": "dependencies",
       "ecosystem": "dotnet",
       "reclaimability": "reviewFirst",
@@ -121,9 +127,102 @@
       "lockEcosystem": "nuget"
     },
     {
-      "names": [
-        ".nuget"
-      ],
+      "names": ["AppPackages"],
+      "requiresSibling": ["*.wapproj", "Package.appxmanifest", "*.csproj", "*.vcxproj"],
+      "skipIfTracked": true,
+      "category": "buildArtifacts",
+      "ecosystem": "dotnet",
+      "reclaimability": "reclaimable",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "MSIX packages built from this project — the next packaging run makes new ones.",
+      "rebuildCost": "cheap"
+    },
+    {
+      "names": ["ipch"],
+      "category": "buildArtifacts",
+      "ecosystem": "cpp",
+      "reclaimability": "reclaimable",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "Visual C++ precompiled IntelliSense headers — rebuilt when the project opens.",
+      "rebuildCost": "free"
+    },
+    {
+      "names": ["x64", "ARM64", "Win32"],
+      "requiresSibling": ["*.vcxproj", "*.sln", "*.slnx"],
+      "requiresChild": ["Debug", "Release"],
+      "skipIfTracked": true,
+      "category": "buildArtifacts",
+      "ecosystem": "cpp",
+      "reclaimability": "reclaimable",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "Visual C++ build output (objects, PDBs, executables) — the next build recreates it.",
+      "rebuildCost": "cheap"
+    },
+    {
+      "names": ["Debug", "Release"],
+      "requiresSibling": ["*.vcxproj", "*.sln", "*.slnx"],
+      "skipIfTracked": true,
+      "category": "buildArtifacts",
+      "ecosystem": "cpp",
+      "reclaimability": "reclaimable",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "Visual C++ build output (objects, PDBs, executables) — the next build recreates it.",
+      "rebuildCost": "cheap"
+    },
+    {
+      "names": ["Debug", "Release"],
+      "requiresSibling": [".cproject", "*.ewp", "*.ioc"],
+      "skipIfTracked": true,
+      "category": "buildArtifacts",
+      "ecosystem": "embedded",
+      "reclaimability": "reclaimable",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "Firmware build output from STM32CubeIDE / Eclipse CDT or IAR — objects, .elf and map files the next build recreates.",
+      "rebuildCost": "cheap"
+    },
+    {
+      "names": ["Objects", "Listings"],
+      "requiresSibling": ["*.uvprojx", "*.uvproj"],
+      "skipIfTracked": true,
+      "category": "buildArtifacts",
+      "ecosystem": "embedded",
+      "reclaimability": "reclaimable",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "Keil µVision build output — objects and listings the next build recreates.",
+      "rebuildCost": "cheap"
+    },
+    {
+      "names": ["cmake-build-*"],
+      "requiresSibling": ["CMakeLists.txt"],
+      "skipIfTracked": true,
+      "category": "buildArtifacts",
+      "ecosystem": "cpp",
+      "reclaimability": "reclaimable",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "CLion/CMake build tree — regenerated by the next configure and build.",
+      "rebuildCost": "cheap"
+    },
+    {
+      "names": ["vcpkg_installed"],
+      "requiresSibling": ["vcpkg.json"],
+      "skipIfTracked": true,
+      "category": "dependencies",
+      "ecosystem": "cpp",
+      "reclaimability": "reclaimable",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "Libraries vcpkg built for this project (manifest mode) — rebuilt from vcpkg.json.",
+      "rebuildCost": "networked"
+    },
+    {
+      "names": [".nuget"],
       "category": "caches",
       "ecosystem": "dotnet",
       "reclaimability": "reclaimable",
@@ -133,9 +232,7 @@
       "rebuildCost": "networked"
     },
     {
-      "names": [
-        ".dotnet"
-      ],
+      "names": [".dotnet"],
       "category": "sdksSimulators",
       "ecosystem": "dotnet",
       "reclaimability": "keep",
@@ -145,14 +242,9 @@
       "rebuildCost": "networked"
     },
     {
-      "names": [
-        ".build",
-        "build",
-        ".next",
-        ".nuxt",
-        "dist",
-        "out"
-      ],
+      "names": [".build", "build", ".next", ".nuxt", "dist", "out"],
+      "requiresSibling": ["package.json", "pubspec.yaml", "CMakeLists.txt", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts", "pyproject.toml", "setup.py", "Cargo.toml", "go.mod", "Package.swift", "pom.xml", "*.csproj", "*.sln", "Makefile", "meson.build", "composer.json", "mix.exs", "deno.json", "angular.json", "sdkconfig"],
+      "skipIfTracked": true,
       "category": "buildArtifacts",
       "ecosystem": "other",
       "reclaimability": "reclaimable",
@@ -162,21 +254,19 @@
       "rebuildCost": "cheap"
     },
     {
-      "names": [
-        "target"
-      ],
+      "names": ["target"],
+      "requiresSibling": ["Cargo.toml", "pom.xml", "build.sbt", "project.clj"],
+      "skipIfTracked": true,
       "category": "buildArtifacts",
       "ecosystem": "rust",
       "reclaimability": "reclaimable",
       "isToolRoot": false,
       "projectFromParent": true,
-      "whyLarge": "Cargo build output for a Rust project.",
+      "whyLarge": "Cargo (or Maven/sbt) build output for this project.",
       "rebuildCost": "cheap"
     },
     {
-      "names": [
-        ".cargo"
-      ],
+      "names": [".cargo"],
       "category": "caches",
       "ecosystem": "rust",
       "reclaimability": "reclaimable",
@@ -186,9 +276,7 @@
       "rebuildCost": "networked"
     },
     {
-      "names": [
-        ".rustup"
-      ],
+      "names": [".rustup"],
       "category": "sdksSimulators",
       "ecosystem": "rust",
       "reclaimability": "keep",
@@ -198,56 +286,73 @@
       "rebuildCost": "networked"
     },
     {
-      "names": [
-        ".venv",
-        "venv",
-        "env",
-        ".env",
-        ".tox",
-        ".conda"
-      ],
+      "names": ["go-build"],
+      "category": "caches",
+      "ecosystem": "go",
+      "reclaimability": "reclaimable",
+      "isToolRoot": true,
+      "projectFromParent": false,
+      "whyLarge": "Go's build cache — `go clean -cache` empties it; builds refill it.",
+      "rebuildCost": "free"
+    },
+    {
+      "names": [".venv", "venv", "env", ".env"],
+      "requiresChild": ["pyvenv.cfg", "conda-meta"],
       "category": "dependencies",
       "ecosystem": "python",
       "reclaimability": "reviewFirst",
       "isToolRoot": false,
       "projectFromParent": true,
-      "whyLarge": "Python virtual environments — recreatable from requirements/lockfiles.",
+      "whyLarge": "A Python virtual environment — recreatable from requirements or a lockfile.",
       "rebuildCost": "networked",
       "lockEcosystem": "python"
     },
     {
-      "names": [
-        "site-packages",
-        "dist-packages"
-      ],
+      "names": [".tox"],
+      "requiresSibling": ["tox.ini", "pyproject.toml", "setup.cfg", "setup.py"],
+      "category": "dependencies",
+      "ecosystem": "python",
+      "reclaimability": "reclaimable",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "tox's per-environment virtualenvs — recreated on the next tox run.",
+      "rebuildCost": "networked"
+    },
+    {
+      "names": [".conda"],
+      "requiresChild": ["conda-meta"],
       "category": "dependencies",
       "ecosystem": "python",
       "reclaimability": "reviewFirst",
       "isToolRoot": false,
       "projectFromParent": true,
+      "whyLarge": "A project-local conda environment — recreatable from environment.yml.",
       "rebuildCost": "networked",
-      "lockEcosystem": "python",
-      "whyLarge": "Installed Python packages (pip/uv/poetry) for an environment — the libraries, not your code. Recreatable from requirements or a lockfile."
+      "lockEcosystem": "python"
     },
     {
-      "names": [
-        "__pycache__",
-        ".mypy_cache",
-        ".pytest_cache",
-        ".ruff_cache"
-      ],
+      "names": ["__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".ipynb_checkpoints"],
       "category": "buildArtifacts",
       "ecosystem": "python",
       "reclaimability": "reclaimable",
       "isToolRoot": false,
       "projectFromParent": true,
-      "whyLarge": "Python bytecode or type-check caches.",
+      "whyLarge": "Python bytecode, type-check, test or notebook checkpoint caches.",
       "rebuildCost": "free"
     },
     {
-      "names": [
-        ".pub-cache"
-      ],
+      "names": ["pkgs"],
+      "requiresParent": ["anaconda3", "miniconda3", "miniforge3", "mambaforge"],
+      "category": "caches",
+      "ecosystem": "python",
+      "reclaimability": "reclaimable",
+      "isToolRoot": true,
+      "projectFromParent": false,
+      "whyLarge": "Conda's package download cache — `conda clean -a` empties it.",
+      "rebuildCost": "networked"
+    },
+    {
+      "names": [".pub-cache"],
       "category": "caches",
       "ecosystem": "flutter",
       "reclaimability": "reclaimable",
@@ -257,9 +362,18 @@
       "rebuildCost": "networked"
     },
     {
-      "names": [
-        ".gradle"
-      ],
+      "names": [".dart_tool"],
+      "requiresSibling": ["pubspec.yaml"],
+      "category": "buildArtifacts",
+      "ecosystem": "flutter",
+      "reclaimability": "reclaimable",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "Dart tool state for this project — `flutter pub get` recreates it.",
+      "rebuildCost": "networked"
+    },
+    {
+      "names": [".gradle"],
       "category": "caches",
       "ecosystem": "jvm",
       "reclaimability": "reclaimable",
@@ -269,9 +383,7 @@
       "rebuildCost": "networked"
     },
     {
-      "names": [
-        ".m2"
-      ],
+      "names": [".m2"],
       "category": "caches",
       "ecosystem": "jvm",
       "reclaimability": "reclaimable",
@@ -281,10 +393,7 @@
       "rebuildCost": "networked"
     },
     {
-      "names": [
-        ".docker",
-        "DockerDesktop"
-      ],
+      "names": [".docker", "DockerDesktop"],
       "category": "containers",
       "ecosystem": "docker",
       "reclaimability": "reviewFirst",
@@ -294,10 +403,60 @@
       "rebuildCost": "networked"
     },
     {
-      "names": [
-        "Android",
-        "sdk"
-      ],
+      "names": ["LocalState", "DockerDesktopWSL", "wsl"],
+      "category": "containers",
+      "ecosystem": "docker",
+      "reclaimability": "keep",
+      "isToolRoot": true,
+      "projectFromParent": false,
+      "whyLarge": "WSL/package state — an ext4.vhdx in here IS the distro's disk; recycling it destroys the distro (trash is unsafe).",
+      "rebuildCost": "networked"
+    },
+    {
+      "names": [".terraform"],
+      "requiresSibling": ["*.tf", "*.tf.json", ".terraform.lock.hcl"],
+      "category": "dependencies",
+      "ecosystem": "cloud",
+      "reclaimability": "reclaimable",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "Terraform providers and modules for this configuration — `terraform init` downloads them again.",
+      "rebuildCost": "networked"
+    },
+    {
+      "names": [".terragrunt-cache"],
+      "category": "caches",
+      "ecosystem": "cloud",
+      "reclaimability": "reclaimable",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "Terragrunt's working copies of modules — rebuilt on the next run.",
+      "rebuildCost": "networked"
+    },
+    {
+      "names": ["cdk.out"],
+      "requiresSibling": ["cdk.json"],
+      "category": "buildArtifacts",
+      "ecosystem": "cloud",
+      "reclaimability": "reclaimable",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "AWS CDK synthesized templates and assets — `cdk synth` recreates them.",
+      "rebuildCost": "cheap"
+    },
+    {
+      "names": [".aws-sam", ".serverless"],
+      "requiresSibling": ["template.yaml", "template.yml", "samconfig.toml", "serverless.yml", "serverless.yaml", "serverless.ts"],
+      "category": "buildArtifacts",
+      "ecosystem": "cloud",
+      "reclaimability": "reclaimable",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "AWS SAM / Serverless build output — the next build or deploy recreates it.",
+      "rebuildCost": "cheap"
+    },
+    {
+      "names": ["Android", "sdk"],
       "category": "sdksSimulators",
       "ecosystem": "android",
       "reclaimability": "keep",
@@ -307,37 +466,402 @@
       "rebuildCost": "networked"
     },
     {
-      "names": [
-        ".android"
-      ],
+      "names": [".android"],
       "category": "sdksSimulators",
       "ecosystem": "android",
-      "reclaimability": "reviewFirst",
+      "reclaimability": "keep",
       "isToolRoot": true,
       "projectFromParent": false,
-      "whyLarge": "Android emulator AVDs and SDK extras.",
+      "whyLarge": "Android emulators plus your ADB keys and debug signing key — delete emulators from Android Studio's Device Manager instead.",
       "rebuildCost": "networked"
     },
     {
-      "names": [
-        ".cursor",
-        ".codex",
-        ".vscode",
-        ".idea",
-        ".claude"
-      ],
+      "names": [".cursor", ".codex", ".vscode", ".idea", ".claude"],
       "category": "other",
       "ecosystem": "ideAI",
-      "reclaimability": "reviewFirst",
+      "reclaimability": "keep",
       "isToolRoot": true,
       "projectFromParent": false,
-      "whyLarge": "IDE or AI-tool caches, indexes, and local state.",
+      "whyLarge": "IDE or AI-tool settings, extensions, history and local state — not a cache; clear caches from the tool itself.",
       "rebuildCost": "cheap"
     },
     {
-      "names": [
-        "Windows.old"
-      ],
+      "names": [".ollama", ".lmstudio"],
+      "category": "caches",
+      "ecosystem": "ai",
+      "reclaimability": "keep",
+      "isToolRoot": true,
+      "projectFromParent": false,
+      "whyLarge": "Downloaded AI models plus the tool's own state — remove individual models from the tool itself (`ollama rm <model>`, LM Studio → My Models).",
+      "rebuildCost": "networked"
+    },
+    {
+      "names": ["huggingface"],
+      "requiresParent": [".cache"],
+      "category": "caches",
+      "ecosystem": "ai",
+      "reclaimability": "reviewFirst",
+      "isToolRoot": true,
+      "projectFromParent": false,
+      "whyLarge": "Hugging Face hub cache — model and dataset downloads. `huggingface-cli delete-cache` prunes it.",
+      "rebuildCost": "networked"
+    },
+    {
+      "names": ["*.runs"],
+      "requiresSibling": ["*.xpr"],
+      "skipIfTracked": true,
+      "category": "buildArtifacts",
+      "ecosystem": "fpga",
+      "reclaimability": "reviewFirst",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "Vivado synthesis and implementation runs — checkpoints, reports and bitstreams. Re-running the flow recreates them, but that can take hours.",
+      "rebuildCost": "cheap"
+    },
+    {
+      "names": ["*.cache", "*.sim", "*.ip_user_files"],
+      "requiresSibling": ["*.xpr"],
+      "skipIfTracked": true,
+      "category": "buildArtifacts",
+      "ecosystem": "fpga",
+      "reclaimability": "reclaimable",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "Vivado's IP cache, simulation runs and exported IP files — regenerated from the project.",
+      "rebuildCost": "cheap"
+    },
+    {
+      "names": ["*.gen"],
+      "requiresSibling": ["*.xpr"],
+      "skipIfTracked": true,
+      "category": "buildArtifacts",
+      "ecosystem": "fpga",
+      "reclaimability": "reviewFirst",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "IP output Vivado generated for this project — `generate_target` recreates it.",
+      "rebuildCost": "cheap"
+    },
+    {
+      "names": [".Xil"],
+      "category": "buildArtifacts",
+      "ecosystem": "fpga",
+      "reclaimability": "reclaimable",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "Vivado/Vitis scratch folder — temporary files the tools recreate.",
+      "rebuildCost": "free"
+    },
+    {
+      "names": ["db", "incremental_db", "qdb", "tmp-clearbox", "greybox_tmp"],
+      "requiresSibling": ["*.qpf", "*.qsf"],
+      "skipIfTracked": true,
+      "category": "buildArtifacts",
+      "ecosystem": "fpga",
+      "reclaimability": "reclaimable",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "Quartus compilation databases — the next compile rebuilds them.",
+      "rebuildCost": "cheap"
+    },
+    {
+      "names": ["output_files"],
+      "requiresSibling": ["*.qpf", "*.qsf"],
+      "skipIfTracked": true,
+      "category": "buildArtifacts",
+      "ecosystem": "fpga",
+      "reclaimability": "reviewFirst",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "Quartus outputs — reports and programming files (.sof/.pof). A full compile recreates them; keep a bitstream you ship.",
+      "rebuildCost": "cheap"
+    },
+    {
+      "names": ["work", "*_lib"],
+      "requiresChild": ["_info", "_lib.qdb", "_lib*.qdb", "_vmake"],
+      "skipIfTracked": true,
+      "category": "buildArtifacts",
+      "ecosystem": "fpga",
+      "reclaimability": "reclaimable",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "A compiled ModelSim/Questa library — `vlog`/`vcom` rebuild it from your HDL sources.",
+      "rebuildCost": "cheap"
+    },
+    {
+      "names": ["obj_dir"],
+      "requiresChild": ["*.mk"],
+      "skipIfTracked": true,
+      "category": "buildArtifacts",
+      "ecosystem": "fpga",
+      "reclaimability": "reclaimable",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "Verilator's generated C++ model and objects — rebuilt from your Verilog by the next `verilator` run.",
+      "rebuildCost": "cheap"
+    },
+    {
+      "names": ["sim_build"],
+      "requiresSibling": ["Makefile", "*.py"],
+      "skipIfTracked": true,
+      "category": "buildArtifacts",
+      "ecosystem": "fpga",
+      "reclaimability": "reclaimable",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "cocotb simulation build — recreated by the next `make`.",
+      "rebuildCost": "cheap"
+    },
+    {
+      "names": ["runs"],
+      "requiresSibling": ["config.json", "config.tcl", "config.yaml"],
+      "requiresChild": ["RUN_*", "*_run_*"],
+      "skipIfTracked": true,
+      "category": "buildArtifacts",
+      "ecosystem": "fpga",
+      "reclaimability": "reviewFirst",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "OpenLane flow runs — logs, intermediate layouts and results. Re-running the flow recreates them, but it can take hours; keep the run you tape out.",
+      "rebuildCost": "cheap"
+    },
+    {
+      "names": ["*-backups"],
+      "requiresSibling": ["*.kicad_pro", "*.pro"],
+      "skipIfTracked": true,
+      "category": "other",
+      "ecosystem": "pcb",
+      "reclaimability": "reviewFirst",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "KiCad's automatic zip backups made on every save — your current design files are separate; old backups are safe to prune.",
+      "rebuildCost": "cheap"
+    },
+    {
+      "names": [".history"],
+      "requiresSibling": ["*.kicad_pro"],
+      "skipIfTracked": true,
+      "category": "other",
+      "ecosystem": "pcb",
+      "reclaimability": "reviewFirst",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "KiCad's local history of this project.",
+      "rebuildCost": "cheap"
+    },
+    {
+      "names": ["History"],
+      "requiresSibling": ["*.PrjPcb", "*.PrjPcbStructure"],
+      "skipIfTracked": true,
+      "category": "other",
+      "ecosystem": "pcb",
+      "reclaimability": "reviewFirst",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "Altium's local file history — older versions of your schematic and PCB documents.",
+      "rebuildCost": "cheap"
+    },
+    {
+      "names": ["__Previews", "Project Logs for *"],
+      "requiresSibling": ["*.PrjPcb", "*.SchDoc", "*.PcbDoc"],
+      "skipIfTracked": true,
+      "category": "buildArtifacts",
+      "ecosystem": "pcb",
+      "reclaimability": "reclaimable",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "Altium previews and project logs — recreated as you work.",
+      "rebuildCost": "free"
+    },
+    {
+      "names": ["Project Outputs for *"],
+      "requiresSibling": ["*.PrjPcb"],
+      "skipIfTracked": true,
+      "category": "buildArtifacts",
+      "ecosystem": "pcb",
+      "reclaimability": "reviewFirst",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "Generated fabrication outputs (Gerbers, drill, BOM) — regenerated from the OutJob; keep a set you sent to the fab.",
+      "rebuildCost": "cheap"
+    },
+    {
+      "names": [".pio"],
+      "requiresSibling": ["platformio.ini"],
+      "category": "buildArtifacts",
+      "ecosystem": "embedded",
+      "reclaimability": "reclaimable",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "PlatformIO build output and downloaded libraries for this project — rebuilt on the next build.",
+      "rebuildCost": "networked"
+    },
+    {
+      "names": ["staging"],
+      "requiresParent": ["Arduino15"],
+      "category": "caches",
+      "ecosystem": "embedded",
+      "reclaimability": "reclaimable",
+      "isToolRoot": true,
+      "projectFromParent": false,
+      "whyLarge": "Arduino's download cache for boards and libraries already installed.",
+      "rebuildCost": "networked"
+    },
+    {
+      "names": ["slprj", "*_ert_rtw", "*_grt_rtw", "*_ert_shrlib_rtw"],
+      "category": "buildArtifacts",
+      "ecosystem": "matlab",
+      "reclaimability": "reclaimable",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "Simulink build cache and generated code — recreated when the model builds.",
+      "rebuildCost": "cheap"
+    },
+    {
+      "names": ["Journals", "CollaborationCache"],
+      "requiresParent": ["Autodesk Revit *"],
+      "category": "caches",
+      "ecosystem": "cad",
+      "reclaimability": "reclaimable",
+      "isToolRoot": true,
+      "projectFromParent": false,
+      "whyLarge": "Revit session journals and the local copy of cloud models — Revit writes new ones and re-downloads models as needed.",
+      "rebuildCost": "networked"
+    },
+    {
+      "names": ["PacCache"],
+      "requiresParent": ["Revit"],
+      "category": "caches",
+      "ecosystem": "cad",
+      "reclaimability": "reclaimable",
+      "isToolRoot": true,
+      "projectFromParent": false,
+      "whyLarge": "Revit's package cache — refilled on demand.",
+      "rebuildCost": "networked"
+    },
+    {
+      "names": ["*_backup"],
+      "requiresChild": ["*.rvt", "*.rfa"],
+      "skipIfTracked": true,
+      "category": "other",
+      "ecosystem": "cad",
+      "reclaimability": "reviewFirst",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "Revit's backup folder for a central model — older saves; the central model itself is separate.",
+      "rebuildCost": "cheap"
+    },
+    {
+      "names": ["Library", "Temp", "Obj"],
+      "requiresSibling": ["ProjectSettings"],
+      "skipIfTracked": true,
+      "category": "buildArtifacts",
+      "ecosystem": "gameEngines",
+      "reclaimability": "reclaimable",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "Unity's import cache and build scratch — Unity re-imports the project on next open (it takes a while).",
+      "rebuildCost": "cheap"
+    },
+    {
+      "names": ["DerivedDataCache", "Intermediate"],
+      "requiresSibling": ["*.uproject", "*.uplugin"],
+      "skipIfTracked": true,
+      "category": "buildArtifacts",
+      "ecosystem": "gameEngines",
+      "reclaimability": "reclaimable",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "Unreal's derived data and intermediate build files — regenerated on the next build or editor launch.",
+      "rebuildCost": "cheap"
+    },
+    {
+      "names": [".godot", ".import"],
+      "requiresSibling": ["project.godot"],
+      "category": "buildArtifacts",
+      "ecosystem": "gameEngines",
+      "reclaimability": "reclaimable",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "Godot's import cache — re-imported when the project opens.",
+      "rebuildCost": "free"
+    },
+    {
+      "names": ["shadercache"],
+      "requiresParent": ["steamapps"],
+      "category": "caches",
+      "ecosystem": "games",
+      "reclaimability": "reclaimable",
+      "isToolRoot": true,
+      "projectFromParent": false,
+      "whyLarge": "Steam's precompiled shaders — rebuilt as you play (first launches may stutter briefly).",
+      "rebuildCost": "free"
+    },
+    {
+      "names": ["DXCache", "GLCache", "VkCache", "DxcCache"],
+      "requiresParent": ["NVIDIA", "AMD"],
+      "category": "caches",
+      "ecosystem": "games",
+      "reclaimability": "reclaimable",
+      "isToolRoot": true,
+      "projectFromParent": false,
+      "whyLarge": "Your graphics driver's shader cache — rebuilt as games and apps run.",
+      "rebuildCost": "free"
+    },
+    {
+      "names": ["NV_Cache"],
+      "requiresParent": ["NVIDIA Corporation"],
+      "category": "caches",
+      "ecosystem": "games",
+      "reclaimability": "reclaimable",
+      "isToolRoot": true,
+      "projectFromParent": false,
+      "whyLarge": "NVIDIA's compute/shader cache — rebuilt on demand.",
+      "rebuildCost": "free"
+    },
+    {
+      "names": ["D3DSCache"],
+      "category": "caches",
+      "ecosystem": "games",
+      "reclaimability": "reclaimable",
+      "isToolRoot": true,
+      "projectFromParent": false,
+      "whyLarge": "DirectX shader cache — Windows rebuilds it as games run.",
+      "rebuildCost": "free"
+    },
+    {
+      "names": ["Media Cache Files", "Media Cache", "Peak Files"],
+      "requiresParent": ["Common"],
+      "category": "caches",
+      "ecosystem": "media",
+      "reclaimability": "reclaimable",
+      "isToolRoot": true,
+      "projectFromParent": false,
+      "whyLarge": "Adobe's media cache (conformed audio, peak files) — Premiere and After Effects rebuild it when you open projects.",
+      "rebuildCost": "free"
+    },
+    {
+      "names": ["CacheClip"],
+      "category": "caches",
+      "ecosystem": "media",
+      "reclaimability": "reclaimable",
+      "isToolRoot": true,
+      "projectFromParent": false,
+      "whyLarge": "DaVinci Resolve render cache — Resolve re-renders it as needed.",
+      "rebuildCost": "free"
+    },
+    {
+      "names": ["* Previews.lrdata"],
+      "category": "caches",
+      "ecosystem": "media",
+      "reclaimability": "reclaimable",
+      "isToolRoot": true,
+      "projectFromParent": false,
+      "whyLarge": "Lightroom Classic preview cache — rebuilt as you browse the catalog. (Smart Previews are separate and not offered.)",
+      "rebuildCost": "free"
+    },
+    {
+      "names": ["Windows.old"],
       "category": "other",
       "ecosystem": "other",
       "reclaimability": "reviewFirst",
@@ -345,20 +869,6 @@
       "projectFromParent": false,
       "whyLarge": "Files kept from a previous Windows install — the OS can reclaim it via Disk Cleanup.",
       "rebuildCost": "cheap"
-    },
-    {
-      "names": [
-        "LocalState",
-        "DockerDesktopWSL",
-        "wsl"
-      ],
-      "category": "containers",
-      "ecosystem": "docker",
-      "reclaimability": "keep",
-      "isToolRoot": true,
-      "projectFromParent": false,
-      "whyLarge": "WSL/package state — an ext4.vhdx in here IS the distro's disk; recycling it destroys the distro (trash is unsafe).",
-      "rebuildCost": "networked"
     }
   ],
   "_rebuildCost": "free: regenerated automatically and offline the next time the tool runs. cheap: an offline rebuild (CPU time). networked: re-downloaded from a registry or vendor. A dependency folder whose project has no lockfile is reported as networked-unpinned: reinstalling may not reproduce what you have.",
@@ -386,7 +896,11 @@
       "CMakeLists.txt",
       "global.json",
       "Directory.Build.props",
-      "Directory.Build.targets"
+      "Directory.Build.targets",
+      "platformio.ini",
+      "project.godot",
+      "vcpkg.json",
+      "cdk.json"
     ],
     "suffixes": [
       ".csproj",
@@ -398,7 +912,15 @@
       ".sln",
       ".slnx",
       ".xcodeproj",
-      ".xcworkspace"
+      ".xcworkspace",
+      ".xpr",
+      ".qpf",
+      ".kicad_pro",
+      ".PrjPcb",
+      ".uvprojx",
+      ".ewp",
+      ".uproject",
+      ".prj"
     ]
   },
   "lockfiles": {

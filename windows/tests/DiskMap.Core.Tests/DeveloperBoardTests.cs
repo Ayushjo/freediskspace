@@ -144,7 +144,7 @@ public class DeveloperBoardTests
             Item(DeveloperEcosystem.Dotnet, 0),
         };
         var all = DeveloperBoard.Tiles(items, 9);
-        Assert.Equal(["Node.js", "Rust", "Python", "Docker"], all.Select(t => t.Title).ToArray());
+        Assert.Equal(["Node.js", "Rust", "Python", "Docker & WSL"], all.Select(t => t.Title).ToArray());
         Assert.Equal(80, all[0].Bytes);
         Assert.Equal(50, all[0].RebuildBytes);   // only Reclaimable counts as rebuilding
         Assert.Equal(0, all[3].RebuildBytes);

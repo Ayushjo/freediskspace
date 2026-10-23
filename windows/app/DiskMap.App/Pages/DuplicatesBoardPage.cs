@@ -1083,7 +1083,8 @@ internal static class DuplicateSearch
             {
                 report(() => Phase = DuplicateScanPhase.Collecting);
                 var files = DuplicateFinder.SizeCollidingCandidates(tree, root, cts.Token,
-                    (examined, candidates) => report(() => { Examined = examined; CandidateCount = candidates; }));
+                    (examined, candidates) => report(() => { Examined = examined; CandidateCount = candidates; }),
+                    minBytes: 1_000_000);
                 cts.Token.ThrowIfCancellationRequested();
                 report(() => Phase = DuplicateScanPhase.Grouping);
                 return await DuplicateFinder.FindDuplicatesAsync(files,

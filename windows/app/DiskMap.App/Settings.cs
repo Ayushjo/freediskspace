@@ -24,6 +24,12 @@ public sealed class AppSettings
     [JsonPropertyName("showTray")] public bool ShowTray { get; set; } = true;
     /// <summary>Which copy Duplicates keeps (Mac: Duplicates.Keep): oldest | newest | shortestPath.</summary>
     [JsonPropertyName("duplicatesKeep")] public string DuplicatesKeep { get; set; } = "oldest";
+    /// <summary>Onboarding: what the person does (profiles.json role ids) — empty = skipped.</summary>
+    [JsonPropertyName("roles")] public List<string> Roles { get; set; } = [];
+    /// <summary>Onboarding: the tools they picked (profiles.json tool ids).</summary>
+    [JsonPropertyName("tools")] public List<string> Tools { get; set; } = [];
+    /// <summary>True once onboarding was finished or skipped — it shows on first launch only.</summary>
+    [JsonPropertyName("onboarded")] public bool Onboarded { get; set; }
 
     private static string Path0 => System.IO.Path.Combine(DiskMap.Core.UserFolders.StateDirectory, "settings.json");
 

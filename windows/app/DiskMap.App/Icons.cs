@@ -80,6 +80,27 @@ public static class Icons
     public const string Bubble = "BsCircle";
     public const string Diagram = "BsDiagram3";
 
+    // Onboarding roles
+    public const string Chip = "BsCpu";
+    public const string Building = "BsBuilding";
+    public const string Gamepad = "BsController";
+    public const string Cloud = "BsCloud";
+    public const string Windows = "BsWindows";
+    public const string Home = "BsHouse";
+
+    public static string ForRole(string roleId) => roleId switch
+    {
+        "software" => Code,
+        "windows" => Windows,
+        "cloud" => Cloud,
+        "hardware" => Chip,
+        "data" => BarChart,
+        "architect" => Building,
+        "creator" => Video,
+        "gamer" => Gamepad,
+        _ => Home,
+    };
+
     // Developer ecosystems (Simple Icons via react-icons/si)
     public const string NextJs = "SiNextdotjs";
     public const string NodeJs = "SiNodedotjs";
@@ -129,7 +150,13 @@ public static class Icons
         DeveloperEcosystem.Jvm when path?.Contains("maven", StringComparison.OrdinalIgnoreCase) == true => Maven,
         DeveloperEcosystem.Jvm => Gradle,
         DeveloperEcosystem.IdeAi when path?.Contains(".idea", StringComparison.OrdinalIgnoreCase) == true => JetBrains,
-        DeveloperEcosystem.IdeAi => OpenAi,
+        DeveloperEcosystem.IdeAi or DeveloperEcosystem.Ai => OpenAi,
+        DeveloperEcosystem.Fpga or DeveloperEcosystem.Pcb or DeveloperEcosystem.Embedded => Chip,
+        DeveloperEcosystem.Matlab => BarChart,
+        DeveloperEcosystem.Cad => Building,
+        DeveloperEcosystem.Games or DeveloperEcosystem.GameEngines => Gamepad,
+        DeveloperEcosystem.Media => Video,
+        DeveloperEcosystem.Cloud => Cloud,
         _ => Code,
     };
 }

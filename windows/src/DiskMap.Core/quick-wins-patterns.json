@@ -23,7 +23,6 @@
     "%LOCALAPPDATA%\\NuGet\\plugins-cache",
     "%USERPROFILE%\\.gradle\\caches",
     "%USERPROFILE%\\.cargo\\registry",
-    "%USERPROFILE%\\.rustup\\toolchains",
     "%LOCALAPPDATA%\\Android\\Sdk\\system-images",
     "%LOCALAPPDATA%\\Microsoft\\Windows\\INetCache",
     "%LOCALAPPDATA%\\CrashDumps",
@@ -55,7 +54,6 @@
     "%LOCALAPPDATA%\\NuGet\\plugins-cache": "Development caches",
     "%USERPROFILE%\\.gradle\\caches": "Development caches",
     "%USERPROFILE%\\.cargo\\registry": "Development caches",
-    "%USERPROFILE%\\.rustup\\toolchains": "Development toolchains",
     "%LOCALAPPDATA%\\Android\\Sdk\\system-images": "Device support files",
     "%LOCALAPPDATA%\\Microsoft\\Windows\\INetCache": "System caches",
     "%LOCALAPPDATA%\\CrashDumps": "Diagnostics",
@@ -69,7 +67,6 @@
     { "title": "Development dependencies", "note": "Recreated by your package manager's install or the next build." },
     { "title": "Build outputs", "note": "Rebuilt from your source on the next build." },
     { "title": "Development caches", "note": "Package and build caches re-download or rebuild when a tool needs them." },
-    { "title": "Development toolchains", "note": "Installed toolchains. Removing one means installing it again before the next build." },
     { "title": "Device support files", "note": "Android system images re-download from Android Studio's SDK Manager. An emulator built on one stops working until you do." },
     { "title": "System caches", "note": "Windows and apps recreate these. Review what you don't recognize." },
     { "title": "Diagnostics", "note": "Crash dumps and logs. Nothing needs them unless you are debugging a crash." }

@@ -53,6 +53,11 @@ public sealed class DeveloperBoardPage : UserControl
     /// <summary>Set from a tool tile: Every item shows only that tool.</summary>
     private DeveloperEcosystem? _ecosystemFilter;
     private readonly HashSet<string> _openTools = [];
+    /// <summary>Onboarding's answers; their tools are what this page shows (null profile = everything).</summary>
+    private readonly AppSettings _setup = AppSettings.Load();
+    private readonly HashSet<DeveloperEcosystem>? _profile;
+    /// <summary>Tools outside the profile shown anyway, from "Also found on this PC".</summary>
+    private readonly HashSet<DeveloperEcosystem> _alsoShown = [];
     private Rd.WidthClass _class = Rd.WidthClass.Regular;
     private object? _scanFor;
     private double _listOffset;
@@ -68,9 +73,11 @@ public sealed class DeveloperBoardPage : UserControl
     private static (FileTree Tree, long[] Totals)? _building;
     private static (DeveloperCatalogResult Result, DeveloperFolders Folders)? _folders;
     private static (FileTree Tree, long[] Totals, List<SystemStorageCatalog.Item> Items)? _tools;
+    private static (DeveloperCatalogResult Full, string Key, DeveloperCatalogResult Shown)? _profiled;
 
     public DeveloperBoardPage()
     {
+        _profile = UserProfiles.EcosystemsFor(_setup.Roles, _setup.Tools);
         Background = Ui.Brush("RdPage");
         Content = _layout;
         ModelEvents.WhileLoaded(this, Rebuild);
@@ -180,6 +187,21 @@ public sealed class DeveloperBoardPage : UserControl
         return items;
     }
 
+    /// <summary>
+    /// The catalog as the profile shows it: its tools plus any "also found" ones. Kept per catalog
+    /// and choice, so the folder rollup (cached per catalog) isn't redone on every rebuild.
+    /// </summary>
+    private DeveloperCatalogResult Profiled(DeveloperCatalogResult full)
+    {
+        if (_profile is null) return full;
+        var shown = _profile.Union(_alsoShown).ToHashSet();
+        string key = string.Join(",", shown.Order());
+        if (_profiled is { } p && ReferenceEquals(p.Full, full) && p.Key == key) return p.Shown;
+        var result = DeveloperCatalog.Only(full, shown);
+        _profiled = (full, key, result);
+        return result;
+    }
+
     private static int CurrentWhere(DeveloperFolders folders, int? whereFolder) =>
         whereFolder is { } id && folders.Folders.ContainsKey(id) ? id : folders.AutoStart();
 
@@ -210,13 +232,14 @@ public sealed class DeveloperBoardPage : UserControl
             _selection = null;
         }
         var totals = Model.Totals;
-        if (Catalog(tree, totals, () => { if (IsLoaded) Rebuild(); }) is not { } catalog)
+        if (Catalog(tree, totals, () => { if (IsLoaded) Rebuild(); }) is not { } full)
         {
             _layout.Children.Add(LoadingState("Sorting developer storage…", ""));
             return;
         }
+        var catalog = Profiled(full);
 
-        var main = MainColumn(tree, root, catalog);
+        var main = MainColumn(tree, root, catalog, full);
         bool showInspector = _class != Rd.WidthClass.Compact || _selection is not null;
         _layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         _layout.Children.Add(main);
@@ -262,7 +285,7 @@ public sealed class DeveloperBoardPage : UserControl
         if (Model.Tree is { } tree && Model.RootPath is { } root && _built is { } b && ReferenceEquals(b.Tree, tree))
         {
             _listOffset = 0;
-            RenderBody(tree, root, b.Result);
+            RenderBody(tree, root, Profiled(b.Result));
         }
     }
 
@@ -272,7 +295,7 @@ public sealed class DeveloperBoardPage : UserControl
         Dispatcher.InvokeAsync(Rebuild);
     }
 
-    private FrameworkElement MainColumn(FileTree tree, string root, DeveloperCatalogResult catalog)
+    private FrameworkElement MainColumn(FileTree tree, string root, DeveloperCatalogResult catalog, DeveloperCatalogResult full)
     {
         double pad = _class.PagePadding();
         double gap = _class.Gap();
@@ -281,6 +304,7 @@ public sealed class DeveloperBoardPage : UserControl
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         var top = new StackPanel { Margin = new Thickness(pad, _class == Rd.WidthClass.Compact ? 14 : 20, pad, 12) };
         var parts = new List<FrameworkElement> { Header(catalog.Summary) };
+        if (ProfileStrip(full) is { } strip) parts.Add(strip);
         if (Notice(catalog.Summary) is { } notice) parts.Add(notice);
         if (ToolTiles(catalog) is { } tiles) parts.Add(tiles);
         parts.Add(TabRow(tree, root, catalog));
@@ -334,6 +358,37 @@ public sealed class DeveloperBoardPage : UserControl
         titles.Children.Add(sub);
         dock.Children.Add(titles);
         return dock;
+    }
+
+    /// <summary>
+    /// "Showing your tools: … Change · Also found on this PC: Python · 3 GB +": what the profile
+    /// shows, and one click to show a tool it leaves out. Nothing without a profile.
+    /// </summary>
+    private FrameworkElement? ProfileStrip(DeveloperCatalogResult full)
+    {
+        if (_profile is null) return null;
+        var strip = new WrapPanel();
+        var picked = UserProfiles.Tools.Where(t => _setup.Tools.Contains(t.Id)).Select(t => t.Title).ToList();
+        string mine = picked.Count > 0
+            ? "Showing your tools: " + string.Join(", ", picked.Take(6)) + (picked.Count > 6 ? $" +{picked.Count - 6}" : "")
+            : "Showing tools for: " + string.Join(", ", UserProfiles.Roles.Where(r => _setup.Roles.Contains(r.Id)).Select(r => r.Title));
+        strip.Children.Add(Rd.Text(mine, 13, null, "RdInk2"));
+        strip.Children.Add(QuietButton("Change", () => Model.RequestOnboarding()));
+        var hidden = DeveloperBoard.Tiles(
+            full.Items.Where(i => !_profile.Contains(i.Ecosystem) && !_alsoShown.Contains(i.Ecosystem)), int.MaxValue);
+        if (hidden.Count > 0)
+        {
+            var also = Rd.MonoLabel("Also found on this PC");
+            also.Margin = new Thickness(12, 0, 4, 0);
+            strip.Children.Add(also);
+            foreach (var tile in hidden)
+                if (tile.Ecosystem is { } eco)
+                    strip.Children.Add(QuietButton($"{tile.Title} · {ShellFormat.HeroBytes(tile.Bytes)} +",
+                        () => { _alsoShown.Add(eco); Rebuild(); }));
+        }
+        if (_alsoShown.Count > 0)
+            strip.Children.Add(QuietButton("Back to my tools", () => { _alsoShown.Clear(); Rebuild(); }));
+        return strip;
     }
 
     /// <summary>One notice: stale projects, unpinned dependencies, or nothing.</summary>

@@ -51,6 +51,7 @@ FILES = [
     (r"Projects\rust-tool\target\debug\deps\rust_tool.rlib", 9.6 * GB, 45),
     (r"Projects\rust-tool\Cargo.toml", 2_000, 45),
     (r"Projects\ml-experiments\.venv\Lib\site-packages\torch\lib\torch_cpu.dll", 4.1 * GB, 70),
+    (r"Projects\ml-experiments\.venv\pyvenv.cfg", 200, 70),
     (r"Projects\ml-experiments\requirements.txt", 1_000, 70),
     # The Mac demo's Xcode / simulator / Homebrew caches, as their Windows counterparts.
     (r".gradle\caches\transforms-4\objects.bin", 14.8 * GB, 20),

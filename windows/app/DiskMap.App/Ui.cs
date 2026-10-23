@@ -710,6 +710,8 @@ public static class Ui
         var b = Subtle(body);
         b.HorizontalAlignment = HorizontalAlignment.Center;
         b.TextAlignment = TextAlignment.Center;
+        b.TextWrapping = TextWrapping.Wrap;   // the inspector is narrow — never cut the sentence off
+        b.MaxWidth = 440;
         stack.Children.Add(icon);
         stack.Children.Add(new Border { Height = 12 });
         stack.Children.Add(t);
@@ -991,7 +993,9 @@ public static class Ui
 
     public static DateTime? DayToDate(int modifiedDay)
     {
-        if (modifiedDay <= 0) return null;
+        // Before 1990 is a placeholder (zip/DOS "no date" = 1 Jan 1980), not
+        // a real edit — show "—", not "46 years ago".
+        if (modifiedDay <= 7_305) return null;
         return DateTimeOffset.FromUnixTimeSeconds((long)modifiedDay * 86_400).LocalDateTime;
     }
 

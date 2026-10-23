@@ -67,6 +67,7 @@ public static class DeveloperCategoryExtensions
 public enum DeveloperEcosystem
 {
     Node, Docker, Dotnet, Python, Android, Rust, Flutter, Jvm, IdeAi, Other,
+    Go, Cpp, Embedded, Fpga, Pcb, Matlab, Cad, GameEngines, Games, Media, Cloud, Ai,
 }
 
 public static class DeveloperEcosystemExtensions
@@ -74,14 +75,26 @@ public static class DeveloperEcosystemExtensions
     public static string Title(this DeveloperEcosystem ecosystem) => ecosystem switch
     {
         DeveloperEcosystem.Node => "Node.js",
-        DeveloperEcosystem.Docker => "Docker",
+        DeveloperEcosystem.Docker => "Docker & WSL",
         DeveloperEcosystem.Dotnet => ".NET / Visual Studio",
         DeveloperEcosystem.Python => "Python",
         DeveloperEcosystem.Android => "Android",
         DeveloperEcosystem.Rust => "Rust",
         DeveloperEcosystem.Flutter => "Flutter / Dart",
         DeveloperEcosystem.Jvm => "JVM / Gradle",
-        DeveloperEcosystem.IdeAi => "IDE / AI",
+        DeveloperEcosystem.IdeAi => "IDE / AI tools",
+        DeveloperEcosystem.Go => "Go",
+        DeveloperEcosystem.Cpp => "C / C++",
+        DeveloperEcosystem.Embedded => "Embedded & firmware",
+        DeveloperEcosystem.Fpga => "FPGA & HDL",
+        DeveloperEcosystem.Pcb => "PCB design",
+        DeveloperEcosystem.Matlab => "MATLAB & Simulink",
+        DeveloperEcosystem.Cad => "CAD & BIM",
+        DeveloperEcosystem.GameEngines => "Game engines",
+        DeveloperEcosystem.Games => "Games",
+        DeveloperEcosystem.Media => "Video & photo apps",
+        DeveloperEcosystem.Cloud => "Cloud & infrastructure",
+        DeveloperEcosystem.Ai => "AI models",
         _ => "Other",
     };
 }
@@ -322,6 +335,12 @@ public static partial class DeveloperCatalog
         public RebuildCost RebuildCost { get; init; } = RebuildCost.Cheap;
         /// <summary>Set for dependency folders whose reproducibility depends on a lockfile.</summary>
         public string? LockEcosystem { get; init; }
+        // Evidence — see the rules file's comment. Empty = no requirement.
+        public Glob[] RequiresSibling { get; init; } = [];
+        public Glob[] RequiresChild { get; init; } = [];
+        public Glob[] RequiresParent { get; init; } = [];
+        public Glob[] ForbidSibling { get; init; } = [];
+        public bool SkipIfTracked { get; init; }
     }
 
     // JSON decode shapes — snake_case property names.
@@ -336,6 +355,37 @@ public static partial class DeveloperCatalog
         [JsonPropertyName("whyLarge")] public string WhyLarge { get; set; } = "";
         [JsonPropertyName("rebuildCost")] public string? RebuildCost { get; set; }
         [JsonPropertyName("lockEcosystem")] public string? LockEcosystem { get; set; }
+        [JsonPropertyName("requiresSibling")] public List<string> RequiresSibling { get; set; } = [];
+        [JsonPropertyName("requiresChild")] public List<string> RequiresChild { get; set; } = [];
+        [JsonPropertyName("requiresParent")] public List<string> RequiresParent { get; set; } = [];
+        [JsonPropertyName("forbidSibling")] public List<string> ForbidSibling { get; set; } = [];
+        [JsonPropertyName("skipIfTracked")] public bool SkipIfTracked { get; set; }
+    }
+
+    /// <summary>
+    /// A case-insensitive name pattern: exact, or with one `*` (prefix*,
+    /// *suffix, pre*post) — all the rules file needs, and a prefix/suffix
+    /// test per folder keeps a millions-of-folders pass cheap.
+    /// </summary>
+    internal readonly record struct Glob(string Prefix, string? Suffix)
+    {
+        public static Glob Parse(string pattern)
+        {
+            int star = pattern.IndexOf('*');
+            return star < 0 ? new Glob(pattern, null) : new Glob(pattern[..star], pattern[(star + 1)..]);
+        }
+
+        public bool IsMatch(string name) => Suffix is null
+            ? name.Equals(Prefix, StringComparison.OrdinalIgnoreCase)
+            : name.Length >= Prefix.Length + Suffix.Length
+              && name.StartsWith(Prefix, StringComparison.OrdinalIgnoreCase)
+              && name.EndsWith(Suffix, StringComparison.OrdinalIgnoreCase);
+
+        public static bool Any(Glob[] globs, string name)
+        {
+            foreach (var g in globs) if (g.IsMatch(name)) return true;
+            return false;
+        }
     }
 
     private sealed class ManifestsBlock
@@ -426,6 +476,11 @@ public static partial class DeveloperCatalog
                 RebuildCost = entry.RebuildCost is { } rc && TryEnum<RebuildCost>(rc, out var cost)
                     ? cost : RebuildCost.Cheap,
                 LockEcosystem = entry.LockEcosystem,
+                RequiresSibling = entry.RequiresSibling.Select(Glob.Parse).ToArray(),
+                RequiresChild = entry.RequiresChild.Select(Glob.Parse).ToArray(),
+                RequiresParent = entry.RequiresParent.Select(Glob.Parse).ToArray(),
+                ForbidSibling = entry.ForbidSibling.Select(Glob.Parse).ToArray(),
+                SkipIfTracked = entry.SkipIfTracked,
             };
         }).Where(r => r is not null).Cast<Rule>().ToList();
 
@@ -441,14 +496,37 @@ public static partial class DeveloperCatalog
     /// <summary>For tests: how many rules the bundled file produced.</summary>
     internal static int LoadedRuleCount => LoadRules().Count;
 
-    private static readonly Lazy<Dictionary<string, Rule>> NameToRuleLazy = new(() =>
+    /// <summary>Rules by exact name, plus the wildcard ones — both in file order.</summary>
+    private sealed class RuleIndex
     {
-        var map = new Dictionary<string, Rule>(StringComparer.OrdinalIgnoreCase);
-        foreach (var rule in LoadRules())
-            foreach (var name in rule.Names)
-                map[name] = rule;   // a later rule wins for a duplicate name
-        return map;
-    });
+        public readonly Dictionary<string, List<Rule>> Exact = new(StringComparer.OrdinalIgnoreCase);
+        public readonly List<(Glob Glob, Rule Rule)> Wildcards = [];
+
+        public RuleIndex(List<Rule> rules)
+        {
+            foreach (var rule in rules)
+                foreach (var name in rule.Names)
+                {
+                    var glob = Glob.Parse(name);
+                    if (glob.Suffix is null)
+                        (Exact.TryGetValue(name, out var list) ? list : Exact[name] = []).Add(rule);
+                    else
+                        Wildcards.Add((glob, rule));
+                }
+        }
+
+        /// <summary>Every rule naming this folder, in file order; null when none.</summary>
+        public List<Rule>? For(string name)
+        {
+            Exact.TryGetValue(name, out var exact);
+            var wild = Wildcards.Where(w => w.Glob.IsMatch(name)).Select(w => w.Rule).ToList();
+            if (wild.Count == 0) return exact;   // the shared list, never mutated
+            return [.. exact ?? [], .. wild];
+        }
+    }
+
+    private static readonly Lazy<RuleIndex> RulesLazy = new(() => new RuleIndex(LoadRules()));
+
 
     public static DeveloperCatalogResult Build(
         FileTree tree,
@@ -459,25 +537,32 @@ public static partial class DeveloperCatalog
     {
         if (totals.Length != tree.Count) return DeveloperCatalogResult.EmptyResult;
         if (today == 0) today = AgeMap.Today();
-        var nameToRule = NameToRuleLazy.Value;
+        var rules = RulesLazy.Value;
+        var locator = new ProjectLocator(tree, ManifestNames, ManifestSuffixes);
+        var gitignores = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
 
-        var hits = new List<(int Id, Rule Rule, long Bytes, string Path, string Name)>();
+        var hits = new List<(int Id, Rule Rule, long Bytes, string Path, string Name, string? Evidence)>();
         for (int i = 0; i < tree.Count; i++)
         {
             if (!tree.IsDirectory[i]) continue;
             string name = tree.NameOf(i);
-            if (!nameToRule.TryGetValue(name, out var rule)) continue;
+            if (rules.For(name) is not { } candidates) continue;
             long bytes = totals[i];
             if (bytes <= 0) continue;
             string path = tree.PathOf(i, rootPath);
-            if (!IsPlausibleHit(name, path, rule)) continue;
             if (StorageClassifier.IsSystemHolding(path)) continue;
             // A folder inside an installed app's directory is part of that
             // app, not a developer artifact — node_modules inside an
             // Electron app under Program Files, a site-packages bundled
             // with a product. Removing it breaks the app.
             if (CleanupQueue.IsInsideInstalledApp(path)) continue;
-            hits.Add((i, rule, bytes, path, name));
+            foreach (var rule in candidates)
+            {
+                if (!IsPlausibleHit(name, path, rule)) continue;
+                if (Evidence(tree, i, path, rule, locator, rootPath, gitignores) is not { } evidence) continue;
+                hits.Add((i, rule, bytes, path, name, evidence.Length > 0 ? evidence : null));
+                break;
+            }
         }
         // Biggest first; on a tie the outer folder first — a parent holding
         // only its matched child (Android -> Android\Sdk) has the same bytes,
@@ -487,7 +572,7 @@ public static partial class DeveloperCatalog
             : a.Path.Length.CompareTo(b.Path.Length));
 
         // Prefer outer directories: skip a hit whose ancestor is already kept.
-        var kept = new List<(int Id, Rule Rule, long Bytes, string Path, string Name)>();
+        var kept = new List<(int Id, Rule Rule, long Bytes, string Path, string Name, string? Evidence)>();
         var keptIds = new List<int>();
         foreach (var hit in hits)
         {
@@ -503,7 +588,6 @@ public static partial class DeveloperCatalog
         }
 
         var items = new List<DeveloperItem>(kept.Count);
-        var locator = new ProjectLocator(tree, ManifestNames, ManifestSuffixes);
         var lockfiles = LockfilesByEcosystem;
         string home = UserFolders.Home.TrimEnd('\\');
 
@@ -515,7 +599,7 @@ public static partial class DeveloperCatalog
             bool isProtected = CleanupQueue.IsExcludedPath(hit.Path) || safety.Level == SafetyLevel.Protected;
             var reclaim = hit.Rule.Reclaimability;
             if (isProtected) reclaim = DeveloperReclaimability.Keep;
-            var ecosystem = RefineEcosystem(hit.Rule, hit.Path, hit.Name);
+            var ecosystem = RefineEcosystem(hit.Rule, hit.Path, hit.Name, hit.Evidence);
             var category = RefineCategory(hit.Rule, hit.Path, hit.Name);
 
             string? projectKey = null, projectName = null, projectManifest = null;
@@ -581,6 +665,22 @@ public static partial class DeveloperCatalog
         items.Sort((a, b) => b.Bytes.CompareTo(a.Bytes));
         var projects = BuildProjects(items);
         EnrichProjects(projects, items, tree, rootPath, totals, today, locator);
+        return Result(items, projects, today);
+    }
+
+    /// <summary>
+    /// The catalog narrowed to <paramref name="ecosystems"/> (onboarding's profile): their items,
+    /// the projects holding any of them, and the summary and biggest wins over just those.
+    /// </summary>
+    public static DeveloperCatalogResult Only(DeveloperCatalogResult catalog, IReadOnlySet<DeveloperEcosystem> ecosystems)
+    {
+        var items = catalog.Items.Where(i => ecosystems.Contains(i.Ecosystem)).ToList();
+        var keys = items.Select(i => i.ProjectKey).OfType<string>().ToHashSet();
+        return Result(items, catalog.Projects.Where(p => keys.Contains(p.Key)).ToList(), AgeMap.Today());
+    }
+
+    private static DeveloperCatalogResult Result(List<DeveloperItem> items, List<DeveloperProject> projects, int today)
+    {
         var opportunities = items
             .Where(i => i.Reclaimability != DeveloperReclaimability.Keep && !i.IsProtected)
             .Take(12).ToList();
@@ -597,51 +697,136 @@ public static partial class DeveloperCatalog
     private static bool IsPlausibleHit(string name, string path, Rule rule)
     {
         string lower = path.ToLowerInvariant();
-        string n = name.ToLowerInvariant();
-        switch (n)
+        return name.ToLowerInvariant() switch
         {
-            case "sdk":
-                return lower.Contains("android");
-            case "android":
-                return lower.Contains("android") || lower.Contains("\\appdata\\");
-            case "build" or "dist" or "out" or "bin" or "obj" or "publish":
-                // Require a project context — these names are too generic to
-                // flag in arbitrary locations (C:\Tools\bin is not build
-                // output). The macOS version checks the path tail; here we
-                // additionally require the parent chain to hold a manifest,
-                // decided later by ProjectLocator — reject only obvious
-                // non-dev spots.
-                return !lower.Contains("\\windows\\")
-                    && !lower.Contains("\\program files")
-                    && !lower.Contains("\\programdata\\");
-            case "env":
-                // ".env" is a config FILE name as often as a venv dir; bare
-                // "env" only counts when the parent looks like a project.
-                return rule.ProjectFromParent
-                    && !lower.Contains("\\windows\\") && !lower.Contains("\\programdata\\");
-            case "windows.old":
-                return true;
-            case "nvm":
-                return lower.Contains("nvm") && (lower.Contains("\\appdata\\") || lower.Contains("program"));
-            default:
-                return true;
-        }
+            "sdk" => lower.Contains("android"),
+            "android" => lower.Contains("android") || lower.Contains("\\appdata\\"),
+            "nvm" => lower.Contains("\\appdata\\") || lower.Contains("program"),
+            _ => true,
+        };
     }
 
-    private static DeveloperEcosystem RefineEcosystem(Rule rule, string path, string name)
+    /// <summary>
+    /// Storage classes that hold installed software, not a person's
+    /// projects: a bin/dist/node_modules found under one belongs to that
+    /// tool (MATLAB's ServiceHost\bin, an agent installed in AppData, the
+    /// global npm folder, a toolchain under C:\flutter) — removing it
+    /// breaks the tool. Temp is a Caches claim, so scratch projects there
+    /// still count.
+    /// </summary>
+    internal static readonly HashSet<StorageClass> ToolAreas =
+    [
+        StorageClassifier.System, StorageClassifier.Apps, StorageClassifier.AppData,
+        StorageClassifier.DevTools, StorageClassifier.AiModels, StorageClassifier.Browsers,
+        StorageClassifier.Games, StorageClassifier.VirtualDisks, StorageClassifier.PackageCaches,
+    ];
+
+    /// <summary>
+    /// The Quick Wins gate for a name-matched folder: true only when a
+    /// developer rule for that name holds here with its evidence and is
+    /// not a keep — so a "build" that is really a tool's or a tracked
+    /// source folder is never called regenerable. Names no rule knows only
+    /// need to be outside installed tools.
+    /// </summary>
+    internal static bool IsVerifiedOutput(FileTree tree, int id, string rootPath,
+        ProjectLocator locator, Dictionary<string, string?> gitignores)
+    {
+        string name = tree.NameOf(id);
+        string path = tree.PathOf(id, rootPath);
+        if (CleanupQueue.IsInsideInstalledApp(path)) return false;
+        if (RulesLazy.Value.For(name) is not { } candidates) return !IsInsideToolInstall(path);
+        foreach (var rule in candidates)
+            if (IsPlausibleHit(name, path, rule)
+                && Evidence(tree, id, path, rule, locator, rootPath, gitignores) is not null)
+                return rule.Reclaimability != DeveloperReclaimability.Keep;
+        return false;
+    }
+
+    /// <summary>A locator over <paramref name="tree"/> with the bundled manifests (for <see cref="IsVerifiedOutput"/>).</summary>
+    internal static ProjectLocator Locator(FileTree tree) => new(tree, ManifestNames, ManifestSuffixes);
+
+    /// <summary>True when <paramref name="path"/>'s folder belongs to installed software rather than a project.</summary>
+    internal static bool IsInsideToolInstall(string path)
+    {
+        string? parent = Path.GetDirectoryName(path.TrimEnd('\\', '/'));
+        if (parent is null) return false;
+        // Users\<name>\.<tool>\… — ~\.lmstudio, ~\.bun, ~\.cua-driver: tool homes.
+        var segs = parent.Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries);
+        int users = Array.FindIndex(segs, s => s.Equals("Users", StringComparison.OrdinalIgnoreCase));
+        if (users >= 0 && users + 2 < segs.Length && segs[users + 2].StartsWith('.')) return true;
+        return ToolAreas.Contains(StorageClassifier.Classify(parent, isDirectory: true).Class);
+    }
+
+    /// <summary>
+    /// The rule's evidence for folder <paramref name="id"/>: null when it
+    /// fails, else the sibling that proved it ("" when the rule needs none).
+    /// </summary>
+    private static string? Evidence(FileTree tree, int id, string path, Rule rule,
+        ProjectLocator locator, string rootPath, Dictionary<string, string?> gitignores)
+    {
+        if (rule.ProjectFromParent && IsInsideToolInstall(path)) return null;
+        // A tool cache found inside an SDK or app install (a .gradle in the
+        // Flutter SDK's tests) is part of it — unless the rule names that
+        // home on purpose (conda's pkgs, Arduino's staging).
+        if (!rule.ProjectFromParent && rule.RequiresParent.Length == 0
+            && Path.GetDirectoryName(path.TrimEnd('\\', '/')) is { } home
+            && StorageClassifier.Classify(home, isDirectory: true).Class is var c
+            && (c == StorageClassifier.DevTools || c == StorageClassifier.Apps || c == StorageClassifier.System))
+            return null;
+        int parent = tree.Parent[id];
+        if (rule.RequiresParent.Length > 0
+            && (parent < 0 || !Glob.Any(rule.RequiresParent, tree.NameOf(parent))))
+            return null;
+        string proof = "";
+        if (rule.RequiresSibling.Length > 0 || rule.ForbidSibling.Length > 0)
+        {
+            if (parent < 0) return null;
+            var siblings = locator.ChildNames(parent);
+            if (rule.ForbidSibling.Length > 0 && siblings.Any(s => Glob.Any(rule.ForbidSibling, s))) return null;
+            if (rule.RequiresSibling.Length > 0)
+            {
+                proof = siblings.Where(s => Glob.Any(rule.RequiresSibling, s)).Min() ?? "";
+                if (proof.Length == 0) return null;
+            }
+        }
+        if (rule.RequiresChild.Length > 0
+            && !locator.ChildNames(id).Any(c => Glob.Any(rule.RequiresChild, c)))
+            return null;
+        // Inside a git working tree, a generic-named folder is output only
+        // when git ignores it — a tracked bin/ or packages/ is source.
+        if (rule.SkipIfTracked && parent >= 0 && locator.RepositoryRoot(parent) is { } repo
+            && !GitIgnoreRules.IsIgnored(tree, repo, tree.PathOf(repo, rootPath), id, gitignores))
+            return null;
+        return proof;
+    }
+
+    private static DeveloperEcosystem RefineEcosystem(Rule rule, string path, string name, string? evidence)
     {
         string lower = path.ToLowerInvariant();
-        string n = name.ToLowerInvariant();
-        if (n is "build" or "dist" or "out" or ".build" or ".next" or ".nuxt")
+        // A generic build folder takes the ecosystem of the manifest beside it.
+        if (rule.Ecosystem == DeveloperEcosystem.Other || name.Equals("target", StringComparison.OrdinalIgnoreCase))
         {
-            if (lower.Contains("node_modules") || lower.Contains("\\.next") || lower.Contains("package.json"))
-                return DeveloperEcosystem.Node;
-            if (lower.Contains("\\target\\") || lower.Contains("cargo.toml")) return DeveloperEcosystem.Rust;
-            if (lower.Contains("obj") || lower.Contains("\\bin") || lower.Contains(".csproj")
-                || lower.Contains(".sln")) return DeveloperEcosystem.Dotnet;
+            var byManifest = evidence?.ToLowerInvariant() switch
+            {
+                "package.json" or "angular.json" or "deno.json" => DeveloperEcosystem.Node,
+                "pubspec.yaml" => DeveloperEcosystem.Flutter,
+                "cmakelists.txt" or "makefile" or "meson.build" => DeveloperEcosystem.Cpp,
+                "build.gradle" or "build.gradle.kts" or "settings.gradle" or "settings.gradle.kts" or "pom.xml"
+                    or "build.sbt" or "project.clj"
+                    => lower.Contains("android") ? DeveloperEcosystem.Android : DeveloperEcosystem.Jvm,
+                "pyproject.toml" or "setup.py" => DeveloperEcosystem.Python,
+                "cargo.toml" => DeveloperEcosystem.Rust,
+                "go.mod" => DeveloperEcosystem.Go,
+                "sdkconfig" => DeveloperEcosystem.Embedded,
+                { } e when e.EndsWith(".csproj") || e.EndsWith(".sln") => DeveloperEcosystem.Dotnet,
+                _ => (DeveloperEcosystem?)null,
+            };
+            if (byManifest is { } eco) return eco;
         }
-        if (n == "sdk" || n == "android" || lower.Contains("android")) return DeveloperEcosystem.Android;
-        if (lower.Contains("docker")) return DeveloperEcosystem.Docker;
+        string n = name.ToLowerInvariant();
+        if (rule.Ecosystem is DeveloperEcosystem.Other or DeveloperEcosystem.Android
+            && (n == "sdk" || n == "android" || lower.Contains("android"))) return DeveloperEcosystem.Android;
+        if (rule.Ecosystem == DeveloperEcosystem.Other && lower.Contains("docker")) return DeveloperEcosystem.Docker;
         return rule.Ecosystem;
     }
 
@@ -709,7 +894,7 @@ public static partial class DeveloperCatalog
     {
         var itemsByProject = items.Where(i => i.ProjectKey is not null)
             .GroupBy(i => i.ProjectKey!).ToDictionary(g => g.Key, g => g.ToList());
-        var generatedNames = new HashSet<string>(NameToRuleLazy.Value.Keys, StringComparer.OrdinalIgnoreCase);
+        Func<string, bool> generated = name => RulesLazy.Value.For(name) is not null;
         var gitCache = new Dictionary<int, (string Path, GitState State, long Ignored)>();
 
         foreach (var project in projects)
@@ -722,7 +907,7 @@ public static partial class DeveloperCatalog
             // Worst rebuild cost wins — enum order is the cost order.
             project.RebuildCost = members.Select(m => m.RebuildCost).DefaultIfEmpty(RebuildCost.Cheap).Max();
             var skip = members.Select(m => m.NodeID).ToHashSet();
-            project.LastSourceDay = LastSourceDay(tree, rootId, skip, generatedNames);
+            project.LastSourceDay = LastSourceDay(tree, rootId, skip, generated);
             if (locator.RepositoryRoot(rootId) is { } repoId)
             {
                 if (!gitCache.TryGetValue(repoId, out var repo))
@@ -748,7 +933,7 @@ public static partial class DeveloperCatalog
     /// developer rule names (a nested node_modules below the item limit).
     /// </summary>
     internal static int LastSourceDay(
-        FileTree tree, int projectId, HashSet<int> skipping, HashSet<string> generatedNames)
+        FileTree tree, int projectId, HashSet<int> skipping, Func<string, bool> generated)
     {
         int newest = 0;
         var stack = new Stack<int>();
@@ -763,7 +948,7 @@ public static partial class DeveloperCatalog
                 {
                     string lowered = tree.NameOf(child);
                     if (!skipping.Contains(child) && !lowered.Equals(".git", StringComparison.OrdinalIgnoreCase)
-                        && !generatedNames.Contains(lowered))
+                        && !generated(lowered))
                     {
                         stack.Push(child);
                     }

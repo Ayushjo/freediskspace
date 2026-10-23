@@ -752,6 +752,9 @@ state, but the inspector and coloring layers are missing entirely.
   registry choice the user opts into, not an installer side effect.
   MSIX remains the right move if a Store listing ever happens; the
   manifest decision is reversible — code has no packaging coupling.
+  Update: `scripts/package-installer.ps1` (Inno Setup, `installer/freedisk.iss`)
+  now wraps that single-file exe in a normal installer — Program Files,
+  Start menu entry, uninstall from Settings → Apps.
 
 - [x] **WIN-074: Update mechanism decision — no updater.**
   Offline-purist default, matching macOS's Sparkle-off-by-default
@@ -929,6 +932,29 @@ reachable here, and its behaviour has xUnit coverage.
 - [x] WIN-116 Storage-accuracy halves (Mac P1-P3 equivalents for Windows) with tests.
 - [ ] WIN-117 Final sweep: every page and state light/dark, text scales, compact widths,
   high contrast, keyboard; diff report attached to the PR.
+
+---
+
+## 14. Safety pass (2026-10-14, merged onto the redesign 2026-10-23)
+
+- [x] **WIN-090: Evidence before deletion.** Generic folder names (bin, obj,
+  packages, build, dist, out, target, env…) need proof — a project file beside
+  them, a marker inside, git ignoring them. Installed tools, SDKs, AppData and
+  home dot-folders are never projects. User folders themselves and drive roots
+  are refused by `CleanupQueue`. Duplicates skip apps, dependencies, projects,
+  dot-files, git work trees and files under 1 MB. `SafetyRulesTests`.
+- [x] **WIN-091: Hardware, CAD, games and creative storage.** Vivado runs/caches,
+  Quartus databases, ModelSim/Questa libraries, Verilator `obj_dir`, cocotb,
+  OpenLane runs, KiCad/Altium backups and outputs, PlatformIO, STM32Cube/Keil/
+  IAR/MSVC build dirs, Simulink codegen, Revit journals/caches, Unity/Unreal/
+  Godot caches, GPU shader caches, Adobe/Resolve/Lightroom caches; waveform
+  dumps and CAD backup files classified.
+- [x] **WIN-092: Onboarding.** Roles → tools (found-on-this-PC pre-ticked) on
+  first launch; Settings → Your setup reopens it. Developer shows the
+  profile's tools, with the rest as "also found on this PC".
+- [x] **WIN-093: One verdict everywhere.** The Ctrl+I inspector uses the same
+  verdict as the lists (protected never stages, risky asks first); the scanned
+  root itself is never staged.
 
 ## Suggested order
 

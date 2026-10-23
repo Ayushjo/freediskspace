@@ -334,7 +334,7 @@ public sealed class CleanupQueue
     /// </summary>
     public static bool IsExcludedPath(string path)
     {
-        string normalized = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar);
+        string normalized = NormalizePath(path);
         foreach (var prefix in ExcludedPrefixes)
         {
             if (normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
@@ -343,8 +343,23 @@ public sealed class CleanupQueue
                 return true;
             }
         }
-        return false;
+        // Exact folders only: the profile, AppData, Documents, Downloads…
+        // themselves are never staged — what is inside them still can be.
+        // A "Select all" on Biggest Folders once offered all of AppData.
+        return StorageClassifier.IsContainer(normalized) || IsDriveRoot(normalized);
     }
+
+    private static bool IsDriveRoot(string normalized) =>
+        Path.GetPathRoot(normalized) is { } root && root.Equals(normalized, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Full path without a trailing separator — except on a root, which keeps
+    /// it. A bare "C:" is a trimmed drive root to every caller here; left
+    /// alone, GetFullPath would read it as the working folder on C:.
+    /// </summary>
+    internal static string NormalizePath(string path) =>
+        Path.TrimEndingDirectorySeparator(Path.GetFullPath(
+            path is [_, ':'] ? path + Path.DirectorySeparatorChar : path));
 
     /// <summary>
     /// True when <paramref name="path"/> belongs to an installed app —
@@ -382,18 +397,11 @@ public sealed class CleanupQueue
         string? sharesStorageGroup = null,
         int groupCopyCount = 1)
     {
-        string normalized = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar);
+        string normalized = NormalizePath(path);
         StagedItem item;
         lock (_gate)
         {
-            foreach (var prefix in ExcludedPrefixes)
-            {
-                if (normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
-                    && (normalized.Length == prefix.Length || normalized[prefix.Length] is '\\' or '/'))
-                {
-                    return false;
-                }
-            }
+            if (IsExcludedPath(normalized)) return false;
             if (_items.Any(i => string.Equals(i.Path, normalized, StringComparison.OrdinalIgnoreCase)))
                 return false;
             item = new StagedItem

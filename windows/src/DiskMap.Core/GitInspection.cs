@@ -406,6 +406,53 @@ public sealed class GitIgnoreRules
         };
     }
 
+    /// <summary>
+    /// True when git ignores node <paramref name="id"/> (or a folder above
+    /// it) in the repository at <paramref name="repositoryId"/> — walking
+    /// down from the root and loading each folder's .gitignore on the way,
+    /// as git does. Untracked-but-not-ignored counts as not ignored: that
+    /// is the safe answer for "is this generated output?".
+    /// <paramref name="fileCache"/> keeps .gitignore reads to one per file.
+    /// </summary>
+    public static bool IsIgnored(FileTree tree, int repositoryId, string repositoryPath, int id,
+        Dictionary<string, string?>? fileCache = null)
+    {
+        var chain = new List<int>();
+        for (int n = id; n != repositoryId; n = tree.Parent[n])
+        {
+            if (n < 0) return false;   // not under this repository
+            chain.Add(n);
+        }
+        chain.Reverse();
+        string? Read(string path)
+        {
+            if (fileCache is null) return GitInspector.Read(path);
+            if (!fileCache.TryGetValue(path, out var text)) fileCache[path] = text = GitInspector.Read(path);
+            return text;
+        }
+        var active = new GitIgnoreRules();
+        if (Read(Path.Combine(repositoryPath, ".git", "info", "exclude")) is { } exclude)
+            active.AddParsed(exclude, "");
+        string relative = "";
+        int folder = repositoryId;
+        foreach (int n in chain)
+        {
+            for (int c = tree.FirstChild[folder]; c != -1; c = tree.NextSibling[c])
+            {
+                if (tree.IsDirectory[c] || tree.NameOf(c) != ".gitignore") continue;
+                string folderPath = relative.Length == 0
+                    ? repositoryPath : repositoryPath + "\\" + relative.Replace('/', '\\');
+                if (Read(folderPath + "\\.gitignore") is { } text) active.AddParsed(text, relative);
+                break;
+            }
+            string name = tree.NameOf(n);
+            relative = relative.Length == 0 ? name : relative + "/" + name;
+            if (active.Verdict(relative, name, tree.IsDirectory[n]) == true) return true;
+            folder = n;
+        }
+        return false;
+    }
+
     /// <summary>Bytes ignored under a repository, using the scan tree for
     /// structure and sizes and reading only .gitignore files from disk.</summary>
     public readonly record struct IgnoredResult(long IgnoredBytes, int IgnoreFileCount);

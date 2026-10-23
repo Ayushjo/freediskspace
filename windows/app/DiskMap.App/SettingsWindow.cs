@@ -19,6 +19,7 @@ public sealed class SettingsWindow : Window
     private readonly Action<string> _onAppearance;
     private readonly Action<double> _onTextScale;
     private readonly Action _onGeneralChanged;
+    private readonly Action<Window> _onSetup;
     private readonly Grid _root = new();
     private readonly ScrollViewer _scroll = new() { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false };
     private readonly Dictionary<string, FrameworkElement> _groups = [];
@@ -30,11 +31,13 @@ public sealed class SettingsWindow : Window
         ("Appearance", Icons.DarkMode), ("Saved scans", "BsClockHistory"), ("Privacy", "BsLock"),
     ];
 
-    public SettingsWindow(Action<string> onAppearance, Action<double> onTextScale, Action onGeneralChanged)
+    public SettingsWindow(Action<string> onAppearance, Action<double> onTextScale, Action onGeneralChanged,
+        Action<Window> onSetup)
     {
         _onAppearance = onAppearance;
         _onTextScale = onTextScale;
         _onGeneralChanged = onGeneralChanged;
+        _onSetup = onSetup;
         Title = "freedisk.space Settings";
         Width = 1080;
         Height = 780;
@@ -155,8 +158,32 @@ public sealed class SettingsWindow : Window
     }
 
     private FrameworkElement General() => Group("General",
+        Row("Your setup", SetupSummary(), Rd.SecondaryButton("Change…", ChangeSetup)),
         Row("Show free space in the notification area", "The free space and the last scan, one click away.",
             Switch(_settings.ShowTray, on => { _settings.ShowTray = on; Save(); })));
+
+    /// <summary>What onboarding chose: roles, then the first tools.</summary>
+    private string SetupSummary()
+    {
+        var roles = UserProfiles.Roles.Where(r => _settings.Roles.Contains(r.Id)).Select(r => r.Title).ToList();
+        var tools = UserProfiles.Tools.Where(t => _settings.Tools.Contains(t.Id)).Select(t => t.Title).ToList();
+        return roles.Count == 0
+            ? "Not set. Developer shows everything it finds."
+            : string.Join(", ", roles) + (tools.Count > 0
+                ? " · " + string.Join(", ", tools.Take(5)) + (tools.Count > 5 ? $" +{tools.Count - 5}" : "")
+                : "");
+    }
+
+    private void ChangeSetup()
+    {
+        _onSetup(this);
+        // Onboarding saved its own copy; take its answers so a later Save here keeps them.
+        var saved = AppSettings.Load();
+        _settings.Roles = saved.Roles;
+        _settings.Tools = saved.Tools;
+        _settings.Onboarded = saved.Onboarded;
+        Rebuild();
+    }
 
     private FrameworkElement Scanning() => Group("Scanning",
         Row("ReFS block clones", CloneExplanation(_settings.CloneAccounting),
@@ -321,6 +348,9 @@ public sealed class SettingsWindow : Window
         _settings.ShowDusty = fresh.ShowDusty;
         _settings.TickRebuilds = fresh.TickRebuilds;
         _settings.ShowTray = fresh.ShowTray;
+        _settings.Roles = fresh.Roles;
+        _settings.Tools = fresh.Tools;
+        _settings.Onboarded = fresh.Onboarded;
         _onTextScale(fresh.TextScale);
         _onAppearance(fresh.Appearance);
         _onGeneralChanged();

@@ -74,7 +74,7 @@ public sealed class InspectorPanel : UserControl
 
         // Tabs — text tabs with an accent underline on the selected one.
         var tabs = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 12) };
-        foreach (var label in new[] { "Overview", "Contents", "Insights" })
+        foreach (var label in new[] { "Overview", "Contents" })
         {
             bool selected = _tab == label;
             var tabContent = new StackPanel();
@@ -98,12 +98,8 @@ public sealed class InspectorPanel : UserControl
         }
         _root.Children.Add(tabs);
 
-        switch (_tab)
-        {
-            case "Contents": ShowContents(tree, totals, id); break;
-            case "Insights": ShowInsights(tree, totals, id); break;
-            default: ShowOverview(tree, totals, id); break;
-        }
+        if (_tab == "Contents") ShowContents(tree, totals, id);
+        else ShowOverview(tree, totals, id);
     }
 
     // ---- Overview tab: metadata + what's inside + actions ----
@@ -113,16 +109,11 @@ public sealed class InspectorPanel : UserControl
         bool isDir = tree.IsDirectory[id];
         string path = Model.PathOf(id);
 
-        // Location row with copy affordance.
-        var locValue = new DockPanel();
-        var copy = Ui.Glyph(Icons.Copy, 12, Ui.Brush("AppFaint"));
-        copy.Cursor = System.Windows.Input.Cursors.Hand;
-        copy.ToolTip = "Copy path";
-        copy.MouseLeftButtonDown += (_, _) => Clipboard.SetText(path);
-        DockPanel.SetDock(copy, Dock.Right);
-        locValue.Children.Add(copy);
-        locValue.Children.Add(Ui.T(Model.DisplayPath(id), 12, FontWeights.Medium));
-        _root.Children.Add(Ui.MetaRow("Location", locValue));
+        var location = Ui.T(Model.DisplayPath(id), 12, FontWeights.Medium);
+        location.TextTrimming = TextTrimming.CharacterEllipsis;
+        location.MaxWidth = 200;
+        location.ToolTip = path;
+        _root.Children.Add(Ui.MetaRow("Location", location));
 
         // Size row: value + % of used + tiny bar.
         var sizePanel = new StackPanel { HorizontalAlignment = HorizontalAlignment.Right };
@@ -174,7 +165,9 @@ public sealed class InspectorPanel : UserControl
 
         var times = Ui.FileTimes(path);
         var modified = new StackPanel { HorizontalAlignment = HorizontalAlignment.Right };
-        modified.Children.Add(Ui.T(Ui.RelativeDay(tree.ModifiedDay[id]), 12, FontWeights.Medium));
+        // The scan keeps no date for some folders (the root) — the disk does.
+        modified.Children.Add(Ui.T(tree.ModifiedDay[id] <= 0 && times?.Modified is { } m0
+            ? RelativeDate(m0) : Ui.RelativeDay(tree.ModifiedDay[id]), 12, FontWeights.Medium));
         modified.Children.Add(Ui.Faint(times?.Modified is { } m ? m.ToString("ddd, d MMM yyyy") : Ui.AbsoluteDay(tree.ModifiedDay[id])));
         _root.Children.Add(Ui.MetaRow("Modified", modified));
         if (times?.Created is { } created)
@@ -272,35 +265,28 @@ public sealed class InspectorPanel : UserControl
         // Can I remove it? + What happens?
         string path = Model.PathOf(id);
         bool regenerable = Model.QuickWins?.Any(h => h.Id == id) == true;
-        var (verdict, detail, safe) = EvaluateRemovability(tree, id, path, regenerable);
+        var (verdict, detail, safe) = EvaluateRemovability(id, path, regenerable);
         _root.Children.Add(SafetyBlock("Can I remove it?", verdict, detail, safe));
     }
 
-    private (string Verdict, string Detail, bool Safe) EvaluateRemovability(
-        FileTree tree, int id, string path, bool regenerable)
+    /// <summary>The same verdict the lists, menus and Cleanup use — never a friendlier one.</summary>
+    private (string Verdict, string Detail, bool Safe) EvaluateRemovability(int id, string path, bool regenerable)
     {
+        var verdict = Model.VerdictOf(id);
+        if (id == 0)
+            return ("Review first", "This is the scanned folder. Remove items inside it rather than the folder itself.", false);
+        if (verdict.Advice == CleanupAdvice.Never || CleanupQueue.IsExcludedPath(path))
+            return ("Protected — can't be removed here",
+                verdict.Instead ?? verdict.Note ?? "freedisk.space never offers this location for cleanup.", false);
+        if (verdict.Advice == CleanupAdvice.Warn)
+            return ("Risky — removing it breaks something",
+                string.Join(" ", new[] { verdict.Note, verdict.Instead }.Where(t => t is not null)), false);
         if (regenerable)
-        {
             return ("Yes — safe to review",
-                "This is regenerable data (build output or a cache). The tool recreates it when needed; you may need to reinstall dependencies or rebuild the project.",
+                "Regenerable data (build output or a cache) your tools recreate when needed — you may need to reinstall dependencies or rebuild.",
                 true);
-        }
-        string root = Path.GetPathRoot(Path.GetFullPath(path)) ?? "";
-        string windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
-        if (path.StartsWith(windows, StringComparison.OrdinalIgnoreCase))
-        {
-            return ("Protected — don't remove",
-                "This is Windows system data. freedisk.space never offers it for cleanup.",
-                false);
-        }
-        if (tree.IsDirectory[id] && id == 0)
-        {
-            return ("Review first",
-                "This is the scanned root. Remove individual items inside rather than the folder itself.",
-                false);
-        }
         return ("Review first",
-            "This is user data, not a known cache. Check the contents before removing — items go to the Recycle Bin and stay recoverable.",
+            verdict.Note ?? "Your data, not a known cache. Check what's inside first — items go to the Recycle Bin and stay recoverable until you empty it.",
             false);
     }
 
@@ -334,18 +320,19 @@ public sealed class InspectorPanel : UserControl
         var stack = new StackPanel();
         bool inCleanup = Model.StagedItems.Any(item =>
             string.Equals(item.Path, path.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase));
-        bool canStage = id != 0 && !CleanupQueue.IsExcludedPath(path);
+        var verdict = Model.VerdictOf(id);
+        bool canStage = id != 0 && !CleanupQueue.IsExcludedPath(path) && verdict.Advice != CleanupAdvice.Never;
         var cleanup = inCleanup
             ? Ui.Button("In Cleanup ✓", Icons.Cleanup, Ui.ButtonStyle.Outline,
                 () => Model.OpenBasket())
-            : Ui.Button("Add to Cleanup", Icons.Cleanup, Ui.ButtonStyle.Primary,
-                () =>
-                {
-                    if (!Model.Stage(id, "from inspector"))
-                        Model.Toast("Blocked by safety rules");
-                });
+            : Ui.Button(verdict.Advice == CleanupAdvice.Warn ? "Add to Cleanup…" : "Add to Cleanup",
+                Icons.Cleanup, Ui.ButtonStyle.Primary, () => Model.Stage(id, "from inspector"));
         cleanup.IsEnabled = inCleanup || canStage;
-        if (!canStage && !inCleanup) cleanup.ToolTip = "Protected paths can't be added to Cleanup.";
+        if (!canStage && !inCleanup)
+        {
+            cleanup.ToolTip = verdict.Instead ?? verdict.Note ?? "Protected — can't be added to Cleanup.";
+            ToolTipService.SetShowOnDisabled(cleanup, true);
+        }
         stack.Children.Add(cleanup);
         stack.Children.Add(new Border { Height = 8 });
         stack.Children.Add(Ui.Button("Reveal in Explorer", Icons.Open, Ui.ButtonStyle.Outline,
@@ -393,36 +380,5 @@ public sealed class InspectorPanel : UserControl
             row.MouseLeftButtonDown += (_, _) => Model.Select(captured);
             _root.Children.Add(row);
         }
-    }
-
-    // ---- Insights tab ----
-
-    private void ShowInsights(FileTree tree, long[] totals, int id)
-    {
-        AddExplanation(tree, totals, id);
-        var links = new StackPanel();
-        if (tree.IsDirectory[id])
-        {
-            links.Children.Add(RelatedLink("View in File Browser", () => { Model.DrillToAncestor(id); Model.ShowPage("File Browser"); }));
-            links.Children.Add(RelatedLink("View in Visualize", () => Model.Visualize(id)));
-        }
-        links.Children.Add(RelatedLink("Open in Explorer", () => Explorer.Reveal(Model.PathOf(id))));
-        if (links.Children.Count > 0)
-        {
-            var label = Ui.SectionLabel("Related");
-            label.Margin = new Thickness(0, 10, 0, 6);
-            _root.Children.Add(label);
-            _root.Children.Add(links);
-        }
-    }
-
-    private static UIElement RelatedLink(string text, Action onClick)
-    {
-        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 3, 0, 3) };
-        var link = Ui.T(text, 12, null, Ui.Brush("AppAccent"));
-        link.Cursor = System.Windows.Input.Cursors.Hand;
-        link.MouseLeftButtonDown += (_, _) => onClick();
-        row.Children.Add(link);
-        return row;
     }
 }
