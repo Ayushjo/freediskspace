@@ -81,22 +81,14 @@ public sealed class ScanModel : ViewModelBase
     public int SelectedNode
     {
         get => _selectedNode;
-        set { if (Set(ref _selectedNode, value)) SelectionChanged?.Invoke(this, EventArgs.Empty); }
+        set { if (Set(ref _selectedNode, value)) Changed(); }
     }
-
-    /// <summary>
-    /// The selection moved. Only the inspector and charts follow it; list
-    /// pages just repaint their highlight. (It used to raise StateChanged,
-    /// which rebuilt the whole list on every click — closing the row's ⋯
-    /// menu the moment it opened and throwing away the scroll position.)
-    /// </summary>
-    public event EventHandler? SelectionChanged;
 
     /// <summary>Inspector target: the selection, else the zoomed folder.</summary>
     public int InspectedNode =>
         _selectedNode >= 0 && _selectedNode < (Tree?.Count ?? 0) ? _selectedNode : _zoomedNode;
 
-    private SizeBasis _sizeBasis = SizeBasis.Allocated;
+    private SizeBasis _sizeBasis = Harness.Basis ?? SizeBasis.Allocated;
     public SizeBasis SizeBasis
     {
         get => _sizeBasis;
@@ -141,6 +133,12 @@ public sealed class ScanModel : ViewModelBase
     private string? _fallbackReason;
     public string? FallbackReason { get => _fallbackReason; private set => Set(ref _fallbackReason, value); }
 
+    /// <summary>A quick update's replayed change count (Backend "usn"); the Overview footer's line.</summary>
+    public int ChangedRecords { get; private set; }
+
+    /// <summary>When the scan in flight started — the scanning board's clock.</summary>
+    public DateTimeOffset? ScanStartedAt { get; private set; }
+
     /// <summary>
     /// Directories that refused to list in the last scan — their bytes are
     /// missing from every total above them, so the UI says so rather than
@@ -156,6 +154,32 @@ public sealed class ScanModel : ViewModelBase
     /// <summary>Capacity of the scanned volume — the sidebar drive card.</summary>
     private VolumeInfo? _volume;
     public VolumeInfo? Volume { get => _volume; private set { if (Set(ref _volume, value)) Changed(); } }
+
+    private SpaceAccount? _spaceAccount;
+    /// <summary>"Where's the rest?" — the drive's used space in parts that add up (WIN-113). Nil until read.</summary>
+    public SpaceAccount? SpaceAccount { get => _spaceAccount; private set { if (Set(ref _spaceAccount, value)) Changed(); } }
+
+    private async Task ReadSpaceAccountAsync(string path, long scannedOnDiskBytes, int unreadable)
+    {
+        var volume = Volume;
+        var account = await Task.Run(() => Harness.SpaceAccountFor(volume, path, scannedOnDiskBytes, unreadable));
+        if (RootPath == path) SpaceAccount = account;
+    }
+
+    private IReadOnlyList<SystemStorageCatalog.Item>? _systemStorage;
+    /// <summary>"What Windows keeps" (WIN-116, P2; Mac: systemStorage). Null until measured.</summary>
+    public IReadOnlyList<SystemStorageCatalog.Item>? SystemStorage { get => _systemStorage; private set { if (Set(ref _systemStorage, value)) Changed(); } }
+
+    /// <summary>
+    /// Measures "What Windows keeps" off the UI thread: from this scan where it covers the path
+    /// (allocated sizes), else by a bounded walk of the path itself. Kept only while the scan
+    /// it was measured for is still the current one.
+    /// </summary>
+    private async Task ReadSystemStorageAsync(string path, FileTree tree, long[] allocated, IReadOnlyList<int> denied)
+    {
+        var items = await Task.Run(() => Harness.SystemStorageFor(tree, path, allocated, denied));
+        if (RootPath == path && ReferenceEquals(Tree, tree)) SystemStorage = items;
+    }
 
     /// <summary>WIN-066: non-null when the opt-in ReFS block-clone pass ran on the last scan.</summary>
     public BlockClones.Report? CloneProfile { get; private set; }
@@ -195,11 +219,61 @@ public sealed class ScanModel : ViewModelBase
         _duplicatesRan ? Duplicates.SelectMany(g => g.FileIDs).ToHashSet() : null;
 
     /// <summary>The duplicate finder completed (possibly finding nothing).</summary>
-    public void MarkDuplicatesSearched() => _duplicatesRan = true;
+    public void MarkDuplicatesSearched() { _duplicatesRan = true; Changed(); }
+
+    /// <summary>True once the duplicate finder has run on this scan (the sidebar's figure).</summary>
+    public bool DuplicatesSearched => _duplicatesRan;
+
+    /// <summary>When the current scan finished — the page bar's "Scanned 2 minutes ago".</summary>
+    private DateTimeOffset? _lastScanFinishedAt;
+    public DateTimeOffset? LastScanFinishedAt { get => _lastScanFinishedAt; private set => Set(ref _lastScanFinishedAt, value); }
 
     /// <summary>Quick-wins hits, built once per scan (sidebar pages share it).</summary>
     private List<QuickWins.Hit>? _quickWins;
     public List<QuickWins.Hit>? QuickWins { get => _quickWins; set { if (Set(ref _quickWins, value)) Changed(); } }
+
+    /// <summary>
+    /// What Clean up and Overview offer — app caches grouped per app, then quick-win folders —
+    /// measured on the current size basis. Null until a scan is summarized (Mac: cachedReviewables).
+    /// </summary>
+    private List<ReviewableTarget>? _reviewables;
+    public List<ReviewableTarget>? Reviewables { get => _reviewables; private set { if (Set(ref _reviewables, value)) Changed(); } }
+
+    /// <summary>Files in Downloads, oldest first in spirit (Mac: cachedOldDownloads). Null until summarized.</summary>
+    private OldDownloadsCatalogResult? _oldDownloads;
+    public OldDownloadsCatalogResult? OldDownloads { get => _oldDownloads; private set { if (Set(ref _oldDownloads, value)) Changed(); } }
+
+    /// <summary>Big videos, photos, audio and media projects (Mac: cachedLargeMedia). Null until summarized.</summary>
+    private MediaCatalogResult? _largeMedia;
+    public MediaCatalogResult? LargeMedia { get => _largeMedia; private set { if (Set(ref _largeMedia, value)) Changed(); } }
+
+    /// <summary>The scan's catalogs on one basis: Clean up, Overview and the review pages read these.</summary>
+    private static (List<ReviewableTarget>, OldDownloadsCatalogResult, MediaCatalogResult) BuildCatalogs(
+        FileTree tree, string root, long[] totals, IReadOnlyList<QuickWins.Hit> quickWins) =>
+        (ReviewableCatalog.Build(tree, root, totals, quickWins).Targets,
+         OldDownloadsCatalog.Build(tree, root, totals),
+         MediaCatalog.Build(tree, root, totals));
+
+    /// <summary>What Clean up ticks for you: the targets that rebuild by themselves.</summary>
+    public long SafeReclaimableBytes => Reviewables?.Where(t => t.IsGenerallySafe).Sum(t => t.Bytes) ?? 0;
+
+    public List<ReviewableTarget> SafeReclaimables =>
+        Reviewables?.Where(t => t.IsGenerallySafe).OrderByDescending(t => t.Bytes).ToList() ?? [];
+
+    /// <summary>Build output and dependencies that come back with a rebuild or reinstall, left unticked.</summary>
+    public long ReviewFirstReclaimableBytes => Reviewables?.Where(t => t.IsReviewFirst).Sum(t => t.Bytes) ?? 0;
+
+    /// <summary>Overview's line when nothing is ticked for you.</summary>
+    public string NothingTickedLine
+    {
+        get
+        {
+            long review = ReviewFirstReclaimableBytes;
+            return review > 0
+                ? $"Nothing is ticked for you here. {ByteFormat.Format(review)} of build files and dependencies comes back with a rebuild or reinstall — check it in Clean up."
+                : "Nothing here rebuilds by itself right now. Clean up still lists old downloads and big files to review.";
+        }
+    }
 
     // ---- WIN-052: chart multi-selection ----
 
@@ -253,9 +327,37 @@ public sealed class ScanModel : ViewModelBase
     public event EventHandler? StateChanged;
     private void Changed() => StateChanged?.Invoke(this, EventArgs.Empty);
 
+    private (FileTree Tree, long[] Totals, DeveloperCatalogResult Result)? _developer;
+
+    /// <summary>
+    /// The Developer catalog for the current scan and size basis, built in the background after
+    /// each scan (Mac: cachedDeveloper, prewarmed so the sidebar can show its total). Nil until ready.
+    /// </summary>
+    public DeveloperCatalogResult? Developer =>
+        _developer is { } d && ReferenceEquals(d.Tree, _tree) && ReferenceEquals(d.Totals, _totals) ? d.Result : null;
+
+    private async void PrewarmDeveloper()
+    {
+        if (_tree is not { } tree || _rootPath is not { } root || _totals.Length != tree.Count) return;
+        var totals = _totals;
+        if (_developer is { } d && ReferenceEquals(d.Tree, tree) && ReferenceEquals(d.Totals, totals)) return;
+        try
+        {
+            var result = await Task.Run(() => DeveloperCatalog.Build(tree, root, totals));
+            if (!ReferenceEquals(tree, _tree) || !ReferenceEquals(totals, _totals)) return;
+            _developer = (tree, totals, result);
+            Changed();
+        }
+        catch { /* the page builds its own when opened */ }
+    }
+
     /// <summary>Raised by pages/inspector to switch the main navigation (e.g. "View in File Browser").</summary>
     public event Action<string>? PageRequested;
     public void ShowPage(string name) => PageRequested?.Invoke(name);
+
+    /// <summary>Raised to open the basket (Mac: isCleanupQueuePresented); the window shows it.</summary>
+    public event Action? BasketRequested;
+    public void OpenBasket() => BasketRequested?.Invoke();
 
     /// <summary>Raised when a page wants a folder picked (it can't show the dialog itself).</summary>
     public event Action? ScanRequested;
@@ -280,19 +382,23 @@ public sealed class ScanModel : ViewModelBase
         var snapshot = await Task.Run(() =>
         {
             var totals = basis == SizeBasis.Logical ? _totalsLogical : _totalsAllocated;
-            return AnalysisSnapshot.Build(tree, root, _totalsLogical, _totalsAllocated, basis, QuickWins);
+            return (AnalysisSnapshot.Build(tree, root, _totalsLogical, _totalsAllocated, basis, QuickWins, volumeOf: Harness.VolumeFor),
+                BuildCatalogs(tree, root, totals, QuickWins ?? []));
         });
         // A newer toggle or scan may have landed while this one ran.
         if (ReferenceEquals(tree, _tree) && basis == _sizeBasis)
         {
             Totals = basis == SizeBasis.Logical ? _totalsLogical : _totalsAllocated;
-            Snapshot = snapshot;
+            PrewarmDeveloper();
+            Snapshot = snapshot.Item1;
+            (Reviewables, OldDownloads, LargeMedia) = snapshot.Item2;
         }
     }
 
     public async Task ScanAsync(string path)
     {
         if (IsScanning) return;
+        ScanStartedAt = DateTimeOffset.Now;
         IsScanning = true;
         ScanPhase = "walking";
         ScanProgress = 0;
@@ -311,19 +417,23 @@ public sealed class ScanModel : ViewModelBase
                 () => _engine.ScanAsync(path, progress, cts.Token, settings.CloneAccounting),
                 cts.Token);
             ScanPhase = "summarizing";
-            var (logical, allocated, counts, quickWins, snapshot) = await Task.Run(() =>
+            var (logical, allocated, counts, quickWins, snapshot, reviewables) = await Task.Run(() =>
             {
                 var l = scanned.Tree.RollUpSizes(SizeBasis.Logical);
-                var a = scanned.Tree.RollUpSizes(SizeBasis.Allocated);
+                // The demo PC's files are sparse (they take no space), so deterministic renders
+                // count them at their logical size on disk too, as the Mac's real demo files are.
+                var a = Harness.Deterministic ? l : scanned.Tree.RollUpSizes(SizeBasis.Allocated);
                 var c = scanned.Tree.RollUpCounts();
                 var qw = Core.QuickWins.Find(scanned.Tree, path, Core.QuickWins.BundledPatterns());
-                var snap = AnalysisSnapshot.Build(scanned.Tree, path, l, a, basis, qw);
-                return (l, a, c, qw, snap);
+                var snap = AnalysisSnapshot.Build(scanned.Tree, path, l, a, basis, qw, volumeOf: Harness.VolumeFor);
+                var rv = BuildCatalogs(scanned.Tree, path, basis == SizeBasis.Logical ? l : a, qw);
+                return (l, a, c, qw, snap, rv);
             }, cts.Token);
             cts.Token.ThrowIfCancellationRequested();
             // History record — one JSON line per scan, feeds "what grew".
-            var volume = VolumeStats.Of(path);
-            if (settings.KeepHistory)
+            var volume = Harness.VolumeFor(path);
+            // A render-harness run never writes the user's scan history.
+            if (settings.KeepHistory && !Harness.IsActive)
             {
                 var folders = StorageHistory.Folders(scanned.Tree, allocated);
                 _history.Record(new StorageHistory.Entry(
@@ -339,6 +449,7 @@ public sealed class ScanModel : ViewModelBase
             }
             ItemCount = scanned.ItemCount;
             Elapsed = scanned.ElapsedSeconds;
+            ChangedRecords = scanned.ChangedRecords;
             NotDownloaded = scanned.NotDownloadedCount;
             Backend = scanned.Backend;
             FallbackReason = scanned.FallbackReason;
@@ -347,6 +458,7 @@ public sealed class ScanModel : ViewModelBase
             Duplicates = [];
             _duplicatesRan = false;
             QuickWins = quickWins;
+            (Reviewables, OldDownloads, LargeMedia) = reviewables;
             Snapshot = snapshot;
             // Totals before Tree: a view refreshed by the Tree change must
             // never pair the new tree with the old totals.
@@ -356,12 +468,20 @@ public sealed class ScanModel : ViewModelBase
             _counts = counts;
             _zoomedNode = 0;
             _selectedNode = -1;
+            MultiSelection.Clear();   // ids from the old tree name other files in the new one
             _zoomBack.Clear();
             _zoomForward.Clear();
             CloneProfile = scanned.CloneProfile;
             RootPath = path;
-            Volume = VolumeStats.Of(path);
+            Volume = Harness.VolumeFor(path);
+            // The harness pins "Scanned 2 minutes ago", as the Mac's --deterministic does.
+            LastScanFinishedAt = Harness.Deterministic ? DateTimeOffset.Now.AddSeconds(-120) : DateTimeOffset.Now;
+            SpaceAccount = null;
+            SystemStorage = null;
             Tree = scanned.Tree;
+            PrewarmDeveloper();
+            _ = ReadSpaceAccountAsync(path, snapshot.ScannedOnDiskBytes, scanned.DeniedDirectoryIds.Count);
+            _ = ReadSystemStorageAsync(path, scanned.Tree, allocated, scanned.DeniedDirectoryIds);
             // WIN-013: let staging measure from this tree when the journal
             // proves a staged folder's subtree is unchanged since the scan.
             Cleanup.SetScanContext(scanned.Tree, path, scanned.ScanMarker,
@@ -390,14 +510,15 @@ public sealed class ScanModel : ViewModelBase
     public async Task LoadSnapshot(DiskSnapshot snapshot)
     {
         var basis = _sizeBasis;
-        var (logical, allocated, counts, quickWins, snap) = await Task.Run(() =>
+        var (logical, allocated, counts, quickWins, snap, reviewables) = await Task.Run(() =>
         {
             var l = snapshot.Tree.RollUpSizes(SizeBasis.Logical);
-            var a = snapshot.Tree.RollUpSizes(SizeBasis.Allocated);
+            var a = Harness.Deterministic ? l : snapshot.Tree.RollUpSizes(SizeBasis.Allocated);
             var c = snapshot.Tree.RollUpCounts();
             var qw = Core.QuickWins.Find(snapshot.Tree, snapshot.RootPath, Core.QuickWins.BundledPatterns());
-            var s = AnalysisSnapshot.Build(snapshot.Tree, snapshot.RootPath, l, a, basis, qw);
-            return (l, a, c, qw, s);
+            var s = AnalysisSnapshot.Build(snapshot.Tree, snapshot.RootPath, l, a, basis, qw, volumeOf: Harness.VolumeFor);
+            var rv = BuildCatalogs(snapshot.Tree, snapshot.RootPath, basis == SizeBasis.Logical ? l : a, qw);
+            return (l, a, c, qw, s, rv);
         });
         ItemCount = snapshot.Tree.Count;
         Elapsed = 0;
@@ -410,6 +531,7 @@ public sealed class ScanModel : ViewModelBase
         Duplicates = [];
         _duplicatesRan = false;
         QuickWins = quickWins;
+        (Reviewables, OldDownloads, LargeMedia) = reviewables;
         Snapshot = snap;
         _totalsLogical = logical;
         _totalsAllocated = allocated;
@@ -417,11 +539,17 @@ public sealed class ScanModel : ViewModelBase
         _counts = counts;
         _zoomedNode = 0;
         _selectedNode = -1;
+        MultiSelection.Clear();
         _zoomBack.Clear();
         _zoomForward.Clear();
         RootPath = snapshot.RootPath;
-        Volume = VolumeStats.Of(snapshot.RootPath);
+        Volume = Harness.VolumeFor(snapshot.RootPath);
+        SpaceAccount = null;
+        SystemStorage = null;
         Tree = snapshot.Tree;
+        PrewarmDeveloper();
+        _ = ReadSpaceAccountAsync(snapshot.RootPath, snap.ScannedOnDiskBytes, 0);
+        _ = ReadSystemStorageAsync(snapshot.RootPath, snapshot.Tree, allocated, []);
     }
 
     // Zoom navigation history for the breadcrumb ‹ › buttons.
@@ -493,8 +621,8 @@ public sealed class ScanModel : ViewModelBase
     public event Action<string>? ToastRequested;
     public void Toast(string text) => ToastRequested?.Invoke(text);
     public void ToastAdded(int count) => Toast(count == 1
-        ? "Added to Cleanup — Ctrl+Shift+Delete to review"
-        : $"Added {count:N0} items to Cleanup — Ctrl+Shift+Delete to review");
+        ? "Added 1 item to the basket — Ctrl+Shift+Delete to review"
+        : $"Added {count:N0} items to the basket — Ctrl+Shift+Delete to review");
 
     /// <summary>What this node is and what removing it means (WSL disk, app, cache…).</summary>
     public StorageVerdict VerdictOf(int nodeId) =>
@@ -547,12 +675,16 @@ public sealed class ScanModel : ViewModelBase
     /// need a deliberate single add, with the warning), and says so in one
     /// toast. Returns how many were added.
     /// </summary>
-    public int StageMany(IEnumerable<int> nodeIds, string reason)
+    public int StageMany(IEnumerable<int> nodeIds, string reason) =>
+        StageRequests(nodeIds.Select(id => (id, reason)));
+
+    /// <summary><see cref="StageMany"/> with a reason per item ("Developer: node_modules").</summary>
+    private int StageRequests(IEnumerable<(int NodeId, string Reason)> requests)
     {
         if (Tree is null) return 0;
         int added = 0, already = 0;
         var skipped = new List<string>();
-        foreach (int id in nodeIds)
+        foreach (var (id, reason) in requests)
         {
             if (id < 0 || id >= Tree.Count) continue;
             var advice = VerdictOf(id).Advice;
@@ -560,11 +692,14 @@ public sealed class ScanModel : ViewModelBase
             if (Stage(id, reason, notify: false)) added++;
             else already++;
         }
-        string addedText = added == 1 ? "Added 1 item to Cleanup" : $"Added {added:N0} items to Cleanup";
+        string addedText = added == 1 ? "Added 1 item" : $"Added {added:N0} items";
         if (skipped.Count > 0)
         {
             string names = string.Join(", ", skipped.Take(2)) + (skipped.Count > 2 ? $" +{skipped.Count - 2}" : "");
-            Toast($"{(added > 0 ? addedText + " · " : "")}skipped {skipped.Count} risky item{(skipped.Count == 1 ? "" : "s")} ({names}) — add those one at a time to see the warning");
+            string risky = $"{skipped.Count} risky item{(skipped.Count == 1 ? "" : "s")}";
+            Toast(added > 0
+                ? $"{addedText} · skipped {risky} ({names})"
+                : $"{risky} — add {(skipped.Count == 1 ? "it" : "them")} one at a time to see why");
         }
         else if (added > 0)
         {
@@ -572,7 +707,7 @@ public sealed class ScanModel : ViewModelBase
         }
         else if (already > 0)
         {
-            Toast("Already in Cleanup");
+            Toast("Already in the basket");
         }
         return added;
     }
@@ -587,10 +722,19 @@ public sealed class ScanModel : ViewModelBase
     /// <see cref="StageMany"/> behind a confirmation that lists exactly what
     /// will be added — folder by folder, with full paths and sizes.
     /// </summary>
-    public int ConfirmStageMany(IEnumerable<int> nodeIds, string reason, string title)
+    public int ConfirmStageMany(IEnumerable<int> nodeIds, string reason, string title) =>
+        ConfirmStageRequests(nodeIds.Select(id => (id, reason)).ToList(), title);
+
+    /// <summary>
+    /// <see cref="ConfirmStageMany"/> with a reason per item, so each keeps its own name in
+    /// the basket (Mac: confirmStageMany with CleanupStageRequest reasons).
+    /// </summary>
+    public int ConfirmStageRequests(IReadOnlyList<(int NodeId, string Reason)> requests, string title)
     {
         if (Tree is null) return 0;
-        var ids = nodeIds.Distinct().Where(id => id >= 0 && id < Tree.Count).ToList();
+        var seen = new HashSet<int>();
+        var unique = requests.Where(r => r.NodeId >= 0 && r.NodeId < Tree.Count && seen.Add(r.NodeId)).ToList();
+        var ids = unique.Select(r => r.NodeId).ToList();
         if (ids.Count == 0) return 0;
         var safe = ids.Where(id => VerdictOf(id).Advice is not (CleanupAdvice.Warn or CleanupAdvice.Never)).ToList();
         int risky = ids.Count - safe.Count;
@@ -598,15 +742,18 @@ public sealed class ScanModel : ViewModelBase
             id < _totals.Length ? _totals[id] : 0)).ToList();
         if (items.Count > 0)
         {
+            var riskyNames = ids.Where(id => VerdictOf(id).Advice is CleanupAdvice.Warn or CleanupAdvice.Never)
+                .Take(3).Select(id => Tree.NameOf(id)).ToList();
             string? footnote = risky > 0
-                ? $"{risky} risky item{(risky == 1 ? "" : "s")} (WSL/Docker disks, apps, browser data…) won't be added — add those one at a time to see the warning."
+                ? $"{risky} risky item{(risky == 1 ? "" : "s")} ({string.Join(", ", riskyNames)}{(risky > 3 ? "…" : "")}) won’t be added — add {(risky == 1 ? "it" : "them")} one at a time to see why."
                 : null;
-            bool ok = ConfirmBulk?.Invoke(title,
-                "These will be added to Cleanup. Nothing is deleted yet — you review the list on the Cleanup page and confirm again before anything moves to the Recycle Bin.",
+            // The Mac's sheet titles itself by count; the caller's title names the group in the toast.
+            bool ok = ConfirmBulk?.Invoke($"Add {items.Count:N0} item{(items.Count == 1 ? "" : "s")} to the basket?",
+                "Nothing is deleted yet — you review the basket and confirm again before anything moves to the Recycle Bin.",
                 items, footnote) == true;
             if (!ok) return 0;
         }
-        return StageMany(ids, reason);
+        return StageRequests(unique);
     }
 
     /// <summary>Stage a raw path (leftovers, staged folders).</summary>
@@ -619,6 +766,29 @@ public sealed class ScanModel : ViewModelBase
             if (notify) ToastAdded(1);
         }
         return ok;
+    }
+
+    /// <summary>True when this exact path is in the basket.</summary>
+    public bool IsStaged(string path) =>
+        StagedItems.Any(s => string.Equals(System.IO.Path.GetFullPath(s.Path).TrimEnd('\\'),
+            System.IO.Path.GetFullPath(path).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Put Back the last cleanup from the Recycle Bin (Mac: putBackLastCleanup). Restoring is
+    /// never destructive: anything already back, or whose place is taken, is left alone and
+    /// kept in the record for a later try.
+    /// </summary>
+    public async Task<PutBackReport?> PutBackLastCleanupAsync()
+    {
+        if (CleanupRecord.Load() is not { Items.Count: > 0 } record) return null;
+        var report = await Task.Run(() => PutBack.Run(record));
+        var left = record.Items.Where(i => report.Restored.All(r => r.OriginalPath != i.OriginalPath)).ToList();
+        new CleanupRecord(record.Date, left).Save();
+        Toast($"Put back {report.Restored.Count} item{(report.Restored.Count == 1 ? "" : "s")}"
+            + (report.Skipped.Count > 0 ? $" · {report.Skipped.Count} skipped ({report.Skipped[0].Reason})" : ""));
+        RefreshStaged();
+        Changed();
+        return report;
     }
 
     public void Unstage(Guid id)

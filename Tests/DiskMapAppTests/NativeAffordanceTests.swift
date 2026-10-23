@@ -10,9 +10,10 @@ struct NativeAffordanceTests {
 
     @Test func numberedShortcutsFollowTheSidebar() {
         let numbered = KeyboardCommands.numberedDestinations
-        #expect(numbered.count == 9)
+        #expect(numbered == AppDestination.primaryNav + AppDestination.moreNav, "⌘1… in the sidebar's order")
         #expect(numbered.first == .overview)
-        #expect(numbered == Array(AppNavSection.allCases.flatMap(\.items).prefix(9)))
+        #expect(numbered[1] == .cleanSafe)
+        #expect(numbered.count <= 9)
     }
 
     @Test func enclosingAndOpenFolderMoveThroughTheTree() {

@@ -102,7 +102,7 @@ struct ReviewableInspector: View {
             }
             .accessibilityElement(children: .combine)
             InspectorActions(
-                primaryTitle: staged ? "In Cleanup" : "Add to Cleanup",
+                primaryTitle: staged ? "In the basket" : "Add to basket",
                 primaryDone: staged,
                 primaryEnabled: !target.isProtected,
                 primary: { if staged { model.isCleanupQueuePresented = true } else { onStage() } },

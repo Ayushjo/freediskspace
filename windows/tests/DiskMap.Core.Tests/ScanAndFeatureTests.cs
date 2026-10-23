@@ -429,6 +429,9 @@ public class CleanupQueueTests
         Assert.True(CleanupQueue.IsExcludedPath(system + @"pagefile.sys"));
         Assert.True(CleanupQueue.IsExcludedPath(system + @"hiberfil.sys"));
         Assert.True(CleanupQueue.IsExcludedPath(system + @"swapfile.sys"));
+        // D2 (2026-10-21): Recall's snapshot store is never stageable.
+        Assert.True(CleanupQueue.IsExcludedPath(
+            Path.Combine(local, "CoreAIPlatform.00", "UKP", "{0A1B}", "ImageStore", "x.jpg")));
         Assert.True(CleanupQueue.IsExcludedPath(
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "WinSxS", "x")));
         Assert.False(CleanupQueue.IsExcludedPath(

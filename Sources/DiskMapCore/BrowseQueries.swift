@@ -173,9 +173,15 @@ public enum AgeMap {
             }
         }
 
+        // A file inside an app or framework bundle is part of that app, not
+        // something the person forgot: never offer it on its own.
+        let inBundle = tree.folderChainFlags(rootMatches: false) { name in
+            let lower = name.lowercased()
+            return DuplicatePreTick.bundleSuffixes.contains { lower.hasSuffix($0) }
+        }
         for id in 1..<Int32(tree.count) {
             let index = Int(id)
-            guard !tree.isDirectory[index] else { continue }
+            guard !tree.isDirectory[index], !inBundle[index] else { continue }
             let day = tree.modifiedDay[index]
             guard day > 0, today - day > 365, totals[index] > 0 else { continue }
             if files.count < limit {

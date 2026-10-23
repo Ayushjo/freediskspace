@@ -1,0 +1,73 @@
+{
+  "_comment": "Xcode and simulator storage, measured where it lives (AGENTS.md rule 6: patterns are data). Same format as system-storage.json, plus: command = a tool command shown to copy (the app never runs it); perChild = one row per child folder; keepNewest = suggest keeping the highest version per folder. Research: docs/STORAGE-RESEARCH-PLAN.md section 3 (Apple developer forums 84973, 682439, 746361, 842603). Simulator runtime asset names other than iOS are unverified and left out.",
+  "entries": [
+    {
+      "id": "device-support",
+      "title": "Device support",
+      "paths": ["~/Library/Developer/Xcode/iOS DeviceSupport", "~/Library/Developer/Xcode/watchOS DeviceSupport", "~/Library/Developer/Xcode/tvOS DeviceSupport", "~/Library/Developer/Xcode/visionOS DeviceSupport"],
+      "action": "trash",
+      "perChild": true,
+      "keepNewest": true,
+      "why": "Debug files Xcode copies for each OS version of a device you plug in. Xcode copies them again when a device on that version connects. Old ones only matter for reading old crash logs.",
+      "steps": ["Everything except the newest version per platform is suggested. It goes to the Trash first."],
+      "regrows": true
+    },
+    {
+      "id": "simulator-caches",
+      "title": "Simulator caches",
+      "paths": ["~/Library/Developer/CoreSimulator/Caches"],
+      "action": "trash",
+      "why": "Caches the simulator rebuilds by itself, including its shared system cache. The first simulator launch afterwards is slower.",
+      "steps": ["Safe to add to Cleanup. It goes to the Trash first."],
+      "regrows": true
+    },
+    {
+      "id": "simulator-devices",
+      "title": "Simulator devices",
+      "paths": ["~/Library/Developer/CoreSimulator/Devices"],
+      "action": "guide",
+      "command": "xcrun simctl delete unavailable",
+      "why": "Every simulator device with its apps and data. Moving the folder to the Trash leaves Xcode with broken devices.",
+      "steps": ["Run the command to remove devices for runtimes you no longer have, or delete devices in Xcode › Window › Devices and Simulators."],
+      "regrows": false
+    },
+    {
+      "id": "swiftui-previews",
+      "title": "SwiftUI previews",
+      "paths": ["~/Library/Developer/Xcode/UserData/Previews"],
+      "action": "guide",
+      "command": "xcrun simctl --set previews delete all",
+      "why": "The simulators behind SwiftUI previews. Deleting the folder by hand has broken Previews for people; Apple's command is the safe way.",
+      "steps": ["Quit Xcode, then run the command. Previews rebuild what they need."],
+      "regrows": true
+    },
+    {
+      "id": "simulator-runtimes",
+      "title": "Simulator runtimes",
+      "paths": ["/System/Library/AssetsV2/com_apple_MobileAsset_iOSSimulatorRuntime", "/Library/Developer/CoreSimulator/Images", "/Library/Developer/CoreSimulator/Profiles/Runtimes"],
+      "action": "guide",
+      "command": "xcrun simctl runtime list",
+      "why": "Whole iOS versions for the simulator, often several GB each. macOS protects them, so only Xcode can remove them.",
+      "steps": ["Remove the ones you don't need in Xcode › Settings › Components.", "Or list them with the command, then run xcrun simctl runtime delete with a runtime's id."],
+      "regrows": false
+    },
+    {
+      "id": "xcode-archives",
+      "title": "Xcode archives",
+      "paths": ["~/Library/Developer/Xcode/Archives"],
+      "action": "guide",
+      "why": "Builds you archived for release, with the debug symbols you need to read their crash reports.",
+      "steps": ["Delete old ones in Xcode › Window › Organizer › Archives. Keep the ones for versions people still use."],
+      "regrows": false
+    },
+    {
+      "id": "swiftpm-cache",
+      "title": "Swift package cache",
+      "paths": ["~/Library/Caches/org.swift.swiftpm"],
+      "action": "trash",
+      "why": "Swift packages Xcode and SwiftPM downloaded. They're fetched again when a project needs them.",
+      "steps": ["Safe to add to Cleanup. The next build downloads what it needs."],
+      "regrows": true
+    }
+  ]
+}

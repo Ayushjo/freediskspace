@@ -11,6 +11,7 @@ public class StorageClassifierTests
     [InlineData(@"C:\Users\me\AppData\Local\Docker\wsl\disk\docker_data.vhdx", "vms", CleanupAdvice.Warn)]
     [InlineData(@"C:\Users\me\.android\avd\Pixel_4a.avd\userdata-qemu.img.qcow2", "vms", CleanupAdvice.Warn)]
     [InlineData(@"C:\Users\me\AppData\Local\Android\Sdk\system-images\android-34\system.img", "devtools", CleanupAdvice.Review)]
+    [InlineData(@"C:\Users\me\AppData\Local\CoreAIPlatform.00\UKP\{0A1B}\ukg.db", "system", CleanupAdvice.Never)]
     [InlineData(@"C:\pagefile.sys", "system", CleanupAdvice.Never)]
     [InlineData(@"C:\hiberfil.sys", "system", CleanupAdvice.Never)]
     [InlineData(@"C:\Windows\System32\ntoskrnl.exe", "system", CleanupAdvice.Never)]
@@ -27,6 +28,23 @@ public class StorageClassifierTests
     public void ClassifiesFilesFromARealLaptop(string path, string classId, CleanupAdvice advice)
     {
         var verdict = StorageClassifier.Classify(path, isDirectory: false);
+        Assert.Equal(classId, verdict.Class.Id);
+        Assert.Equal(advice, verdict.Advice);
+    }
+
+    [Theory]
+    [InlineData(@"C:\Users\me\AppData\Local\Google\Chrome\User Data\Default\Cache", "caches", CleanupAdvice.Fine)]
+    [InlineData(@"C:\Users\me\AppData\Local\Google\Chrome\User Data\Profile 1\Code Cache", "caches", CleanupAdvice.Fine)]
+    [InlineData(@"C:\Users\me\AppData\Local\Google\Chrome\User Data\ShaderCache", "caches", CleanupAdvice.Fine)]
+    [InlineData(@"C:\Users\me\AppData\Local\Microsoft\Edge\User Data\Default\GPUCache", "caches", CleanupAdvice.Fine)]
+    [InlineData(@"C:\Users\me\AppData\Local\Mozilla\Firefox\Profiles\ab12.default\cache2", "caches", CleanupAdvice.Fine)]
+    // The profile around the caches stays a warning: logins, history, extensions.
+    [InlineData(@"C:\Users\me\AppData\Local\Google\Chrome\User Data\Default", "browsers", CleanupAdvice.Warn)]
+    [InlineData(@"C:\Users\me\AppData\Local\Google\Chrome\User Data", "browsers", CleanupAdvice.Warn)]
+    [InlineData(@"C:\Users\me\AppData\Local\Google\Chrome\User Data\Default\Extensions", "browsers", CleanupAdvice.Warn)]
+    public void ABrowsersCacheRebuildsButItsProfileIsKept(string path, string classId, CleanupAdvice advice)
+    {
+        var verdict = StorageClassifier.Classify(path, isDirectory: true);
         Assert.Equal(classId, verdict.Class.Id);
         Assert.Equal(advice, verdict.Advice);
     }
@@ -54,6 +72,14 @@ public class StorageClassifierTests
         var wsl = StorageClassifier.Classify(@"C:\Users\me\AppData\Local\wsl\{x}\ext4.vhdx", false);
         Assert.Contains("Linux", wsl.Note);
         Assert.Contains("wsl --unregister", wsl.Instead);
+        // Compaction first; --set-sparse only with its corruption warning.
+        Assert.Contains("Optimize-VHD", wsl.Instead);
+        Assert.DoesNotContain("--set-sparse true", wsl.Instead);
+        Assert.Contains("corrupt", wsl.Instead);
+
+        var recall = StorageClassifier.Classify(@"C:\Users\me\AppData\Local\CoreAIPlatform.00\UKP\x", true);
+        Assert.Equal(CleanupAdvice.Never, recall.Advice);
+        Assert.Contains("Recall", recall.Instead);
     }
 
     [Fact]

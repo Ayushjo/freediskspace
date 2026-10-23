@@ -62,13 +62,17 @@ struct DiskMapWordmark: View {
         HStack(alignment: .bottom, spacing: height * 0.12) {
             DiskMapMark()
                 .frame(width: height * DiskMapMark.aspect, height: height)
-            (Text("freedisk").foregroundColor(DiskMapTheme.ink)
-             + Text(".space").foregroundColor(DiskMapTheme.accent))
+            wordmarkText
                 .font(.system(size: height * 0.53, weight: .bold))
                 .tracking(-0.018 * height)
                 .padding(.bottom, height * 0.07)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("freedisk.space")
+    }
+
+    private var wordmarkText: Text {
+        let name: Text = Text("freedisk").foregroundColor(DiskMapTheme.ink)
+        return name + Text(".space").foregroundColor(DiskMapTheme.accent)
     }
 }

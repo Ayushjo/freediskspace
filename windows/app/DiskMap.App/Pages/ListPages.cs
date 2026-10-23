@@ -175,8 +175,8 @@ public abstract class ListPage : UserControl
     {
         "Overview" => "MAIN",
         "Find" or "Biggest Files" or "Biggest Folders" or "Forgotten Files" or "Duplicates" => "FIND",
-        "Caches" or "Old Downloads" or "Large Media" or "Cleanup" => "CLEAN",
-        "File Browser" or "Visualize" or "Tools & Projects" or "Applications" or "Snapshots" => "EXPLORE",
+        "Safe to Review" or "Caches" or "Old Downloads" or "Large Media" or "Cleanup" => "CLEAN",
+        "File Browser" or "Visualize" or "Developer Storage" or "Applications" or "Snapshots" => "EXPLORE",
         _ => title,
     };
 
@@ -222,21 +222,14 @@ public abstract class FileListPage : ListPage
     protected virtual Brush PageIconBg => Ui.Brush("AppAccentSoft");
     protected virtual Brush PageIconFg => Ui.Brush("AppAccent");
     protected virtual string Noun => "files";
-    /// <summary>What an empty list says ("" = say nothing, e.g. Find before a query).</summary>
-    protected virtual string EmptyText => "Nothing matches these filters.";
 
     private readonly ContentControl _headerHost = new();
     private readonly ContentControl _heroHost = new();
     private readonly StackPanel _toolbar = new();
     private readonly StackPanel _table = new();
     private readonly HashSet<int> _checked = [];
-    /// <summary>Every row shown, protected ones last — keyboard navigation walks this.</summary>
     private List<int> _filtered = [];
-    /// <summary>The rows that can be ticked: everything but the protected group.</summary>
-    private List<int> _selectable = [];
     private readonly Dictionary<int, Border> _rowBorders = [];
-    private readonly Dictionary<int, CheckBox> _rowChecks = [];
-    private bool _bulkChecking;
 
     protected FileListPage()
     {
@@ -244,22 +237,7 @@ public abstract class FileListPage : ListPage
         Root.Children.Add(_heroHost);
         Root.Children.Add(_toolbar);
         Root.Children.Add(_table);
-        // A selection change repaints the highlight — never a rebuild.
-        ModelEvents.SelectionWhileLoaded(this, () =>
-        {
-            foreach (var (id, border) in _rowBorders)
-                border.Background = id == Model.SelectedNode ? Ui.Brush("AppRowSelected") : Brushes.Transparent;
-        });
     }
-
-    /// <summary>
-    /// Protected rows — OS state, WSL/Docker/VM disks, installed apps,
-    /// browser profiles, .git, the user folders themselves. They stay
-    /// listed (they are where the space is) but sink to a greyed group at
-    /// the bottom with no checkbox, however large they are.
-    /// </summary>
-    private bool IsLocked(FileTree tree, int id, string rootPath) =>
-        VerdictFor(tree, id, rootPath).Advice is CleanupAdvice.Warn or CleanupAdvice.Never;
 
     /// <summary>Optional hero content (stat cards, breakdowns) between header and toolbar.</summary>
     protected virtual UIElement? Hero(FileTree tree, long[] totals, List<int> ids) => null;
@@ -298,15 +276,19 @@ public abstract class FileListPage : ListPage
             _verdicts = collected.verdicts;
             _table.Children.Clear();
             _rowBorders.Clear();
-            var (active, locked) = ApplyFilters(tree, totals, ids, filterText, kindFilter, sort);
-            var filtered = SetRows(active, locked);
+            var filtered = ApplyFilters(tree, totals, ids, filterText, kindFilter, sort);
+            _filtered = filtered;
+            _checked.IntersectWith(filtered);
             var hero = Hero(tree, totals, filtered);
             if (hero is not null) _heroHost.Content = hero;
             if (UsesStandardToolbar) BuildToolbar(tree, totals, ids);
+            long bytes = filtered.Sum(id => totals[id]);
             _headerHost.Content = Header(PageName, PageBlurb,
-                $"{filtered.Count:N0} {Noun} · {ByteFormat.Format(OutermostBytes(tree, totals, filtered))}",
+                $"{filtered.Count:N0} {Noun} · {ByteFormat.Format(bytes)}",
                 PageIcon, PageIconBg, PageIconFg);
-            _table.Children.Add(BuildTable(tree, totals, active, locked, rootPath));
+            _table.Children.Add(BuildTable(tree, totals, filtered.Take(500).ToList(), rootPath));
+            if (filtered.Count > 500)
+                _table.Children.Add(Ui.Faint($"… and {filtered.Count - 500:N0} smaller {Noun} not shown"));
             PaintBottomBar();
         });
     }
@@ -352,64 +334,43 @@ public abstract class FileListPage : ListPage
         return Model.Stage(Model.SelectedNode, PageName.ToLowerInvariant());
     }
 
-    /// <summary>WIN-052: Ctrl+A checks every row that can be cleaned (never the protected group).</summary>
+    /// <summary>WIN-052: Ctrl+A checks every filtered row.</summary>
     public void SelectAll()
     {
-        _checked.UnionWith(_selectable);
-        SyncChecks();
+        _checked.UnionWith(_filtered);
+        PaintBottomBar();
+        foreach (var cb in EnumerateCheckBoxes()) cb.IsChecked = true;
     }
 
     /// <summary>WIN-052: Esc clears the checked set.</summary>
     public void ClearChecked()
     {
         _checked.Clear();
-        SyncChecks();
-    }
-
-    private void SyncChecks()
-    {
-        _bulkChecking = true;
-        foreach (var (id, cb) in _rowChecks) cb.IsChecked = _checked.Contains(id);
-        _bulkChecking = false;
         PaintBottomBar();
+        foreach (var cb in EnumerateCheckBoxes()) cb.IsChecked = false;
     }
 
-    /// <summary>Records the shown rows; returns them in display order (protected last).</summary>
-    private List<int> SetRows(List<int> active, List<int> locked)
+    private IEnumerable<CheckBox> EnumerateCheckBoxes()
     {
-        _selectable = active;
-        _filtered = [.. active, .. locked];
-        _checked.IntersectWith(active);
-        return _filtered;
+        foreach (var border in _table.Children.OfType<Border>())
+            if (border.Child is Grid row && row.Children.OfType<CheckBox>().FirstOrDefault() is { } cb)
+                yield return cb;
     }
 
-    /// <summary>A list's bytes with each listed folder's listed subfolders counted once (Biggest Folders shows both).</summary>
-    private static long OutermostBytes(FileTree tree, long[] totals, List<int> ids)
-    {
-        var listed = ids.ToHashSet();
-        long bytes = 0;
-        foreach (int id in ids)
-        {
-            bool nested = false;
-            for (int p = tree.Parent[id]; p >= 0 && !nested; p = tree.Parent[p]) nested = listed.Contains(p);
-            if (!nested) bytes += totals[id];
-        }
-        return bytes;
-    }
+    private void PaintSelected() { /* per-row closures handle hover; keyboard nav repaints via _rowBorders */ }
 
     /// <summary>The pinned selection bar (§13): select all, running total, add in one go.</summary>
     protected void PaintBottomBar()
     {
         var totals = Model.Totals;
-        if (_selectable.Count == 0) { ActionBar.Content = null; return; }   // nothing to select, no bar
-        var selected = _selectable.Where(_checked.Contains).ToList();
+        var selected = _filtered.Where(_checked.Contains).ToList();
         long selBytes = selected.Sum(id => totals[id]);
         var copy = Ui.Button("Copy Path", Icons.Copy, Ui.ButtonStyle.Outline, () =>
         {
             var paths = selected.Select(id => TreeExporter.QuotePathIfNeeded(Model.PathOf(id)));
             Clipboard.SetText(string.Join(Environment.NewLine, paths));
         });
-        ActionBar.Content = SelectionBar(_selectable.Count, selected.Count, selBytes,
+        ActionBar.Content = SelectionBar(_filtered.Count, selected.Count, selBytes,
             SelectAll, ClearChecked,
             () =>
             {
@@ -436,28 +397,18 @@ public abstract class FileListPage : ListPage
         };
         row.Children.Add(new Border { Margin = new Thickness(0, 0, 10, 4), Child = box });
 
-        // File kind is a dropdown: the category pills below are the one pill row.
-        var type = new ComboBox
+        var pills = new List<(string Id, string Label)> { ("all", $"All {Noun}") };
+        pills.AddRange(kinds.Select(k => (k, FileTypes.LabelOf(k))));
+        foreach (var (id, label) in pills)
         {
-            Width = 150, Height = 28, FontSize = Ui.Scaled(12),
-            Margin = new Thickness(0, 0, 0, 4),
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        var kindChoices = new List<(string Id, string Label)> { ("all", $"Type: all {Noun}") };
-        kindChoices.AddRange(kinds.Select(k => (k, $"Type: {FileTypes.LabelOf(k)}")));
-        if (_kindFilter != "all" && !kinds.Contains(_kindFilter)) _kindFilter = "all";
-        foreach (var (id, label) in kindChoices)
-        {
-            var item = new ComboBoxItem { Content = label, Tag = id };
-            type.Items.Add(item);
-            if (id == _kindFilter) type.SelectedItem = item;
+            var pill = Ui.Pill(label, _kindFilter == id, () =>
+            {
+                _kindFilter = id;
+                RefreshTableOnly(tree, totals, ids);
+            });
+            pill.Margin = new Thickness(0, 0, 6, 4);
+            row.Children.Add(pill);
         }
-        type.SelectionChanged += (_, _) =>
-        {
-            _kindFilter = (type.SelectedItem as ComboBoxItem)?.Tag as string ?? "all";
-            RefreshTableOnly(tree, totals, ids);
-        };
-        row.Children.Add(type);
 
         var sort = new ComboBox
         {
@@ -544,15 +495,17 @@ public abstract class FileListPage : ListPage
     protected void RefreshTableOnly(FileTree tree, long[] totals, List<int> ids)
     {
         // Rebuild just the table region: header and toolbar stay.
-        var (active, locked) = ApplyFilters(tree, totals, ids, _filterText, _kindFilter, SortMode);
-        SetRows(active, locked);
+        var filtered = ApplyFilters(tree, totals, ids, _filterText, _kindFilter, SortMode);
+        _filtered = filtered;
+        _checked.IntersectWith(filtered);
         _table.Children.Clear();
-        _table.Children.Add(BuildTable(tree, totals, active, locked, Model.RootPath ?? ""));
+        _table.Children.Add(BuildTable(tree, totals, filtered.Take(500).ToList(), Model.RootPath ?? ""));
+        if (filtered.Count > 500)
+            _table.Children.Add(Ui.Faint($"… and {filtered.Count - 500:N0} smaller {Noun} not shown"));
         PaintBottomBar();
     }
 
-    /// <summary>Filtered and sorted rows, split into the cleanable ones and the protected group.</summary>
-    private (List<int> Active, List<int> Locked) ApplyFilters(FileTree tree, long[] totals, List<int> ids,
+    private List<int> ApplyFilters(FileTree tree, long[] totals, List<int> ids,
         string filterText, string kindFilter, string sort)
     {
         IEnumerable<int> q = ids;
@@ -574,17 +527,11 @@ public abstract class FileListPage : ListPage
             "newest" => q.OrderByDescending(id => tree.ModifiedDay[id]),
             _ => q.OrderByDescending(id => totals[id]),
         };
-        string rootPath = Model.RootPath ?? "";
-        List<int> active = [], locked = [];
-        foreach (int id in q) (IsLocked(tree, id, rootPath) ? locked : active).Add(id);
-        return (active, locked);
+        return q.ToList();
     }
 
-    /// <summary>
-    /// The reference table: ☑, #, name cell, category, modified, size, ⋯ —
-    /// the cleanable rows, then the protected group greyed at the bottom.
-    /// </summary>
-    protected UIElement BuildTable(FileTree tree, long[] totals, List<int> active, List<int> locked, string rootPath)
+    /// <summary>The reference table: ☑, #, name cell, type badge, modified, size, ⋯.</summary>
+    protected UIElement BuildTable(FileTree tree, long[] totals, List<int> ids, string rootPath)
     {
         var table = new StackPanel();
         var headerRow = Ui.TableRowGrid(
@@ -593,7 +540,24 @@ public abstract class FileListPage : ListPage
         headerRow.MinHeight = 0;
         headerRow.Height = 28;
         headerRow.Margin = new Thickness(0);
-        // No select-all box here: the pinned bar's "Select all" is the one.
+        var selectAll = new CheckBox
+        {
+            VerticalAlignment = VerticalAlignment.Center,
+            IsChecked = ids.Count > 0 && ids.All(_checked.Contains),
+        };
+        selectAll.Checked += (_, _) =>
+        {
+            foreach (var i in _filtered) _checked.Add(i);
+            RebuildRows();
+            PaintBottomBar();
+        };
+        selectAll.Unchecked += (_, _) =>
+        {
+            _checked.Clear();
+            RebuildRows();
+            PaintBottomBar();
+        };
+        Ui.Cell(headerRow, selectAll, 0);
         Ui.Cell(headerRow, Ui.Mono("#", 10, null, Ui.Brush("AppFaint")), 1);
         Ui.Cell(headerRow, Ui.TableHead("Name"), 2);
         Ui.Cell(headerRow, Ui.TableHead("Category"), 3);
@@ -602,59 +566,39 @@ public abstract class FileListPage : ListPage
         table.Children.Add(headerRow);
         table.Children.Add(Ui.Hairline());
 
-        _rowBorders.Clear();
-        _rowChecks.Clear();
-        var shown = active.Take(500).ToList();
-        for (int i = 0; i < shown.Count; i++)
+        _rowsHost = new StackPanel();
+        for (int i = 0; i < ids.Count; i++)
         {
-            if (i > 0) table.Children.Add(Ui.Hairline());
-            table.Children.Add(FileRow(tree, totals, shown[i], i + 1, rootPath, locked: false));
+            if (i > 0) _rowsHost.Children.Add(Ui.Hairline());
+            _rowsHost.Children.Add(FileRow(tree, totals, ids[i], i + 1, rootPath));
         }
-        if (active.Count > shown.Count)
-            table.Children.Add(Ui.Faint($"… and {active.Count - shown.Count:N0} smaller {Noun} not shown"));
-        if (active.Count == 0 && locked.Count == 0)
+        if (ids.Count == 0)
         {
-            // No header over nothing — just the sentence, or nothing at all.
-            table.Children.Clear();
-            if (EmptyText.Length > 0)
-            {
-                var empty = Ui.Subtle(EmptyText);
-                empty.Margin = new Thickness(0, 8, 0, 8);
-                table.Children.Add(empty);
-            }
+            var empty = Ui.Subtle("Nothing matches these filters.");
+            empty.Margin = new Thickness(0, 8, 0, 8);
+            _rowsHost.Children.Add(empty);
         }
-        if (locked.Count > 0)
-        {
-            table.Children.Add(ProtectedHeader(locked, totals));
-            var shownLocked = locked.Take(100).ToList();
-            for (int i = 0; i < shownLocked.Count; i++)
-            {
-                if (i > 0) table.Children.Add(Ui.Hairline());
-                table.Children.Add(FileRow(tree, totals, shownLocked[i], shown.Count + i + 1, rootPath, locked: true));
-            }
-            if (locked.Count > shownLocked.Count)
-                table.Children.Add(Ui.Faint($"… and {locked.Count - shownLocked.Count:N0} more protected {Noun}"));
-        }
+        _rowsHost.Tag = (tree, ids, rootPath);
+        table.Children.Add(_rowsHost);
         return table;
     }
 
-    private static UIElement ProtectedHeader(List<int> locked, long[] totals)
+    private StackPanel? _rowsHost;
+
+    /// <summary>Re-render the row stack in place — used when select-all toggles.</summary>
+    private void RebuildRows()
     {
-        var row = new WrapPanel { Margin = new Thickness(0, 20, 0, 6) };
-        var shield = Ui.Glyph(Icons.Shield, 12, Ui.Brush("AppSubtle"));
-        shield.Margin = new Thickness(0, 0, 8, 0);
-        row.Children.Add(shield);
-        var label = Ui.MonoLabel($"PROTECTED · {locked.Count:N0} · {ByteFormat.Format(locked.Sum(id => totals[id]))}",
-            Ui.Brush("AppSubtle"));
-        label.VerticalAlignment = VerticalAlignment.Center;
-        row.Children.Add(label);
-        var why = Ui.Faint("   System, app, VM/WSL and browser data — kept out of selection. ⋯ on a row says why and what to do instead.", 11);
-        why.VerticalAlignment = VerticalAlignment.Center;
-        row.Children.Add(why);
-        return row;
+        if (_rowsHost?.Tag is not (FileTree tree, List<int> ids, string rootPath)) return;
+        var totals = Model.Totals;
+        _rowsHost.Children.Clear();
+        for (int i = 0; i < ids.Count; i++)
+        {
+            if (i > 0) _rowsHost.Children.Add(Ui.Hairline());
+            _rowsHost.Children.Add(FileRow(tree, totals, ids[i], i + 1, rootPath));
+        }
     }
 
-    private UIElement FileRow(FileTree tree, long[] totals, int id, int rank, string rootPath, bool locked)
+    private UIElement FileRow(FileTree tree, long[] totals, int id, int rank, string rootPath)
     {
         string kind = FileTypes.KindOf(tree, id);
         var kindBrush = Ui.KindColor(kind);
@@ -670,14 +614,10 @@ public abstract class FileListPage : ListPage
             Model.SelectedNode == id ? Ui.Brush("AppRowSelected") : Brushes.Transparent;
         PaintSelected();
 
-        if (!locked)
-        {
-            var check = new CheckBox { IsChecked = _checked.Contains(id), VerticalAlignment = VerticalAlignment.Center };
-            check.Checked += (_, _) => { _checked.Add(id); if (!_bulkChecking) PaintBottomBar(); };
-            check.Unchecked += (_, _) => { _checked.Remove(id); if (!_bulkChecking) PaintBottomBar(); };
-            _rowChecks[id] = check;
-            Ui.Cell(row, check, 0);
-        }
+        var check = new CheckBox { IsChecked = _checked.Contains(id), VerticalAlignment = VerticalAlignment.Center };
+        check.Checked += (_, _) => { _checked.Add(id); PaintBottomBar(); };
+        check.Unchecked += (_, _) => { _checked.Remove(id); PaintBottomBar(); };
+        Ui.Cell(row, check, 0);
         Ui.Cell(row, Ui.Mono(rank.ToString(), 10, null, Ui.Brush("AppFaint")), 1);
         // WIN-046: cloud-only rows get the glyph — the bytes sit online,
         // and Reveal would recall the content.
@@ -692,19 +632,10 @@ public abstract class FileListPage : ListPage
                 ? $"{Model.DisplayPath(id)}  ·  cloud-only — opening downloads it"
                 : Model.DisplayPath(id), 26);
         Ui.Cell(row, nameCell, 2);
-        var verdict = VerdictFor(tree, id, rootPath);
-        Ui.Cell(row, CategoryBadge(verdict, kind), 3);
+        Ui.Cell(row, CategoryBadge(VerdictFor(tree, id, rootPath), kind), 3);
         Ui.Cell(row, Ui.Mono(Ui.RelativeDay(tree.ModifiedDay[id]), 11, null, Ui.Brush("AppSubtle")), 4);
         Ui.Cell(row, Ui.Mono(ByteFormat.Format(totals[id]), 12), 5, right: true);
-        string reason = PageName.ToLowerInvariant();
-        Ui.Cell(row, Ui.MoreButton(() => RowMenu.Open(outer, id, reason)), 6, right: true);
-        if (locked)
-        {
-            foreach (UIElement cell in row.Children)
-                if (cell is not System.Windows.Controls.Button) cell.Opacity = 0.45;
-            outer.ToolTip = string.Join("\n\n", new[] { verdict.Note, verdict.Instead }.Where(t => t is not null))
-                is { Length: > 0 } tip ? tip : "Protected — can't be cleaned here.";
-        }
+        Ui.Cell(row, Ui.MoreButton(() => OpenRowMenu(outer, tree, id)), 6, right: true);
 
         outer.Cursor = System.Windows.Input.Cursors.Hand;
         outer.MouseLeftButtonDown += (_, e) =>
@@ -716,9 +647,8 @@ public abstract class FileListPage : ListPage
                 if (isDir) { Model.DrillTo(id); Model.ShowPage("File Browser"); }
                 else Explorer.Reveal(Model.PathOf(id));
             }
-            else Model.Select(id);
+            else { Model.Select(id); PaintSelected(); }
         };
-        outer.MouseRightButtonUp += (_, e) => { RowMenu.Open(outer, id, reason); e.Handled = true; };
         outer.MouseEnter += (_, _) => { if (Model.SelectedNode != id) outer.Background = Ui.Brush("AppHover"); };
         outer.MouseLeave += (_, _) => PaintSelected();
         return outer;
@@ -741,6 +671,44 @@ public abstract class FileListPage : ListPage
         if (verdict.Note is not null || verdict.Instead is not null)
             badge.ToolTip = string.Join("\n\n", new[] { verdict.Note, verdict.Instead }.Where(t => t is not null));
         return badge;
+    }
+
+    private void OpenRowMenu(UIElement anchor, FileTree tree, int id)
+    {
+        Model.Select(id);
+        string path = Model.PathOf(id);
+        var menu = new ContextMenu();
+        var reveal = new MenuItem { Header = "Reveal in Explorer" };
+        reveal.Click += (_, _) => Explorer.Reveal(path);
+        menu.Items.Add(reveal);
+        var copy = new MenuItem { Header = "Copy Path" };
+        copy.Click += (_, _) => Clipboard.SetText(path);
+        menu.Items.Add(copy);
+        if (tree.IsDirectory[id])
+        {
+            var vis = new MenuItem { Header = "Show in Visualize" };
+            vis.Click += (_, _) => Model.Visualize(id);
+            menu.Items.Add(vis);
+        }
+        else
+        {
+            // Show-in-map: the file's parent folder in Visualize, selected.
+            var show = new MenuItem { Header = "Show in Visualize" };
+            int parent = tree.Parent[id];
+            show.Click += (_, _) =>
+            {
+                if (parent >= 0) Model.DrillTo(parent);
+                Model.Select(id);
+                Model.ShowPage("Visualize");
+            };
+            menu.Items.Add(show);
+        }
+        menu.Items.Add(new Separator());
+        var stage = new MenuItem { Header = "Add to Cleanup" };
+        stage.Click += (_, _) => Model.Stage(id, PageName.ToLowerInvariant());
+        menu.Items.Add(stage);
+        menu.PlacementTarget = anchor;
+        menu.IsOpen = true;
     }
 }
 
@@ -1177,7 +1145,15 @@ public sealed class FileBrowserPage : FileListPage
         text.Children.Add(Ui.Subtle($"{ByteFormat.Format(size)} · {items:N0} items", 11.5));
         DockPanel.SetDock(text, Dock.Left);
         card.Children.Add(text);
-        // What's inside is the inspector's job — one breakdown on screen, not two.
+        var parts = FileTypes.TypeBreakdown(tree, totals, zoom)
+            .OrderByDescending(kv => kv.Value)
+            .Select(kv => (FileTypes.LabelOf(kv.Key), kv.Value,
+                Ui.Hex(FileTypes.TileColorOf(kv.Key))))
+            .ToList();
+        var right = new StackPanel { Width = 300, VerticalAlignment = VerticalAlignment.Center };
+        DockPanel.SetDock(right, Dock.Right);
+        right.Children.Add(Ui.TypeBarWithLegend(parts, Math.Max(1, size)));
+        card.Children.Add(right);
 
         var wrap = new StackPanel();
         wrap.Children.Add(crumbCard);
@@ -1205,7 +1181,6 @@ public sealed class SearchPage : FileListPage
     protected override Brush PageIconFg => Ui.Brush("AppSubtle");
     protected override string Noun => "matches";
     protected override bool UsesStandardToolbar => false;
-    protected override string EmptyText => string.IsNullOrWhiteSpace(Model.SearchQuery) ? "" : "No matches — try fewer words or a broader filter.";
     protected override string PageBlurb => string.IsNullOrWhiteSpace(Model.SearchQuery)
         ? "Search the scan by name, path, size, age, type or location."
         : $"Results for \"{Model.SearchQuery}\"";
@@ -1222,8 +1197,7 @@ public sealed class SearchPage : FileListPage
 
     protected override List<int> Collect(FileTree tree, long[] totals, string rootPath)
     {
-        _lastParsed = FileQuery.Parse(Model.SearchQuery, home: Environment.GetFolderPath(
-            Environment.SpecialFolder.UserProfile), root: rootPath);
+        _lastParsed = FileQuery.Parse(Model.SearchQuery, home: UserFolders.Home, root: rootPath);
         _usedQuery = _lastParsed.Query.IsStructured;
         if (!_usedQuery)
         {
@@ -1408,677 +1382,6 @@ public sealed class SearchPage : FileListPage
                     "Duplicated means in a same-content group — run Duplicates to refresh.", 11.5));
         }
         if (explanation.Children.Count > 0) hero.Children.Add(explanation);
-        return hero;
-    }
-}
-
-/// <summary>
-/// Overview — the calm-system landing page (docs/DESIGN.md §17):
-/// one reading column (max 880), the hero figure, "where it's going"
-/// category rows, worth-reviewing and growth/file columns, a mono
-/// footer. Hairlines and space — no cards.
-/// </summary>
-public sealed class OverviewPage : ListPage
-{
-    public OverviewPage()
-    {
-        // The first-run screen swaps its scan buttons for progress while a
-        // scan runs (IsScanning is not a StateChanged event).
-        System.ComponentModel.PropertyChangedEventHandler onScan = (_, e) =>
-        {
-            if (e.PropertyName == nameof(ScanModel.IsScanning) && Model.Tree is null) Refresh();
-        };
-        // While on screen only — pages are rebuilt on theme/setup changes.
-        Loaded += (_, _) => Model.PropertyChanged += onScan;
-        Unloaded += (_, _) => Model.PropertyChanged -= onScan;
-    }
-
-    protected override void Refresh()
-    {
-        Root.Children.Clear();
-        var tree = Model.Tree;
-        if (tree is null || Model.Totals.Length != tree.Count)
-        {
-            Root.Children.Add(FirstRunHero());
-            return;
-        }
-
-        var totals = Model.Totals;
-        var volume = Model.Volume;
-        Root.Children.Add(Working("Summarizing…"));
-        Compute(() =>
-        {
-            long compressed = 0, cloudBytes = 0;
-            for (int i = 0; i < tree.Count; i++)
-            {
-                if (tree.AllocatedSize[i] < tree.LogicalSize[i])
-                    compressed += tree.LogicalSize[i] - tree.AllocatedSize[i];
-                if ((tree.Flags[i] & NodeFlags.NotDownloaded) != 0)
-                    cloudBytes += totals[i];
-            }
-            // Biggest files you can act on first; protected ones (a WSL disk,
-            // a VM) after them, greyed — never leading the list.
-            string root = Model.RootPath ?? "";
-            var top = TopSizes.Largest(1, tree.Count, 40, id => totals[id],
-                id => !tree.IsDirectory[id] && totals[id] > 0);
-            var locked = top.Where(id => StorageClassifier.Classify(tree.PathOf(id, root), false).Advice
-                is CleanupAdvice.Warn or CleanupAdvice.Never).ToHashSet();
-            return new
-            {
-                TopFiles = top.Where(id => !locked.Contains(id)).Take(5)
-                    .Concat(top.Where(locked.Contains).Take(2)).ToList(),
-                Locked = locked,
-                Compressed = compressed,
-                CloudBytes = cloudBytes,
-            };
-        }, data => Show(tree, totals, volume, data.TopFiles, data.Locked, data.Compressed, data.CloudBytes));
-    }
-
-    /// <summary>The one reading column — centred, 880 max (§17).</summary>
-    private StackPanel ReadingColumn()
-    {
-        var center = new Grid();
-        var column = new StackPanel
-        {
-            MaxWidth = 880,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(32, 8, 32, 0),
-        };
-        center.Children.Add(column);
-        Root.Children.Add(center);
-        return column;
-    }
-
-    private void Show(FileTree tree, long[] totals, VolumeInfo? volume,
-        List<int> topFiles, HashSet<int> lockedFiles, long compressedBytes, long cloudOnlyBytes)
-    {
-        Root.Children.Clear();
-        var column = ReadingColumn();
-        column.Children.Add(Hero(tree, totals, volume, compressedBytes, cloudOnlyBytes));
-
-        // Access-denied notice — the one bordered row the page may carry.
-        if (Model.DeniedDirectories is { Count: > 0 } denied && Model.RootPath is { } rootPath)
-        {
-            var examples = denied.Take(3).Select(id => tree.PathOf(id, rootPath)).ToList();
-            var notice = Ui.Notice(
-                $"{denied.Count} folder{(denied.Count == 1 ? "" : "s")} couldn't be scanned",
-                "Access was denied — the figures above are missing what's inside. " +
-                "Run freedisk.space as administrator to include everything." +
-                (examples.Count > 0 ? "\n" + string.Join("\n", examples.Select(e => "  " + e)) +
-                    (denied.Count > examples.Count ? $"\n  …and {denied.Count - examples.Count} more" : "") : ""));
-            notice.Margin = new Thickness(0, 0, 0, 32);
-            column.Children.Add(notice);
-        }
-
-        var going = WhereGoing(tree, totals);
-        going.Margin = new Thickness(0, 0, 0, 32);
-        column.Children.Add(going);
-
-        var pair = TwoColumns(tree, totals, topFiles, lockedFiles);
-        pair.Margin = new Thickness(0, 0, 0, 32);
-        column.Children.Add(pair);
-
-        column.Children.Add(Footer());
-    }
-
-    // ---- Hero (§17.1): volume label, the one display figure, the
-    // capacity bar, one coverage sentence + the Why? popover ----
-
-    private FrameworkElement Hero(FileTree tree, long[] totals, VolumeInfo? volume,
-        long compressedBytes, long cloudOnlyBytes)
-    {
-        var hero = new StackPanel { Margin = new Thickness(0, 0, 0, 32) };
-        long used, total, free;
-        string driveName;
-        if (volume is { } v)
-        {
-            used = v.UsedBytes; total = v.TotalBytes; free = v.FreeBytes;
-            driveName = v.DriveLabel;
-        }
-        else
-        {
-            used = totals[0]; total = totals[0]; free = 0;
-            driveName = Model.RootPath ?? "Scan";
-        }
-        double usedFrac = total > 0 ? (double)used / total : 0;
-        double freeFrac = total > 0 ? (double)free / total : 1;
-        bool low = freeFrac < 0.10;
-
-        hero.Children.Add(Ui.MonoLabel(driveName));
-        var display = Ui.Mono($"{ByteFormat.Format(free)} free", 28, FontWeights.SemiBold);
-        display.Margin = new Thickness(0, 4, 0, 2);
-        hero.Children.Add(display);
-
-        var sub = new StackPanel { Orientation = Orientation.Horizontal };
-        sub.Children.Add(Ui.Mono($"of {ByteFormat.Format(total)} · {usedFrac * 100:0}% used", 12, null, Ui.Brush("AppSubtle")));
-        if (low)
-        {
-            var safety = Ui.SafetyLabel(Ui.Brush("AppDanger"), "Low on space");
-            safety.Margin = new Thickness(14, 0, 0, 0);
-            safety.VerticalAlignment = VerticalAlignment.Center;
-            sub.Children.Add(safety);
-        }
-        sub.Margin = new Thickness(0, 0, 0, 10);
-        hero.Children.Add(sub);
-
-        var bar = Ui.CapacityBar(usedFrac,
-            low ? Ui.Brush("AppDanger") : Ui.WithOpacity("AppForeground", 0.55));
-        bar.Margin = new Thickness(0, 0, 0, 10);
-        hero.Children.Add(bar);
-
-        // Coverage sentence + Why? popover (§16.3) — the reconciliation
-        // numbers live in the popover, the sentence on the page.
-        var coverage = new StackPanel { Orientation = Orientation.Horizontal };
-        var rec = Model.Snapshot?.Reconciliation;
-        string sentence = rec is { } r && !r.ScannedExceedsUsed
-            ? $"This scan accounts for {ByteFormat.Format(r.ScannedBytes)} of the {ByteFormat.Format(r.UsedBytes)} in use ({r.CoverageFraction * 100:0.#}%)."
-            : $"This scan counts {ByteFormat.Format(totals[0])} across every name it could read.";
-        var sent = Ui.Subtle(sentence, 12);
-        coverage.Children.Add(sent);
-        var whyLink = Ui.LinkText("Why?", () => { }, 12);
-        whyLink.Margin = new Thickness(8, 0, 0, 0);
-        var popup = WhyPopover(whyLink, tree, compressedBytes, cloudOnlyBytes);
-        whyLink.MouseLeftButtonDown += (_, _) => popup.IsOpen = !popup.IsOpen;
-        coverage.Children.Add(whyLink);
-        hero.Children.Add(coverage);
-        hero.Children.Add(popup);
-        return hero;
-    }
-
-    /// <summary>§16.3 — "WHY THE NUMBERS DIFFER", raised, 340 wide.</summary>
-    private System.Windows.Controls.Primitives.Popup WhyPopover(
-        FrameworkElement anchor, FileTree tree, long compressedBytes, long cloudOnlyBytes)
-    {
-        var body = new StackPanel { Width = 340 };
-        body.Children.Add(Ui.MonoLabel("Why the numbers differ", Ui.Brush("AppSubtle")));
-        var rec = Model.Snapshot?.Reconciliation;
-        if (rec is { } r)
-        {
-            string detail;
-            if (r.ScannedExceedsUsed)
-            {
-                detail = $"This scan counts {ByteFormat.Format(r.ScannedBytes)} across names — more than the " +
-                    $"{ByteFormat.Format(r.UsedBytes)} in use, because hard-linked files share the same physical blocks.";
-            }
-            else
-            {
-                bool svi = Model.DeniedDirectories.Any(id =>
-                    tree.NameOf(id).Equals("System Volume Information", StringComparison.OrdinalIgnoreCase));
-                detail = $"{ByteFormat.Format(r.UnaccountedBytes)} sits outside the scan: " +
-                    (svi ? "restore points and VSS shadow copies in System Volume Information (which Windows won't let us read), plus "
-                        : "restore points and ") +
-                    "system state, other volumes mounted under this folder, folders Windows " +
-                    "wouldn't let us read, and filesystem metadata itself.";
-            }
-            var text = Ui.Subtle(detail, 12);
-            text.TextWrapping = TextWrapping.Wrap;
-            text.Margin = new Thickness(0, 8, 0, 0);
-            body.Children.Add(text);
-        }
-        var correction = Model.Snapshot?.HardLinkCorrection;
-        if (correction is { IsEmpty: false } c)
-        {
-            var t = Ui.Subtle($"{c.DuplicateNameCount:N0} names of hard-linked files are counted once — " +
-                $"{ByteFormat.Format(c.AllocatedBytes)} of shared blocks.", 12);
-            t.TextWrapping = TextWrapping.Wrap;
-            t.Margin = new Thickness(0, 8, 0, 0);
-            body.Children.Add(t);
-        }
-        if (Model.Volume is { DriveFormat: "ReFS" })
-        {
-            var clone = Model.CloneCorrection;
-            var t = Ui.Subtle(clone.CloneCount > 0
-                ? $"{clone.CloneCount:N0} cloned copies share {ByteFormat.Format(clone.Bytes)} — counted once."
-                : "Block-cloned copies are counted per copy — turn on clone accounting in Settings (Ctrl+,) to count clones once.");
-            t.FontSize = 12;
-            t.TextWrapping = TextWrapping.Wrap;
-            t.Margin = new Thickness(0, 8, 0, 0);
-            body.Children.Add(t);
-        }
-        if (compressedBytes > 256L * 1024 * 1024 || cloudOnlyBytes > 0)
-        {
-            string extra = compressedBytes > 256L * 1024 * 1024
-                ? $"{ByteFormat.Format(compressedBytes)} of the scanned data is already compressed or sparse on disk."
-                : "";
-            if (cloudOnlyBytes > 0)
-                extra += (extra.Length > 0 ? " " : "") +
-                    $"{ByteFormat.Format(cloudOnlyBytes)} lives only in the cloud — evicting it in Explorer frees space without deleting.";
-            var t = Ui.Subtle(extra, 12);
-            t.TextWrapping = TextWrapping.Wrap;
-            t.Margin = new Thickness(0, 8, 0, 0);
-            body.Children.Add(t);
-        }
-        return new System.Windows.Controls.Primitives.Popup
-        {
-            PlacementTarget = anchor,
-            Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom,
-            StaysOpen = false,
-            AllowsTransparency = true,
-            Child = new Border
-            {
-                Background = Ui.Brush("AppCard"),
-                BorderBrush = Ui.Brush("AppBorder"),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(10),
-                Padding = new Thickness(16),
-                Margin = new Thickness(0, 6, 0, 0),
-                Child = body,
-            },
-        };
-    }
-
-    // ---- Where it's going (§17.3): SectionHeader + segmented bar +
-    // §14.4 category rows ----
-
-    private FrameworkElement WhereGoing(FileTree tree, long[] totals)
-    {
-        var section = new StackPanel();
-        var open = Ui.LinkText("Open in Visualize →", () => Model.Visualize(0));
-        open.VerticalAlignment = VerticalAlignment.Bottom;
-        section.Children.Add(Ui.SectionHeader(
-            Model.Snapshot?.Mode == CategoryMode.Folder ? "Where it's going · by type" : "Where it's going",
-            trailing: open));
-        section.Children.Add(new Border { Height = 12 });
-
-        var cats = Model.Snapshot?.Categories;
-        List<(string Name, long Bytes, Brush Brush, Action? Go)> rows = [];
-        if (cats is { Count: > 0 })
-        {
-            foreach (var cat in cats.Take(18))
-            {
-                bool isClass = StorageClassifier.All.Any(c => c.Id == cat.Key);
-                // Classified rows open the list on that category: file-shaped
-                // classes on Biggest Files, folder-shaped ones on Biggest Folders.
-                string listPage = cat.Key is "installers" or "ai" or "media" or "vms" or "downloads" or "documents"
-                    ? "Biggest Files" : "Biggest Folders";
-                Action? go = isClass
-                    ? () => { FileListPage.PendingClassFilter = cat.Key; Model.ShowPage(listPage); }
-                    : cat.NodeId is { } nodeId
-                    ? () => Model.Visualize(nodeId)
-                    : cat.FileKind is { } kind
-                        ? () => { Model.SearchQuery = $"kind:{kind}"; Model.ShowPage("Find"); }
-                        : null;
-                rows.Add((cat.Title, cat.Bytes, CategoryBrush(cat), go));
-            }
-        }
-        else
-        {
-            int i = 0;
-            foreach (var (id, size) in tree.ChildrenOf(0, totals).OrderByDescending(c => c.Size).Take(7))
-            {
-                int captured = id;
-                rows.Add((tree.NameOf(id), size, Ui.Data(i++), () => Model.Visualize(captured)));
-            }
-        }
-        long sum = Math.Max(1, rows.Sum(r => r.Bytes));
-
-        // The 6 pt composition bar — segments in the data palette.
-        var parts = rows.Take(6).Select(r => ((double)r.Bytes / sum, r.Brush)).ToList();
-        double rest = Math.Max(0, 1 - parts.Sum(p => p.Item1));
-        if (rest > 0.005) parts.Add((rest, Ui.Data(6)));
-        var bar = Ui.SegBar(parts);
-        bar.Margin = new Thickness(0, 0, 0, 12);
-        section.Children.Add(bar);
-
-        // §14.4 rows: dot · name · 3 pt bar · mono size · mono %.
-        foreach (var (name, bytes, brush, go) in rows)
-        {
-            var row = new Grid();
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(16) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(76) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(40) });
-            var dot = Ui.Dot(brush, 8);
-            Grid.SetColumn(dot, 0);
-            row.Children.Add(dot);
-            var nameText = Ui.T(name, 13, FontWeights.Medium);
-            nameText.TextTrimming = TextTrimming.CharacterEllipsis;
-            nameText.VerticalAlignment = VerticalAlignment.Center;
-            Grid.SetColumn(nameText, 1);
-            row.Children.Add(nameText);
-            var prop = Ui.CapacityBar((double)bytes / Math.Max(1, rows[0].Bytes), brush, double.NaN);
-            prop.Height = 3;
-            prop.VerticalAlignment = VerticalAlignment.Center;
-            prop.Margin = new Thickness(0, 0, 12, 0);
-            Grid.SetColumn(prop, 2);
-            row.Children.Add(prop);
-            var sizeText = Ui.Mono(ByteFormat.Format(bytes), 12, FontWeights.Medium);
-            sizeText.HorizontalAlignment = HorizontalAlignment.Right;
-            sizeText.VerticalAlignment = VerticalAlignment.Center;
-            Grid.SetColumn(sizeText, 3);
-            row.Children.Add(sizeText);
-            var pctText = Ui.Mono($"{100.0 * bytes / sum:0}%", 11, null, Ui.Brush("AppSubtle"));
-            pctText.HorizontalAlignment = HorizontalAlignment.Right;
-            pctText.VerticalAlignment = VerticalAlignment.Center;
-            Grid.SetColumn(pctText, 4);
-            row.Children.Add(pctText);
-            section.Children.Add(Ui.HoverRow(row, go));
-        }
-        if (rows.Count == 0)
-            section.Children.Add(Ui.Subtle("The scan is empty.", 12));
-        return section;
-    }
-
-    private static Brush CategoryBrush(StorageCategory cat) =>
-        cat.FileKind is { } kind ? Ui.KindColor(kind)
-        : cat.Key switch
-        {
-            "downloads" => Ui.Data(2),
-            "applications" or "apps" => Ui.Data(4),
-            "documents" => Ui.Data(5),
-            "developer" => Ui.Data(0),
-            "caches" or "appdata" => Ui.Data(3),
-            _ => cat.ColorHex is { } hex ? Ui.Hex(hex) : Ui.Data(6),
-        };
-
-    // ---- Two columns (§17.4): worth reviewing | what grew / biggest ----
-
-    private FrameworkElement TwoColumns(FileTree tree, long[] totals, List<int> topFiles, HashSet<int> lockedFiles)
-    {
-        var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(24) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-        var left = WorthReviewing(totals);
-        Grid.SetColumn(left, 0);
-        grid.Children.Add(left);
-
-        FrameworkElement right = Model.HistoryComparison is { } growth && growth.Growers.Count > 0
-            ? WhatGrew(tree, growth)
-            : BiggestFiles(tree, totals, topFiles, lockedFiles);
-        Grid.SetColumn(right, 2);
-        grid.Children.Add(right);
-        return grid;
-    }
-
-    private FrameworkElement WorthReviewing(long[] totals)
-    {
-        var section = new StackPanel();
-        var hits = Model.QuickWins ?? [];
-        var groups = hits.GroupBy(h => h.Category)
-            .Select(g => (Category: g.Key, Bytes: g.Sum(h => totals[h.Id]), Count: g.Count()))
-            .OrderByDescending(g => g.Bytes).Take(6).ToList();
-        long reclaimable = groups.Sum(g => g.Bytes);
-        section.Children.Add(Ui.SectionHeader("Worth reviewing",
-            reclaimable > 0 ? $"~{ByteFormat.Format(reclaimable)}" : null));
-
-        // The narrator's ranked recommendations lead — each row is a
-        // safety dot, a name, a tail-truncated detail, a mono size (§17.4).
-        if (Model.Snapshot is { } snap)
-        {
-            foreach (var r in StorageNarrator.Recommendations(snap, 4).Where(r => r.Id != "rec-quickwins").Take(3))
-            {
-                var color = r.Safety switch
-                {
-                    StorySafety.Safe => Ui.Brush("AppSuccess"),
-                    StorySafety.Protected => Ui.Brush("AppDanger"),
-                    _ => Ui.Brush("AppWarning"),
-                };
-                string page = r.Id switch
-                {
-                    "rec-downloads" => "Old Downloads",
-                    "rec-forgotten" => "Forgotten Files",
-                    "rec-caches" => "Caches",
-                    _ => "Large Media",
-                };
-                section.Children.Add(LinkRow(color, r.Title, r.Detail,
-                    ByteFormat.Format(r.Bytes), () => Model.ShowPage(page)));
-            }
-        }
-        foreach (var g in groups)
-        {
-            string page = g.Category is "Development caches" or "System caches" or "Diagnostics"
-                ? "Caches" : "Tools & Projects";
-            section.Children.Add(LinkRow(Ui.Brush("AppSuccess"), g.Category,
-                $"{g.Count:N0} location{(g.Count == 1 ? "" : "s")} — regenerable data",
-                ByteFormat.Format(g.Bytes), () => Model.ShowPage(page)));
-        }
-        if (groups.Count == 0 && Model.Snapshot is null)
-            section.Children.Add(Ui.Subtle("Nothing flagged — this scan looks clean.", 12));
-        return section;
-    }
-
-    /// <summary>§17.4 link row: safety dot · name · detail · mono size · ›.</summary>
-    private FrameworkElement LinkRow(Brush dot, string name, string detail, string size, Action go)
-    {
-        var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(14) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(14) });
-        grid.Children.Add(Ui.Dot(dot, 6));
-        var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        text.Children.Add(Ui.T(name, 13, FontWeights.Medium));
-        var d = Ui.Faint(detail, 11.5);
-        d.TextTrimming = TextTrimming.CharacterEllipsis;
-        text.Children.Add(d);
-        Grid.SetColumn(text, 1);
-        grid.Children.Add(text);
-        var sizeText = Ui.Mono(size, 12, FontWeights.Medium);
-        sizeText.VerticalAlignment = VerticalAlignment.Center;
-        sizeText.Margin = new Thickness(8, 0, 4, 0);
-        Grid.SetColumn(sizeText, 2);
-        grid.Children.Add(sizeText);
-        var chevron = Ui.T("›", 12, FontWeights.SemiBold, Ui.Brush("AppFaint"));
-        chevron.VerticalAlignment = VerticalAlignment.Center;
-        Grid.SetColumn(chevron, 3);
-        grid.Children.Add(chevron);
-        return Ui.HoverRow(grid, go);
-    }
-
-    private FrameworkElement WhatGrew(FileTree tree, StorageHistory.Comparison growth)
-    {
-        var section = new StackPanel();
-        string span = growth.IsWeek ? "this week" : $"since {growth.Since.LocalDateTime:MMM d}";
-        string delta = $"{(growth.ScannedDelta >= 0 ? "+" : "−")}{ByteFormat.Format(Math.Abs(growth.ScannedDelta))}";
-        section.Children.Add(Ui.SectionHeader($"What grew {span}", delta));
-
-        if (growth.DeniedChanged)
-            section.Children.Add(Ui.Subtle(
-                "The two scans read different folders — small deltas may be the reading, not the disk.", 11.5));
-        foreach (var g in growth.Growers.Take(6))
-        {
-            var grid = new Grid();
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            var name = Ui.T(g.Path.Replace('/', '\\'), 13, FontWeights.Medium);
-            name.TextTrimming = TextTrimming.CharacterEllipsis;
-            name.VerticalAlignment = VerticalAlignment.Center;
-            grid.Children.Add(name);
-            var d = Ui.Mono($"+{ByteFormat.Format(g.Delta)}", 12, FontWeights.Medium);
-            d.VerticalAlignment = VerticalAlignment.Center;
-            Grid.SetColumn(d, 1);
-            grid.Children.Add(d);
-            string captured = g.Path;
-            section.Children.Add(Ui.HoverRow(grid, () =>
-            {
-                if (Model.RootPath is { } root && Model.Tree is { } t)
-                {
-                    string full = root.TrimEnd('\\') + "\\" + captured.Replace('/', '\\');
-                    var lookup = FileQuery.NodeAt(full, t, root);
-                    if (lookup.Kind == FileQuery.NodeLookupKind.Found)
-                        Model.Select(lookup.Id);
-                }
-            }));
-        }
-        return section;
-    }
-
-    private FrameworkElement BiggestFiles(FileTree tree, long[] totals, List<int> topFiles, HashSet<int> lockedFiles)
-    {
-        var section = new StackPanel();
-        section.Children.Add(Ui.SectionHeader("Biggest files"));
-        foreach (var id in topFiles)
-        {
-            var grid = new Grid();
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(28) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(14) });
-            string kind = FileTypes.KindOfFile(tree.NameOf(id));
-            var icon = Ui.IconTile(Icons.ForKind(kind), 20,
-                Ui.Tint(((SolidColorBrush)Ui.KindColor(kind)).Color, 40),
-                Ui.KindColor(kind), 5);
-            icon.VerticalAlignment = VerticalAlignment.Center;
-            grid.Children.Add(icon);
-            var name = Ui.T(tree.NameOf(id), 13, FontWeights.Medium);
-            name.TextTrimming = TextTrimming.CharacterEllipsis;
-            name.VerticalAlignment = VerticalAlignment.Center;
-            Grid.SetColumn(name, 1);
-            grid.Children.Add(name);
-            var size = Ui.Mono(ByteFormat.Format(totals[id]), 12, FontWeights.Medium);
-            size.VerticalAlignment = VerticalAlignment.Center;
-            size.Margin = new Thickness(8, 0, 4, 0);
-            Grid.SetColumn(size, 2);
-            grid.Children.Add(size);
-            var chevron = Ui.T("›", 12, FontWeights.SemiBold, Ui.Brush("AppFaint"));
-            chevron.VerticalAlignment = VerticalAlignment.Center;
-            Grid.SetColumn(chevron, 3);
-            grid.Children.Add(chevron);
-            int captured = id;
-            var hover = Ui.HoverRow(grid, () => Model.Select(captured));
-            if (lockedFiles.Contains(id))
-            {
-                // Protected (a WSL disk, a VM, a browser profile): shown for
-                // the picture, greyed, after everything you can act on.
-                grid.Opacity = 0.45;
-                var v = StorageClassifier.Classify(Model.PathOf(id), false);
-                hover.ToolTip = v.Note ?? "Protected — can't be cleaned here.";
-            }
-            section.Children.Add(hover);
-        }
-        if (topFiles.Count == 0)
-            section.Children.Add(Ui.Subtle("No files in this scan.", 12));
-        return section;
-    }
-
-    // ---- Mono footer (§17.5): scan kind + time, rescan links ----
-
-    private FrameworkElement Footer()
-    {
-        var section = new StackPanel();
-        section.Children.Add(Ui.Hairline());
-        var row = new DockPanel { Margin = new Thickness(0, 10, 0, 0) };
-        var links = new StackPanel { Orientation = Orientation.Horizontal };
-        DockPanel.SetDock(links, Dock.Right);
-        // Rescan is in the top bar; only the journal-dropping full rescan lives here.
-        if (Model.Backend == "incremental" && Model.RootPath is not null)
-        {
-            links.Children.Add(Ui.LinkText("Full Rescan", async () =>
-            {
-                if (Model.RootPath is { } rp) ScanCache.Remove(rp);
-                await Model.RescanAsync();
-            }, 11));
-        }
-        row.Children.Add(links);
-        string kind = Model.Backend == "incremental" ? "Quick update" : "Full scan";
-        row.Children.Add(Ui.Mono(
-            $"{kind} — {Model.ItemCount:N0} items in {Model.Elapsed:0.0}s · {Model.Backend}",
-            11, null, Ui.Brush("AppFaint")));
-        section.Children.Add(row);
-        return section;
-    }
-
-    // ---- First-run hero (§17): the mark, eyebrow, headline, buttons,
-    // dashed hairline, four numbered mono hints ----
-
-    private FrameworkElement FirstRunHero()
-    {
-        var hero = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 60, 0, 0) };
-
-        // The treemap mark — five data-palette tiles, 220 × 132.
-        var mark = new Grid { Width = 220, Height = 132 };
-        mark.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
-        mark.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.2, GridUnitType.Star) });
-        mark.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.8, GridUnitType.Star) });
-        mark.RowDefinitions.Add(new RowDefinition { Height = new GridLength(3, GridUnitType.Star) });
-        mark.RowDefinitions.Add(new RowDefinition { Height = new GridLength(2, GridUnitType.Star) });
-        void Tile(int row, int col, int rowSpan, Brush fill)
-        {
-            var tile = new Border
-            {
-                Background = fill,
-                CornerRadius = new CornerRadius(6),
-                Margin = new Thickness(1.5),
-            };
-            if (rowSpan > 1) Grid.SetRowSpan(tile, rowSpan);
-            Grid.SetRow(tile, row);
-            Grid.SetColumn(tile, col);
-            mark.Children.Add(tile);
-        }
-        Tile(0, 0, 1, Ui.Data(0));   // slate
-        Tile(0, 1, 1, Ui.Data(2));   // rose
-        Tile(0, 2, 2, Ui.Data(3));   // sage
-        Tile(1, 0, 1, Ui.Data(1));   // violet
-        Tile(1, 1, 1, Ui.Data(4));   // sand
-        if (AppSettings.Load().ShowDusty)
-        {
-            var dusty = Ui.BrandIcon(78);
-            dusty.HorizontalAlignment = HorizontalAlignment.Right;
-            dusty.VerticalAlignment = VerticalAlignment.Top;
-            dusty.Margin = new Thickness(0, -52, 18, 0);
-            mark.Children.Add(dusty);
-            mark.Margin = new Thickness(0, 52, 0, 0);
-        }
-        hero.Children.Add(mark);
-
-        var eyebrow = Ui.MonoLabel("LOCAL · FAST · PRIVATE");
-        eyebrow.HorizontalAlignment = HorizontalAlignment.Center;
-        eyebrow.Margin = new Thickness(0, 28, 0, 10);
-        hero.Children.Add(eyebrow);
-
-        var headline = Ui.T("See where your space went.", 30, FontWeights.SemiBold);
-        headline.HorizontalAlignment = HorizontalAlignment.Center;
-        hero.Children.Add(headline);
-
-        var paragraph = Ui.Subtle(
-            "freedisk.space reads your disk's own map — a full scan takes seconds, not minutes. " +
-            "Then it shows what's using the space, what's safe to remove, and what to do next.", 13);
-        paragraph.TextAlignment = TextAlignment.Center;
-        paragraph.TextWrapping = TextWrapping.Wrap;
-        paragraph.MaxWidth = 520;
-        paragraph.Margin = new Thickness(0, 10, 0, 24);
-        hero.Children.Add(paragraph);
-
-        if (Model.IsScanning)
-        {
-            // The banner above carries the progress and the one Cancel.
-            var scanning = Ui.Subtle("Scanning… your map appears here as soon as it's done.", 13);
-            scanning.HorizontalAlignment = HorizontalAlignment.Center;
-            hero.Children.Add(scanning);
-            return hero;
-        }
-        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
-        var scan = Ui.Button("Scan this PC", null, Ui.ButtonStyle.Dark, () =>
-        {
-            string root = System.IO.Path.GetPathRoot(
-                Environment.GetFolderPath(Environment.SpecialFolder.System)) ?? "C:\\";
-            _ = Model.ScanAsync(root);
-        });
-        var choose = Ui.Button("Choose Folder…", null, Ui.ButtonStyle.Outline, () => Model.RequestScan());
-        choose.Margin = new Thickness(10, 0, 0, 0);
-        buttons.Children.Add(scan);
-        buttons.Children.Add(choose);
-        hero.Children.Add(buttons);
-
-        var dash = Ui.DashedHairline();
-        dash.Margin = new Thickness(0, 36, 0, 24);
-        hero.Children.Add(dash);
-
-        var hints = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
-        foreach (var hint in new[]
-        {
-            "01 — Pick a drive", "02 — See the map",
-            "03 — Review what's safe", "04 — Send to Recycle Bin",
-        })
-        {
-            var h = Ui.MonoLabel(hint);
-            h.Margin = new Thickness(10, 0, 10, 0);
-            hints.Children.Add(h);
-        }
-        hero.Children.Add(hints);
         return hero;
     }
 }

@@ -368,3 +368,24 @@ public enum DuplicateFinder {
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 }
+
+/// Which duplicate copies Duplicates ticks for you. A copy inside a project's
+/// dependencies, build output, version control or an app bundle belongs to a
+/// tool: trashing it breaks that project or app, so it is never pre-ticked
+/// (the person can still tick it by hand).
+public enum DuplicatePreTick {
+    static let toolFolders: Set<String> = [
+        "node_modules", "bower_components", ".git", ".svn", ".hg", ".build", "build", "dist", "out",
+        ".next", ".nuxt", ".turbo", ".parcel-cache", ".svelte-kit", ".expo", "pods", "deriveddata",
+        "vendor", "target", ".venv", "venv", "site-packages", "__pycache__", ".gradle", ".dart_tool",
+    ]
+    static let bundleSuffixes = [".app", ".framework", ".bundle", ".plugin", ".photoslibrary", ".xcodeproj", ".xcworkspace"]
+
+    public static func isToolOwned(path: String) -> Bool {
+        let parts = path.split(separator: "/").dropLast()
+        return parts.contains { part in
+            let name = part.lowercased()
+            return toolFolders.contains(name) || bundleSuffixes.contains { name.hasSuffix($0) }
+        }
+    }
+}

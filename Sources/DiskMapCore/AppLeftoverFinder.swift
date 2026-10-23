@@ -90,7 +90,8 @@ public enum AppLeftoverFinder {
         return apps.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
     }
 
-    public static func findLeftovers(for appURL: URL, measureRelated: Bool = true) -> AppLeftovers {
+    public static func findLeftovers(for appURL: URL, measureRelated: Bool = true,
+                                     otherInstalledIDs: Set<String> = []) -> AppLeftovers {
         let bundle = Bundle(url: appURL)
         let bundleID = bundle?.bundleIdentifier
         let appName = appURL.deletingPathExtension().lastPathComponent
@@ -107,7 +108,7 @@ public enum AppLeftoverFinder {
 
             for item in contents {
                 let itemName = item.lastPathComponent
-                if matchesApp(itemName: itemName, bundleID: bundleID, appName: appName) {
+                if matchesApp(itemName: itemName, bundleID: bundleID, appName: appName, otherInstalledIDs: otherInstalledIDs) {
                     matches.append(item)
                 }
             }
@@ -138,23 +139,61 @@ public enum AppLeftoverFinder {
     }
 
 
-    /// Prefer exact / prefix bundle-ID matches. Name fallback only when no
-    /// bundle ID, and only for reasonably specific names (avoids "Mail").
-    private static func matchesApp(itemName: String, bundleID: String?, appName: String) -> Bool {
+    /// File extensions an app's own items carry: `com.app.plist`,
+    /// `com.app.savedState`, `com.app.binarycookies`, …
+    static let fileSuffixes: Set<String> = ["plist", "savedstate", "binarycookies", "log", "lockfile", "sfl2", "sfl3"]
+
+    /// Words that mark a sub-item as the app's own part rather than another
+    /// app: its updater cache (`.ShipIt`, `.sparkle`), extra prefs
+    /// (`.usage.plist`), extensions and helpers (`.widget`,
+    /// `.NotificationServiceExtension`, `.warp.daemon.plist`).
+    static let ownPartWords = ["shipit", "sparkle", "updater", "helper", "extension", "widget", "intents", "daemon",
+                               "agent", "launcher", "login", "xpc", "crashpad", "usage", "license", "settings", "prefs",
+                               "share", "service", "quicklook", "qlx", "thumbnail", "fileprovider"]
+
+    /// Matches an item to an app by bundle ID. Before 2026-10-21 any item
+    /// that merely started with the ID matched, so Chrome's uninstall listed
+    /// `com.google.chrome.for.testing.plist` and Chrome Canary's data, and
+    /// Firefox took Firefox Developer Edition's. Now, after the ID and an
+    /// optional file extension, what is left must be empty, a UUID, or name
+    /// an own part (`ownPartWords`), and must not be another installed app's
+    /// ID. A missed leftover costs a few KB; a wrong one costs another app's
+    /// data (AGENTS.md: bias toward fewer false positives). Name fallback
+    /// only without a bundle ID, and only for specific names (not "Mail").
+    static func matchesApp(itemName: String, bundleID: String?, appName: String,
+                           otherInstalledIDs: Set<String> = []) -> Bool {
         let item = itemName.lowercased()
         if let bid = bundleID?.lowercased(), !bid.isEmpty {
             if item == bid { return true }
-            if item.hasPrefix(bid + ".") || item.hasPrefix(bid + "-") { return true }
-            // Containers sometimes use the reverse-DNS alone with a UUID suffix
-            if item.hasPrefix(bid) { return true }
-            return false
+            guard item.hasPrefix(bid), item.count > bid.count else { return false }
+            var rest = String(item.dropFirst(bid.count))
+            guard let separator = rest.first, separator == "." || separator == "-" else { return false }
+            rest.removeFirst()
+            var labels = rest.split(separator: ".").map(String.init)
+            if let last = labels.last, fileSuffixes.contains(last) { labels.removeLast() }
+            if labels.isEmpty { return true }
+            let middle = labels.joined(separator: ".")
+            if UUID(uuidString: middle) != nil { return true }
+            // Another installed app owns this ID (Canary, Chrome for Testing).
+            let candidate = bid + "." + middle
+            if otherInstalledIDs.contains(where: { $0.lowercased() == candidate || candidate.hasPrefix($0.lowercased() + ".") && $0.count > bid.count }) {
+                return false
+            }
+            return labels.contains { label in ownPartWords.contains { label.contains($0) } }
         }
         let name = appName.lowercased()
         guard name.count >= 5 else { return false }
-        return item == name || item.hasPrefix(name + ".") || item.hasPrefix(name + "-")
+        return item == name || fileSuffixes.contains { item == name + "." + $0 }
     }
 
+    /// On-disk size of a file or a folder's contents. A plain file used to
+    /// come back as 0 (the enumerator yields nothing for a non-directory),
+    /// so every .plist leftover showed 0 bytes.
     public static func allocatedSize(of url: URL) -> Int64 {
+        let keys: Set<URLResourceKey> = [.isDirectoryKey, .totalFileAllocatedSizeKey, .fileAllocatedSizeKey]
+        if let values = try? url.resourceValues(forKeys: keys), values.isDirectory != true {
+            return Int64(values.totalFileAllocatedSize ?? values.fileAllocatedSize ?? 0)
+        }
         guard let enumerator = FileManager.default.enumerator(
             at: url, includingPropertiesForKeys: [.totalFileAllocatedSizeKey]
         ) else { return 0 }

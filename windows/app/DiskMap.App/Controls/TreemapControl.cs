@@ -151,7 +151,7 @@ public sealed class TreemapControl : FrameworkElement
         AddVisualChild(_map);
         AddVisualChild(_hover);
         AddVisualChild(_selection);
-        ModelEvents.WhileLoaded(this, Redraw, selection: true);
+        ModelEvents.WhileLoaded(this, Redraw);
         SizeChanged += (_, _) => Redraw();
         MouseLeftButtonDown += OnClick;
         MouseMove += OnMove;

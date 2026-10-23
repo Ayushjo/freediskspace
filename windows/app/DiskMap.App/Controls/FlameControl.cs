@@ -38,7 +38,7 @@ public sealed class FlameControl : FrameworkElement
 
     public FlameControl()
     {
-        ModelEvents.WhileLoaded(this, InvalidateVisual, selection: true);
+        ModelEvents.WhileLoaded(this, InvalidateVisual);
         MouseLeftButtonDown += OnClick;
         MouseMove += OnMove;
         MouseLeave += (_, _) => { if (_tooltip is not null) _tooltip.IsOpen = false; };

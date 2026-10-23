@@ -710,7 +710,8 @@ internal static class MftScanner
         long startedTicks = System.Diagnostics.Stopwatch.GetTimestamp();
         queue.Enqueue((rootFrn, tree.AddNode(
             Win32Scanner.RootName(rootPath).AsSpan(), parentId: -1, isDirectory: true,
-            logicalSize: 0, allocatedSize: 0, modifiedDaysSinceEpoch: 0)));
+            logicalSize: 0, allocatedSize: 0, modifiedDaysSinceEpoch: Win32Scanner.RootDays(rootPath).Modified,
+            createdDaysSinceEpoch: Win32Scanner.RootDays(rootPath).Created)));
 
         void ReportProgress()
         {
@@ -738,7 +739,9 @@ internal static class MftScanner
                 long logical = rec.Logical, allocated = rec.Allocated;
                 if (!rec.HasData && extensionSizes.TryGetValue(frn, out var moved))
                     (logical, allocated) = moved;
-                var decision = ScanEngine.DecideFromAttributes(rec.Attributes, logical, allocated);
+                // On-disk flags: 0x40000 here means "has extended attributes".
+                var decision = ScanEngine.DecideFromAttributes(rec.Attributes, logical, allocated,
+                                                               fromDirectoryEnumeration: false);
                 if (!decision.Include) continue;
 
                 // NTFS has no directory hard links: a link is always a file.

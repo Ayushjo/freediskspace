@@ -310,6 +310,11 @@ public sealed class CleanupQueue
             // WIN-069 audit: user-package execution aliases — reparse-
             // point-heavy, and not under Microsoft\Windows. Never stage.
             Path.Combine(localAppData, "Microsoft", "WindowsApps"),
+            // 2026-10-21, maintainer decision D2: Recall's encrypted
+            // snapshot store. Removed only through Settings › Privacy &
+            // security › Recall & snapshots; staging its files would break
+            // Recall rather than free space cleanly.
+            Path.Combine(localAppData, "CoreAIPlatform.00"),
             Path.Combine(systemDrive, "$Recycle.Bin"),              // the bin itself
             Path.Combine(systemDrive, "System Volume Information"), // restore points / USN journal
             Path.Combine(systemDrive, "Recovery"),
@@ -742,6 +747,7 @@ public sealed class CleanupQueue
         progress?.Report(new CommitProgress("Deleting permanently", done, chosen.Length));
         var succeeded = outcomes.Where(o => o.Error is null).Select(o => o.Item).ToList();
         var freed = Estimate(succeeded);
+        CleanupHistory.RecordPermanentDelete(succeeded.Count, freed.Bytes);
         lock (_gate)
         {
             var deleted = succeeded.Select(i => i.Id).ToHashSet();
@@ -809,7 +815,9 @@ public sealed class CleanupQueue
                 if (resolved.TryGetValue(Path.GetFullPath(entry.Item.Path).TrimEnd('\\'), out var bin))
                     items.Add(new CleanupRecord.Item(entry.Item.Path, bin.DataPath, entry.FreedBytes));
             }
-            new CleanupRecord(DateTimeOffset.Now, items).Save();
+            var record = new CleanupRecord(DateTimeOffset.Now, items);
+            record.Save();
+            CleanupHistory.RecordCommit(record);
         }
         catch { /* a failed receipt write never fails the commit */ }
     }

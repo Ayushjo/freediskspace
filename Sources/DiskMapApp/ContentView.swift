@@ -84,6 +84,11 @@ final class ScanModel: ObservableObject {
         if recordsLastScan, let record = CleanupRecord.load(from: CleanupRecord.defaultURL()), !record.items.isEmpty {
             lastCleanup = record
         }
+        // Every cleanup, for History & Put Back; the first run after updating
+        // starts from the one cleanup the app already remembered.
+        if recordsLastScan {
+            cleanupHistory = CleanupHistory.load(from: CleanupHistory.defaultURL()) ?? CleanupHistory.seeded(from: lastCleanup)
+        }
         if recordsLastScan {
             savedSearches = SavedSearches.decode(UserDefaults.standard.string(forKey: Self.savedSearchesKey))
         }
@@ -91,6 +96,40 @@ final class ScanModel: ObservableObject {
 
     /// What the last Move to Trash moved, and where to, for Put Back (TASK-080).
     @Published var lastCleanup: CleanupRecord?
+
+    /// Every cleanup and what has been put back since (History & Put Back).
+    @Published var cleanupHistory = CleanupHistory()
+
+    private func persistHistory() {
+        guard recordsLastScan else { return }
+        do { try cleanupHistory.save(to: CleanupHistory.defaultURL()) } catch {
+            ScanModel.appendLog("cleanup history write failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Puts some items of one cleanup back from the Trash, with the same rules
+    /// as Put Back for the last cleanup: skipped, with the reason, when they
+    /// are gone from the Trash or something new sits at the old path.
+    func putBack(_ items: [CleanupRecord.Item], fromCleanup number: Int) async {
+        guard !items.isEmpty, let entry = cleanupHistory.entries.first(where: { $0.number == number }) else { return }
+        let record = CleanupRecord(date: entry.record.date, items: items)
+        let report = await Task.detached(priority: .userInitiated) { CleanupQueue.putBack(record) }.value
+        cleanupHistory.markRestored(report.restored, in: number)
+        persistHistory()
+        // The last cleanup's Put Back no longer offers what came back.
+        if let last = lastCleanup, last.date == entry.record.date {
+            let back = Set(report.restored.map(\.trashedPath))
+            let rest = last.items.filter { !back.contains($0.trashedPath) }
+            lastCleanup = rest.isEmpty ? nil : CleanupRecord(date: last.date, items: rest)
+            persistLastCleanup()
+        }
+        showToast(report.skipped.isEmpty
+                  ? "Put back \(report.restored.count) item\(report.restored.count == 1 ? "" : "s")"
+                  : "Put back \(report.restored.count) of \(items.count) — \(report.skipped.first?.reason ?? "")")
+        if !report.restored.isEmpty, let root = rootURL, !isScanning {
+            await scan(root, mode: .quick)
+        }
+    }
 
     /// Find queries kept in the sidebar, and their live totals (TASK-081).
     @Published var savedSearches: [SavedSearch] = []
@@ -113,6 +152,10 @@ final class ScanModel: ObservableObject {
         let report = await Task.detached(priority: .userInitiated) { CleanupQueue.putBack(record) }.value
         lastCleanup = nil
         persistLastCleanup()
+        if let entry = cleanupHistory.entries.first(where: { $0.record.date == record.date }) {
+            cleanupHistory.markRestored(report.restored, in: entry.number)
+            persistHistory()
+        }
         let total = record.items.count
         showToast(report.skipped.isEmpty
                   ? "Put back \(report.restored.count) item\(report.restored.count == 1 ? "" : "s")"
@@ -152,6 +195,8 @@ final class ScanModel: ObservableObject {
     @Published var selectedNode: Int32 = 0
     @Published var recentRoots: [URL] = ScanModel.loadRecentRoots()
     @Published var lastScanSeconds: Double?
+    /// When the last scan finished (the page bar's "Scanned 2 minutes ago").
+    @Published var lastScanFinishedAt: Date?
     /// Directories the last scan could not open for lack of permission
     /// (TASK-039). Every total above them is short by what they hold.
     @Published var deniedDirectoryIDs: [Int32] = []
@@ -161,7 +206,7 @@ final class ScanModel: ObservableObject {
     @Published var cachedFileTypes: [FileTypeTotals] = []
     @Published var toastMessage: String?
     @Published var exploreMode: ExploreViewMode = .treemap
-    @Published var colorMode: ExploreColorMode = .folder
+    @Published var colorMode: ExploreColorMode = .freeable
     @Published var depthLevel: Double = 7
     @Published var topNav: TopNavTab = .explore
     @Published var destination: AppDestination = .overview
@@ -183,6 +228,22 @@ final class ScanModel: ObservableObject {
     @Published var multiSelection: Set<Int32> = []
     var selectionAnchor: Int32?
     @Published var analysis: AnalysisSnapshot = .empty
+    /// "Where's the rest?" for the last scan: the disk's used space split
+    /// into parts that add up. Nil until read (it runs diskutil, off the
+    /// main thread) and on disks that aren't APFS.
+    @Published var spaceAccount: SpaceAccount?
+    @Published var isSpaceAccountPresented = false
+    /// Storage macOS fills by itself (P2), measured where it lives. Nil
+    /// until read; read with the space account after each scan.
+    @Published var systemStorage: [SystemStorageCatalog.Item]?
+    /// Xcode and simulator storage (P3), measured where it lives.
+    @Published var xcodeStorage: [SystemStorageCatalog.Item]?
+    /// Time Machine snapshot deletion from "Where's the rest?" (decision D1).
+    enum SnapshotDeletion: Equatable {
+        case idle, running
+        case finished(deleted: Int, alreadyGone: Int = 0, failed: [String])
+    }
+    @Published var snapshotDeletion: SnapshotDeletion = .idle
     /// With clone accounting off (the default): where cloned copies probably
     /// inflate the totals, sampled after each scan. Allocated bytes.
     @Published var cloneSurvey: CloneSurvey = .empty
@@ -395,6 +456,7 @@ final class ScanModel: ObservableObject {
         currentNode = 0
         clearMultiSelection()   // node ids from the old tree mean nothing now
         lastScanSeconds = result.elapsedSeconds
+        lastScanFinishedAt = SnapshotHarness.isDeterministic ? Date(timeIntervalSinceNow: -120) : Date()
         if let quickUpdate {
             lastScanKind = .quick(seconds: quickUpdate.elapsedSeconds, changedFolders: quickUpdate.changedDirectories,
                                   walkedFolders: quickUpdate.rewalkedSubtrees)
@@ -410,6 +472,7 @@ final class ScanModel: ObservableObject {
             }
         }
         deniedDirectoryIDs = result.deniedDirectoryIDs
+        startSpaceAccount(root: url, generation: generation)
         // Staging a folder from this tree can skip the walk when exact (TASK-082).
         let context = StorageSharing.ScanContext(
             tree: scannedTree, rootPath: url.path, eventID: result.eventIDAtStart,
@@ -667,6 +730,86 @@ final class ScanModel: ObservableObject {
         Task { await scan(root, mode: .full) }
     }
 
+    /// Reads the volume split and local snapshots for the scan just
+    /// finished. A newer scan discards the result.
+    private func startSpaceAccount(root: URL, generation: Int) {
+        spaceAccount = nil
+        systemStorage = nil
+        xcodeStorage = nil
+        isSpaceAccountPresented = false
+        if snapshotDeletion != .running { snapshotDeletion = .idle }
+        let scanned = analysis.scannedOnDiskBytes
+        let purgeable = Int64(clamping: analysis.volume?.purgeableBytes ?? 0)
+        let denied = deniedDirectoryIDs.count
+        if SnapshotHarness.isDeterministic {
+            spaceAccount = SpaceAccount.build(
+                breakdown: SnapshotHarness.fixedBreakdown, scanRootPath: root.path,
+                // Demo renders (scripts/make-demo-fixture.sh) are sparse and
+                // drawn with logical sizes; account with the same basis.
+                scanRootMountPoint: "/System/Volumes/Data",
+                scannedOnDiskBytes: CommandLine.arguments.contains("logical") ? (logicalTotals.first ?? scanned) : scanned,
+                purgeableBytes: 6_400_000_000, snapshots: SnapshotHarness.fixedSnapshots, unreadableFolders: denied)
+            systemStorage = SnapshotHarness.fixedSystemStorage
+            xcodeStorage = SnapshotHarness.fixedXcodeStorage
+            switch SnapshotHarness.restState {
+            case "running": snapshotDeletion = .running
+            case "deleted": snapshotDeletion = .finished(deleted: 2, failed: [])
+            case "failed": snapshotDeletion = .finished(deleted: 1, failed: ["Failed to delete local snapshot '2026-10-21-101500'"])
+            default: break
+            }
+            return
+        }
+        Task {
+            let account = await Task.detached(priority: .utility) {
+                SpaceAccount.read(scanRootPath: root.path, scannedOnDiskBytes: scanned,
+                                  purgeableBytes: purgeable, unreadableFolders: denied)
+            }.value
+            guard generation == scanGeneration else { return }
+            spaceAccount = account
+            let system = await Task.detached(priority: .utility) { SystemStorageCatalog.measure() }.value
+            guard generation == scanGeneration else { return }
+            systemStorage = system
+            let xcode = await Task.detached(priority: .utility) {
+                SystemStorageCatalog.measure(entries: SystemStorageCatalog.loadEntries(resource: "developer-storage"))
+            }.value
+            guard generation == scanGeneration else { return }
+            xcodeStorage = xcode
+        }
+    }
+
+    /// Deletes the account's Apple Time Machine local snapshots, then
+    /// re-reads the account so the freed space shows. The only direct
+    /// deletion in the app (AGENTS.md rule 1); the confirmation is the
+    /// caller's.
+    func deleteTimeMachineSnapshots() {
+        guard let account = spaceAccount, !account.timeMachineSnapshotNames.isEmpty,
+              snapshotDeletion != .running, let root = rootURL else { return }
+        let names = account.timeMachineSnapshotNames
+        snapshotDeletion = .running
+        let generation = scanGeneration
+        let scanned = analysis.scannedOnDiskBytes
+        let denied = deniedDirectoryIDs.count
+        Task {
+            let (results, refreshed) = await Task.detached(priority: .userInitiated) { () -> ([TimeMachineSnapshotRemoval.Result], SpaceAccount?) in
+                let results = TimeMachineSnapshotRemoval.delete(names: names, volume: "/")
+                let purgeable = Int64(clamping: VolumeStats.forPath(root.path, includePurgeable: true)?.purgeableBytes ?? 0)
+                let account = SpaceAccount.read(scanRootPath: root.path, scannedOnDiskBytes: scanned,
+                                                purgeableBytes: purgeable, unreadableFolders: denied)
+                return (results, account)
+            }.value
+            let deleted = results.filter { $0.outcome == .deleted }.count
+            let alreadyGone = results.filter { $0.outcome == .alreadyGone }.count
+            let failed = results.compactMap { result -> String? in
+                if case .failed(let reason) = result.outcome { return reason }
+                return nil
+            }
+            log("time machine snapshots: deleted=\(deleted) gone=\(alreadyGone) failed=\(failed.count)")
+            snapshotDeletion = .finished(deleted: deleted, alreadyGone: alreadyGone, failed: failed)
+            guard generation == scanGeneration else { return }
+            if let refreshed { spaceAccount = refreshed }
+        }
+    }
+
     func rebuildAnalysis() {
         guard let tree, let rootURL,
               allocatedTotals.count == tree.count,
@@ -873,6 +1016,8 @@ final class ScanModel: ObservableObject {
         if !record.items.isEmpty {
             lastCleanup = record
             persistLastCleanup()
+            cleanupHistory.append(record)
+            persistHistory()
         }
         let log = CleanupPreflight.logEntries(from: report)
         lastCommitLines = log.map { entry in
@@ -1003,6 +1148,8 @@ enum ExploreViewMode: String, CaseIterable, Identifiable {
 }
 
 enum ExploreColorMode: String, CaseIterable, Identifiable {
+    /// Outlined map with violet stripes on what can be freed (the redesign's default).
+    case freeable = "Can be freed"
     case type = "By type"
     case folder = "By folder"
     case age = "By age"
@@ -1039,6 +1186,11 @@ struct ContentView: View {
                 } onCancel: { worker.cancel() }
                 guard !Task.isCancelled, model.rootURL == root, model.sizeBasis == basis else { return }
                 model.analysis = result.0
+                // Demo renders (scripts/make-demo-fixture.sh: sparse files at
+                // logical size): the coverage line uses the same basis.
+                if SnapshotHarness.isDeterministic, basis == .logical, let total = logical.first {
+                    model.analysis.scannedOnDiskBytes = total
+                }
                 model.cachedFileTypes = result.1
             }
     }

@@ -16,13 +16,14 @@ struct KeyboardCommands: Commands {
 
     /// Sidebar order, so ⌘N is "the Nth item" without memorising a map.
     static var numberedDestinations: [AppDestination] {
-        Array(AppNavSection.allCases.flatMap(\.items).prefix(9))
+        // The sidebar's order: Overview ⌘1, Clean up ⌘2, … History & Put Back ⌘8.
+        Array((AppDestination.primaryNav + AppDestination.moreNav).prefix(9))
     }
 
     var body: some Commands {
         CommandMenu("Go") {
             ForEach(Array(Self.numberedDestinations.enumerated()), id: \.offset) { index, destination in
-                Button(destination.label) { model.destination = destination }
+                Button(destination.navTitle) { model.destination = destination }
                     .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
                     .disabled(destination.requiresScan && model.tree == nil)
             }

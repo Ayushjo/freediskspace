@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
-using System.Windows.Controls;
 using System.Windows.Media;
 using DiskMap.Core;
 
@@ -131,8 +130,7 @@ public static class NodeColors
 /// </summary>
 public static class ModelEvents
 {
-    /// <param name="selection">Also follow selection changes (the inspector, charts).</param>
-    public static void WhileLoaded(FrameworkElement element, Action onChange, bool selection = false)
+    public static void WhileLoaded(FrameworkElement element, Action onChange)
     {
         bool queued = false;
         void Queue()
@@ -149,79 +147,9 @@ public static class ModelEvents
         element.Loaded += (_, _) =>
         {
             ScanModel.Shared.StateChanged += handler;
-            if (selection) ScanModel.Shared.SelectionChanged += handler;
             Queue();
         };
-        element.Unloaded += (_, _) =>
-        {
-            ScanModel.Shared.StateChanged -= handler;
-            if (selection) ScanModel.Shared.SelectionChanged -= handler;
-        };
-    }
-
-    /// <summary>Runs <paramref name="onSelection"/> (cheap: a highlight repaint) on selection changes while loaded.</summary>
-    public static void SelectionWhileLoaded(FrameworkElement element, Action onSelection)
-    {
-        EventHandler handler = (_, _) => onSelection();
-        element.Loaded += (_, _) => ScanModel.Shared.SelectionChanged += handler;
-        element.Unloaded += (_, _) => ScanModel.Shared.SelectionChanged -= handler;
-    }
-}
-
-/// <summary>
-/// The one row menu — ⋯ and right-click on every list, the map's rows and
-/// review pages: reveal, copy, open in the browser or the map, and add to
-/// Cleanup (offered only when the item can be cleaned).
-/// </summary>
-public static class RowMenu
-{
-    public static void Open(UIElement anchor, int id, string reason)
-    {
-        var model = ScanModel.Shared;
-        if (model.Tree is not { } tree || id < 0 || id >= tree.Count) return;
-        model.Select(id);
-        string path = model.PathOf(id);
-        bool isDir = tree.IsDirectory[id];
-        int parent = tree.Parent[id];
-        var menu = new ContextMenu { PlacementTarget = anchor };
-        MenuItem Item(string header, Action onClick)
-        {
-            var item = new MenuItem { Header = header };
-            item.Click += (_, _) => onClick();
-            menu.Items.Add(item);
-            return item;
-        }
-        Item("Reveal in Explorer", () => Explorer.Reveal(path));
-        Item("Copy Path", () => { try { Clipboard.SetText(path); } catch { /* clipboard busy */ } });
-        Item(isDir ? "Open in File Browser" : "Show in File Browser", () =>
-        {
-            model.DrillTo(isDir ? id : parent);
-            model.Select(id);
-            model.ShowPage("File Browser");
-        });
-        Item("Show in Visualize", () =>
-        {
-            if (isDir) { model.Visualize(id); return; }
-            if (parent >= 0) model.DrillTo(parent);
-            model.Select(id);
-            model.ShowPage("Visualize");
-        });
-        menu.Items.Add(new Separator());
-        var verdict = model.VerdictOf(id);
-        if (id == 0 || verdict.Advice == CleanupAdvice.Never || CleanupQueue.IsExcludedPath(path))
-        {
-            var locked = Item("Protected — can't be added to Cleanup", () => { });
-            locked.IsEnabled = false;
-            locked.ToolTip = verdict.Instead ?? verdict.Note ?? "Protected by the safety rules.";
-            ToolTipService.SetShowOnDisabled(locked, true);
-        }
-        else
-        {
-            // Risky items ask first (Model.Stage shows the warning).
-            Item(verdict.Advice == CleanupAdvice.Warn ? "Add to Cleanup…" : "Add to Cleanup",
-                () => model.Stage(id, reason));
-        }
-        menu.IsOpen = true;
+        element.Unloaded += (_, _) => ScanModel.Shared.StateChanged -= handler;
     }
 }
 

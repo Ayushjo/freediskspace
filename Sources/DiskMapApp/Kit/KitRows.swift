@@ -221,7 +221,7 @@ struct FileInspector: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             InspectorActions(
-                primaryTitle: staged ? "In Cleanup" : "Add to Cleanup",
+                primaryTitle: staged ? "In the basket" : "Add to basket",
                 primaryDone: staged,
                 primaryEnabled: allowTrash,
                 primary: {
@@ -337,48 +337,91 @@ struct FolderInspector: View {
     private func content(_ insight: FolderInsight) -> some View {
         let url = URL(fileURLWithPath: insight.absolutePath, isDirectory: true)
         let staged = model.isStaged(url)
-        let share = Double(insight.bytes) / Double(usedDenominator)
+        let index = model.freeableIndex
+        let totals = model.selectedTotals
+        let freeBytes = index.bytes(under: id, tree: tree, totals: totals)
+        let insideTarget = index.contains(id, tree: tree)
+        let verdict = StorageClassifier.classify(path: insight.absolutePath, isDirectory: true)
+        let kids = tree.children(of: id, totals: totals).filter { $0.size > 0 }.sorted { $0.size > $1.size }.prefix(4)
+        let biggestKid = max(1, kids.first?.size ?? 1)
         return InspectorColumn {
-            InspectorHeader(name: insight.name, size: ByteFormat.string(insight.bytes),
-                            detail: countLabel(insight.fileCount, "file") + " · " + countLabel(insight.folderCount, "folder") + " · \(FileInspector.percent(share)) of used") {
-                Image(systemName: "folder")
-                    .font(.system(size: DiskMapType.scaled(17), weight: .regular))
-                    .foregroundStyle(DiskMapTheme.ink2)
-                    .frame(width: 40, height: 40)
-                    .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(DiskMapTheme.ink.opacity(0.06)))
-                    .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Selected folder").font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink3)
+                Text(insight.name).font(.system(size: DiskMapType.scaled(22), weight: .semibold)).kerning(-0.5)
+                    .foregroundStyle(DiskMapTheme.ink).lineLimit(2)
+                Text(insight.displayPath).font(DiskMapType.figureSmall).foregroundStyle(DiskMapTheme.ink3)
+                    .lineLimit(2).truncationMode(.middle)
+                    .textSelection(.enabled)
             }
-            Hairline()
-            FactRow(label: "Location", value: insight.displayPath)
+            tightText(ByteFormat.hero(insight.bytes), kerning: -1.6)
+                .font(.system(size: DiskMapType.scaled(40), weight: .semibold).monospacedDigit())
+                .foregroundStyle(DiskMapTheme.ink)
+                .lineLimit(1).minimumScaleFactor(0.6)
+            VStack(spacing: 7) {
+                kv("You can free", freeBytes > 0 ? ByteFormat.string(freeBytes) : "Nothing here", accent: freeBytes > 0)
+                kv("Last changed", VisualizeView.lastUsed(tree.modifiedDay[Int(id)], today: AgeMap.today()))
+                kv("Files", insight.fileCount.formatted())
+            }
             if let shared = model.cloneSharedBytes(of: id) {
                 CloneCopiesNote(model: model, counted: model.allocatedTotals[Int(id)], shared: shared)
             }
-            if !insight.composition.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    MonoLabel("Made of")
-                    SegmentedStorageBar(segments: insight.composition.map {
-                        (DiskMapTheme.hex($0.colorHex), Double($0.bytes) / Double(max(1, insight.bytes)))
-                    })
-                    ForEach(insight.composition.prefix(5), id: \.categoryID) { row in
-                        HStack(spacing: 8) {
-                            Circle().fill(DiskMapTheme.hex(row.colorHex)).frame(width: 6, height: 6)
-                            Text(row.label)
-                                .font(DiskMapType.secondary)
-                                .foregroundStyle(DiskMapTheme.ink)
-                                .lineLimit(1)
-                            Spacer(minLength: 4)
-                            Text(ByteFormat.string(row.bytes))
-                                .font(DiskMapType.figureSmall)
-                                .foregroundStyle(DiskMapTheme.ink2)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("What is this?").font(DiskMapType.bodyEmphasis).foregroundStyle(DiskMapTheme.ink)
+                Text(insideTarget ? "This rebuilds by itself. " + (verdict.storageClass.blurb.isEmpty ? insight.whyLarge : verdict.storageClass.blurb)
+                     : (verdict.storageClass.id == "other" ? insight.whyLarge : verdict.storageClass.blurb))
+                    .font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink2)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let note = verdict.note {
+                    Text(note).font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink2).padding(.top, 2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.vertical, 10)
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(DiskMapTheme.card))
+            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).stroke(DiskMapTheme.line, lineWidth: 1))
+            .overlay(alignment: .leading) {
+                UnevenRoundedRectangle(topLeadingRadius: 7, bottomLeadingRadius: 7).fill(DiskMapTheme.accent).frame(width: 3)
+            }
+            if !kids.isEmpty {
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("Biggest inside").font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink3)
+                    VStack(spacing: 0) {
+                        ForEach(Array(kids), id: \.id) { kid in
+                            let rebuilds = index.contains(kid.id, tree: tree)
+                            Button { model.selectedNode = kid.id } label: {
+                                HStack(spacing: 7) {
+                                    Text(tree.name(of: kid.id)).font(DiskMapType.body).foregroundStyle(DiskMapTheme.ink).lineLimit(1)
+                                    if rebuilds { Text("rebuilds").font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.accentDeep) }
+                                    Spacer(minLength: 4)
+                                    Text(ByteFormat.string(kid.size)).font(DiskMapType.figureSmall).foregroundStyle(DiskMapTheme.ink)
+                                }
+                                .padding(.horizontal, 10)
+                                .frame(height: 34)
+                                .background(alignment: .leading) {
+                                    GeometryReader { g in
+                                        RoundedRectangle(cornerRadius: 4, style: .continuous).fill(DiskMapTheme.soft)
+                                            .frame(width: max(6, (g.size.width - 10) * 0.86 * CGFloat(Double(kid.size) / Double(biggestKid))))
+                                            .padding(.vertical, 5).padding(.leading, 5)
+                                    }
+                                }
+                                .overlay(alignment: .bottom) { Rectangle().fill(DiskMapTheme.line.opacity(0.6)).frame(height: 1) }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .accessibilityElement(children: .combine)
                     }
+                    .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(DiskMapTheme.card))
+                    .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(DiskMapTheme.line, lineWidth: 1))
+                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                 }
             }
             if !insight.largestFiles.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
-                        MonoLabel("Largest files")
+                        Text("Largest files").font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink3)
                         Spacer()
                         Button("View all") {
                             model.folderFilterPath = insight.absolutePath
@@ -387,58 +430,86 @@ struct FolderInspector: View {
                         .buttonStyle(LinkButtonStyle())
                         .font(DiskMapType.secondary)
                     }
-                    ForEach(insight.largestFiles.prefix(5), id: \.id) { file in
+                    ForEach(insight.largestFiles.prefix(4), id: \.id) { file in
                         HStack {
-                            Text(file.name)
-                                .font(DiskMapType.secondary)
-                                .foregroundStyle(DiskMapTheme.ink)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
+                            Text(file.name).font(DiskMapType.secondary).foregroundStyle(DiskMapTheme.ink)
+                                .lineLimit(1).truncationMode(.middle)
                             Spacer(minLength: 6)
-                            Text(ByteFormat.string(file.bytes))
-                                .font(DiskMapType.figureSmall)
-                                .foregroundStyle(DiskMapTheme.ink2)
+                            Text(ByteFormat.string(file.bytes)).font(DiskMapType.figureSmall).foregroundStyle(DiskMapTheme.ink2)
                         }
                         .accessibilityElement(children: .combine)
                     }
                 }
             }
-            Hairline()
-            Note(label: "Why it's large", text: insight.whyLarge)
-            if insight.reviewableBytes > 0 {
-                Note(label: "Reviewable", text: "\(ByteFormat.string(insight.reviewableBytes)) — "
-                     + (insight.safety.level == .safe ? "looks like regenerable cache or temp data."
-                        : "files under here not modified in over a year."))
-            }
             SafetyLine(assessment: insight.safety)
-            InspectorActions(
-                primaryTitle: staged ? "In Cleanup" : "Add to Cleanup",
-                primaryDone: staged,
-                primaryEnabled: insight.safety.level != .protected,
-                primary: {
-                    if staged { model.isCleanupQueuePresented = true } else {
-                        model.stageRow(path: insight.absolutePath, size: insight.bytes,
-                                       reason: reason ?? "Folder: " + insight.name)
+            VStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    Button("Reveal") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                        .buttonStyle(SecondaryButtonStyle(fullWidth: true))
+                    Button("Quick Look") { DiskMapQuickLook.shared.show(url) }
+                        .buttonStyle(SecondaryButtonStyle(fullWidth: true))
+                }
+                if freeBytes > 0, !insideTarget {
+                    Button("Add \(ByteFormat.string(freeBytes)) to basket") { Task { await stageFreeable() } }
+                        .buttonStyle(AccentButtonStyle(large: true, fullWidth: true, hard: true))
+                        .padding(.trailing, 3)
+                        .help("Adds only what rebuilds by itself, as in Clean up")
+                } else {
+                    Button(staged ? "In basket" : "Add \(ByteFormat.string(insight.bytes)) to basket") {
+                        if staged { model.isCleanupQueuePresented = true } else {
+                            model.stageRow(path: insight.absolutePath, size: insight.bytes,
+                                           reason: reason ?? "Folder: " + insight.name)
+                        }
                     }
-                },
-                path: insight.absolutePath
-            ) {
-                Button("Open in File Browser") {
-                    model.currentNode = id
-                    model.selectedNode = id
-                    model.destination = .fileBrowser
+                    .buttonStyle(AccentButtonStyle(large: true, fullWidth: true, hard: !staged))
+                    .padding(.trailing, 3)
+                    .disabled(insight.safety.level == .protected)
                 }
-                Button("Show in Visualize") {
-                    model.currentNode = id
-                    model.selectedNode = id
-                    model.destination = .visualize
+                Menu("More") {
+                    Button("Open in File Browser") {
+                        model.currentNode = id
+                        model.selectedNode = id
+                        model.destination = .fileBrowser
+                    }
+                    Button("Show in Explore") {
+                        model.currentNode = id
+                        model.selectedNode = id
+                        model.destination = .visualize
+                    }
+                    Button("Biggest Files in This Folder") {
+                        model.folderFilterPath = insight.absolutePath
+                        model.destination = .biggestFiles
+                    }
+                    Button("Copy Path") { copyPaths([insight.absolutePath]) }
                 }
-                Button("Biggest Files in This Folder") {
-                    model.folderFilterPath = insight.absolutePath
-                    model.destination = .biggestFiles
-                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .padding(.top, 4)
         }
+    }
+
+    private func kv(_ label: String, _ value: String, accent: Bool = false) -> some View {
+        HStack {
+            Text(label).font(DiskMapType.body).foregroundStyle(DiskMapTheme.ink2)
+            Spacer(minLength: 8)
+            Text(value).font(DiskMapType.figure).foregroundStyle(accent ? DiskMapTheme.accent : DiskMapTheme.ink).lineLimit(1)
+        }
+    }
+
+    /// The safe Clean up items inside this folder, staged as one bulk add.
+    private func stageFreeable() async {
+        let totals = model.selectedTotals
+        let inside = model.cachedReviewables.filter { t in
+            t.isGenerallySafe && t.nodeIDs.contains { $0 == id || FreeableIndex.isAncestor(id, of: $0, tree: tree) }
+        }
+        let requests: [CleanupStageRequest] = inside.flatMap { t in
+            t.nodeIDs.filter { $0 == id || FreeableIndex.isAncestor(id, of: $0, tree: tree) }.map { node in
+                CleanupStageRequest(url: tree.path(of: node, root: rootURL), size: Int(node) < totals.count ? totals[Int(node)] : 0,
+                                    reason: "Explore: " + t.displayName)
+            }
+        }
+        _ = await model.confirmStageMany(requests, title: "Things that rebuild by themselves in \(tree.name(of: id))")
     }
 }

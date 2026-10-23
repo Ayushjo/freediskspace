@@ -21,6 +21,8 @@ struct LayoutChartView: View {
     var otherFraction: Double = ChartLayout.otherFraction
     var colorMode: ExploreColorMode = .folder
     var categories: [FileTypeCategory] = []
+    /// "Can be freed": what to stripe violet (redesign).
+    var freeable: FreeableIndex = .empty
     var onQuickLook: (Int32) -> Void = { _ in }
     var onAddToSelection: (Int32) -> Void = { _ in }
     @State private var preparedSlices: [ChartSlice] = []
@@ -59,9 +61,9 @@ struct LayoutChartView: View {
                         )
                 }
             }
-            .background(DiskMapTheme.canvas)
+            .background(colorMode == .freeable ? DiskMapTheme.page : DiskMapTheme.canvas)
         }
-        .background(DiskMapTheme.canvas)
+        .background(colorMode == .freeable ? DiskMapTheme.page : DiskMapTheme.canvas)
         .task(id: preparationID) {
             await prepareSlices()
         }
@@ -109,7 +111,11 @@ struct LayoutChartView: View {
     private func chart(_ slices: [ChartSlice], in size: CGSize) -> some View {
         switch kind {
         case .sunburst:
-            SunburstChart(slices: slices, size: size, title: axTitle, color: color, selected: selectedNode, select: select, drill: drill)
+            SunburstChart(slices: slices, size: size, title: axTitle, color: color, selected: selectedNode, select: select, drill: drill,
+                          blueprint: colorMode == .freeable,
+                          isFreeable: { id in id.map { freeable.isMostly($0, tree: tree, totals: totals) } ?? false },
+                          centerTitle: currentNode >= 0 && Int(currentNode) < totals.count ? ByteFormat.hero(totals[Int(currentNode)]) : "",
+                          centerDetail: currentNode >= 0 && Int(currentNode) < tree.count ? tree.name(of: currentNode) : "")
         case .flame:
             FlameChart(slices: slices, size: size, title: axTitle, color: color, selected: selectedNode, select: select, drill: drill)
         case .bubbles:
@@ -128,6 +134,7 @@ struct LayoutChartView: View {
 
     private func color(_ id: Int32?) -> Color {
         guard let id, id >= 0, Int(id) < tree.count else { return DiskMapTheme.ink2.opacity(0.4) }
+        if colorMode == .freeable, freeable.isMostly(id, tree: tree, totals: totals) { return ExploreColoring.freeableTint }
         return ExploreColoring.color(for: id, in: tree, mode: colorMode, categories: categories, folderTypeHex: folderTypeHex)
     }
 
@@ -165,6 +172,11 @@ private struct SunburstChart: View {
     let selected: Int32
     let select: (Int32?) -> Void
     let drill: (Int32?) -> Void
+    /// The redesign's outlined rings with violet stripes on what can be freed.
+    var blueprint = false
+    var isFreeable: (Int32?) -> Bool = { _ in false }
+    var centerTitle = ""
+    var centerDetail = ""
 
     var body: some View {
         let layout = sunburstLayout(slices, in: size)
@@ -172,10 +184,17 @@ private struct SunburstChart: View {
             for wedge in layout {
                 let path = wedgePath(wedge)
                 let isSel = wedge.nodeID == selected || wedge.nodeID.map(multi.contains) == true
-                context.fill(path, with: .color(color(wedge.nodeID)))
-                // Canvas-coloured seams instead of dark outlines; accent for selection.
-                context.stroke(path, with: .color(DiskMapTheme.canvas), lineWidth: 1.5)
-                if isSel { context.stroke(path, with: .color(DiskMapTheme.accent), lineWidth: 2) }
+                if blueprint {
+                    let free = isFreeable(wedge.nodeID)
+                    if free { HatchFill.draw(path, in: path.boundingRect, context: &context) }
+                    else { context.fill(path, with: .color(DiskMapTheme.card)) }
+                    context.stroke(path, with: .color(free ? DiskMapTheme.accent : DiskMapTheme.ink.opacity(0.75)), lineWidth: 1)
+                } else {
+                    context.fill(path, with: .color(color(wedge.nodeID)))
+                    // Canvas-coloured seams instead of dark outlines; accent for selection.
+                    context.stroke(path, with: .color(DiskMapTheme.canvas), lineWidth: 1.5)
+                }
+                if isSel { context.stroke(path, with: .color(DiskMapTheme.accent), lineWidth: 2.5) }
                 let sweep = wedge.end - wedge.start
                 if sweep > 0.14, wedge.outer - wedge.inner > 22 {
                     let mid = (wedge.start + wedge.end) / 2
@@ -183,10 +202,21 @@ private struct SunburstChart: View {
                     let capacity = min(18, max(3, Int(min(sweep * radius, wedge.outer - wedge.inner) / 6)))
                     let short = wedge.label.count > capacity ? String(wedge.label.prefix(capacity - 1)) + "…" : wedge.label
                     context.draw(
-                        Text(short).font(.system(size: DiskMapType.scaled(11), weight: .medium)).foregroundStyle(DiskMapTheme.tileLabel.opacity(0.85)),
+                        Text(short).font(.system(size: DiskMapType.scaled(11), weight: .medium))
+                            .foregroundStyle(blueprint ? (isFreeable(wedge.nodeID) ? DiskMapTheme.accentDeep : DiskMapTheme.ink) : DiskMapTheme.tileLabel.opacity(0.85)),
                         at: polarPoint(center: wedge.center, angle: mid, radius: radius)
                     )
                 }
+            }
+            if blueprint, let first = layout.first, !centerTitle.isEmpty {
+                let r = max(10, first.inner - 6)
+                let disc = Path(ellipseIn: CGRect(x: first.center.x - r, y: first.center.y - r, width: r * 2, height: r * 2))
+                context.fill(disc, with: .color(DiskMapTheme.card))
+                context.stroke(disc, with: .color(DiskMapTheme.ink.opacity(0.75)), lineWidth: 1)
+                context.draw(Text(centerTitle).font(.system(size: DiskMapType.scaled(min(30, r * 0.34)), weight: .semibold)).foregroundStyle(DiskMapTheme.ink),
+                             at: CGPoint(x: first.center.x, y: first.center.y - 8))
+                context.draw(Text(centerDetail.uppercased()).font(.system(size: DiskMapType.scaled(10), weight: .medium, design: .monospaced)).foregroundStyle(DiskMapTheme.ink3),
+                             at: CGPoint(x: first.center.x, y: first.center.y + 14))
             }
         }
         .contentShape(Rectangle())

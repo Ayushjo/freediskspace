@@ -22,6 +22,8 @@ public sealed class VisualizePage : ListPage
         ("Bubbles", Icons.Bubble, "Compare sizes"),
         ("Mind Map", Icons.Diagram, "Relationship view"),
         ("Age Map", Icons.Forgotten, "What's been forgotten"),
+        ("Top Sizes", Icons.List, "Largest items"),
+        ("Folders", Icons.Folder, "Browse folders"),
     ];
 
     private readonly WrapPanel _switcher = new();
@@ -433,10 +435,19 @@ public sealed class VisualizePage : ListPage
         string modified = tree.ModifiedDay[zoom] > 0 ? $" · modified {Ui.RelativeDay(tree.ModifiedDay[zoom])}" : "";
         text.Children.Add(Ui.Subtle(
             $"{ByteFormat.Format(size)} · {items:N0} items{modified}", 11.5));
-        top.Margin = new Thickness(0);
         top.Children.Add(folderIcon);
         top.Children.Add(text);
         cardBody.Children.Add(top);
+
+        var breakdown = FileTypes.TypeBreakdown(tree, totals, zoom)
+            .Where(kv => kv.Value > 0).OrderByDescending(kv => kv.Value).ToList();
+        if (breakdown.Count > 0)
+        {
+            var parts = breakdown.Take(6)
+                .Select(kv => (FileTypes.LabelOf(kv.Key), kv.Value, Ui.Hex(FileTypes.TileColorOf(kv.Key))))
+                .ToList();
+            cardBody.Children.Add(Ui.TypeBarWithLegend(parts, breakdown.Sum(kv => kv.Value)));
+        }
         _headerCard.Children.Add(Ui.Card(cardBody, 14, new Thickness(0, 0, 0, 10)));
     }
 
@@ -450,6 +461,8 @@ public sealed class VisualizePage : ListPage
             "Bubbles" => new BubblesControl(),
             "Mind Map" => new ScrollViewer { Content = new MindMapControl { MinHeight = 400 }, VerticalScrollBarVisibility = ScrollBarVisibility.Auto },
             "Age Map" => new ScrollViewer { Content = BuildAgeMapList(), VerticalScrollBarVisibility = ScrollBarVisibility.Auto },
+            "Top Sizes" => new ScrollViewer { Content = BuildTopSizesList(), VerticalScrollBarVisibility = ScrollBarVisibility.Auto },
+            "Folders" => new ScrollViewer { Content = BuildFoldersList(), VerticalScrollBarVisibility = ScrollBarVisibility.Auto },
             _ => new TreemapControl(),
         };
         _zoom = 1.0;
@@ -570,11 +583,10 @@ public sealed class VisualizePage : ListPage
         double pct = parentSize > 0 ? 100.0 * item.Size / parentSize : 0;
         Ui.Cell(row, Ui.T($"{pct:0.0}%", 12), 4, right: true);
         Ui.Cell(row, Ui.Subtle(Ui.RelativeDay(tree.ModifiedDay[item.Id]), 11.5), 5);
-        int captured = item.Id;
-        Ui.Cell(row, Ui.MoreButton(() => RowMenu.Open(row, captured, "from visualize")), 6, right: true);
-        row.MouseRightButtonUp += (_, e) => { RowMenu.Open(row, captured, "from visualize"); e.Handled = true; };
+        Ui.Cell(row, Ui.MoreButton(() => Model.Select(item.Id)), 6, right: true);
 
         row.Cursor = System.Windows.Input.Cursors.Hand;
+        int captured = item.Id;
         row.MouseLeftButtonDown += (_, e) =>
         {
             if (e.ClickCount >= 2 && isDir) Model.DrillTo(captured);
@@ -606,6 +618,74 @@ public sealed class VisualizePage : ListPage
             bar.Margin = new Thickness(12, 0, 12, 0);
             row.Children.Add(sizeText);
             row.Children.Add(bar);
+            panel.Children.Add(row);
+        }
+        return panel;
+    }
+
+    private UIElement BuildTopSizesList()
+    {
+        var panel = new StackPanel { Margin = new Thickness(16) };
+        var tree = Model.Tree;
+        if (tree is null) return panel;
+        var ranked = TopSizes.Ranked(Model.Totals, 100);
+        int i = 0;
+        foreach (var id in ranked)
+        {
+            i++;
+            var row = new DockPanel { Margin = new Thickness(0, 3, 0, 3) };
+            var kind = FileTypes.KindOf(tree, id);
+            var cat = FileTypes.Categories.FirstOrDefault(c => c.Id == kind);
+            bool isDir = tree.IsDirectory[id];
+            var name = Ui.NameCell(Icons.ForKind(kind),
+                isDir ? Ui.Brush("AppAccentSoft") : Ui.Hex(cat?.BadgeBackground ?? "#F1F5F9"),
+                isDir ? Ui.Brush("AppAccent") : Ui.Hex(cat?.BadgeForeground ?? "#475569"),
+                tree.NameOf(id), Model.DisplayPath(id), 24);
+            var size = Ui.T(ByteFormat.Format(Model.Totals[id]), 12);
+            DockPanel.SetDock(size, Dock.Right);
+            row.Children.Add(size);
+            row.Children.Add(name);
+            int captured = id;
+            row.Cursor = System.Windows.Input.Cursors.Hand;
+            row.MouseLeftButtonDown += (_, e) =>
+            {
+                if (e.ClickCount >= 2 && isDir) Model.DrillTo(captured);
+                else Model.Select(captured);
+            };
+            panel.Children.Add(row);
+        }
+        return panel;
+    }
+
+    private UIElement BuildFoldersList()
+    {
+        var panel = new StackPanel { Margin = new Thickness(16) };
+        var tree = Model.Tree;
+        if (tree is null) return panel;
+        var children = tree.ChildrenOf(Model.ZoomedNode, Model.Totals)
+            .Where(c => tree.IsDirectory[c.Id]).OrderByDescending(c => c.Size).ToList();
+        long max = children.Count > 0 ? Math.Max(1, children.Max(c => c.Size)) : 1;
+        foreach (var (id, size) in children.Take(200))
+        {
+            var row = new DockPanel { Margin = new Thickness(0, 4, 0, 4) };
+            var name = Ui.NameCell(Icons.Folder, Ui.Brush("AppAccentSoft"), Ui.Brush("AppAccent"),
+                tree.NameOf(id), null, 24);
+            var sizeText = Ui.T(ByteFormat.Format(size), 12);
+            DockPanel.SetDock(sizeText, Dock.Right);
+            var bar = Ui.Bar((double)size / max, Ui.Brush("AppAccent"), 8, 200);
+            bar.HorizontalAlignment = HorizontalAlignment.Right;
+            bar.Margin = new Thickness(12, 0, 12, 0);
+            DockPanel.SetDock(bar, Dock.Right);
+            row.Children.Add(sizeText);
+            row.Children.Add(bar);
+            row.Children.Add(name);
+            int captured = id;
+            row.Cursor = System.Windows.Input.Cursors.Hand;
+            row.MouseLeftButtonDown += (_, e) =>
+            {
+                if (e.ClickCount >= 2) Model.DrillTo(captured);
+                else Model.Select(captured);
+            };
             panel.Children.Add(row);
         }
         return panel;

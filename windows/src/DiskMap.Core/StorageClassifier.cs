@@ -105,8 +105,12 @@ public static class StorageClassifier
 
     private const string WslNote =
         "This is a whole Linux distribution (WSL). Recycling it deletes the distro and every file inside it.";
+    // Not `--set-sparse` as the first advice: WSL 2.5 required
+    // --allow-unsafe for it after data-corruption reports (microsoft/WSL
+    // #13075, Jun 2025). Compacting the disk is the documented route.
     private const string WslInstead =
-        "Remove a distro with `wsl --unregister <name>`, or shrink it: `wsl --manage <name> --set-sparse true`.";
+        "Remove a distro with `wsl --unregister <name>`. To shrink its disk: run `wsl --shutdown`, then compact the .vhdx "
+        + "(as admin: `Optimize-VHD -Path <file> -Mode Full`, or diskpart `compact vdisk`). Avoid `--set-sparse`: WSL has warned it can corrupt data.";
     private const string DockerNote =
         "Docker Desktop's disk — holds every image, container and volume. Recycling it wipes Docker's data.";
     private const string DockerInstead =
@@ -118,6 +122,7 @@ public static class StorageClassifier
     private const string AppInstead = "Uninstall from Settings → Apps → Installed apps.";
     private const string BrowserNote = "A browser profile: history, saved logins, extensions and settings live here.";
     private const string BrowserInstead = "Clear cached data from the browser's own settings instead.";
+    private const string BrowserCacheNote = "The browser's cache: it fills again as you browse. Logins, history and extensions are elsewhere in the profile.";
     private const string GitNote = "Repository history — anything not pushed is lost with it.";
     private const string GameNote = "An installed game library.";
     private const string GameInstead = "Uninstall games from their launcher (Steam, Epic, Xbox app).";
@@ -293,6 +298,9 @@ public static class StorageClassifier
         Claim("appdata/local/programs", Apps, CleanupAdvice.Warn, AppNote, AppInstead),
         Claim("appdata/local/microsoft/windowsapps", Apps, CleanupAdvice.Never, AppNote, AppInstead),
         Claim("appdata/local/microsoft/windows", System, CleanupAdvice.Never, SystemNote, SystemInstead),
+        Claim("appdata/local/coreaiplatform.00", System, CleanupAdvice.Never,
+            "Recall's encrypted snapshot store — removing its files breaks Recall instead of freeing space cleanly.",
+            "Delete snapshots or lower the limit in Settings → Privacy & security → Recall & snapshots."),
         Claim("appdata/local/temp", Caches),
         Claim("appdata/local/crashdumps", Caches),
         Claim("appdata/local/npm-cache", PackageCaches),
@@ -312,14 +320,46 @@ public static class StorageClassifier
         Claim("appdata/roaming/cursor", DevTools, CleanupAdvice.Review),
         Claim("appdata/local/jetbrains", DevTools, CleanupAdvice.Review),
         Claim("appdata/roaming/jetbrains", DevTools, CleanupAdvice.Review),
-        Claim("appdata/local/google/chrome", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
-        Claim("appdata/local/microsoft/edge", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
-        Claim("appdata/local/bravesoftware", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
-        Claim("appdata/local/vivaldi", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
-        Claim("appdata/local/thebrowsercompany", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
-        Claim("appdata/roaming/mozilla", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
-        Claim("appdata/local/mozilla", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
-        Claim("appdata/roaming/opera software", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
+        // A browser's own cache folders rebuild by themselves (the Mac's ~/Library/Caches/Google/Chrome);
+        // only the profile around them (logins, history, extensions) is the warning below — an
+        // area, not a claim, so these deeper claims win inside it.
+        Claim("appdata/local/google/chrome/user data/?/cache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/google/chrome/user data/?/code cache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/google/chrome/user data/?/gpucache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/google/chrome/user data/shadercache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/google/chrome/user data/grshadercache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/google/chrome/user data/graphitedawncache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/google/chrome/user data/dawn*", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/microsoft/edge/user data/?/cache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/microsoft/edge/user data/?/code cache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/microsoft/edge/user data/?/gpucache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/microsoft/edge/user data/shadercache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/microsoft/edge/user data/grshadercache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/microsoft/edge/user data/graphitedawncache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/microsoft/edge/user data/dawn*", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/bravesoftware/brave-browser/user data/?/cache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/bravesoftware/brave-browser/user data/?/code cache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/bravesoftware/brave-browser/user data/?/gpucache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/bravesoftware/brave-browser/user data/shadercache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/bravesoftware/brave-browser/user data/grshadercache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/bravesoftware/brave-browser/user data/graphitedawncache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/bravesoftware/brave-browser/user data/dawn*", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/vivaldi/user data/?/cache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/vivaldi/user data/?/code cache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/vivaldi/user data/?/gpucache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/vivaldi/user data/shadercache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/vivaldi/user data/grshadercache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/vivaldi/user data/graphitedawncache", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/vivaldi/user data/dawn*", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Claim("appdata/local/mozilla/firefox/profiles/?/cache2", Caches, CleanupAdvice.Fine, BrowserCacheNote),
+        Area("appdata/local/google/chrome", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
+        Area("appdata/local/microsoft/edge", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
+        Area("appdata/local/bravesoftware", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
+        Area("appdata/local/vivaldi", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
+        Area("appdata/local/thebrowsercompany", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
+        Area("appdata/roaming/mozilla", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
+        Area("appdata/local/mozilla", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
+        Area("appdata/roaming/opera software", Browsers, CleanupAdvice.Warn, BrowserNote, BrowserInstead),
         Area("appdata", AppData, CleanupAdvice.Review, AppDataNote),
 
         // Home-folder toolchains (Users\you\.cargo …).
@@ -473,9 +513,35 @@ public static class StorageClassifier
         return false;
     }
 
-    /// <summary>Lower-cased path segments: "C:\Users\me" → ["c:", "users", "me"].</summary>
-    private static string[] Segments(string path) =>
-        path.ToLowerInvariant().Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries);
+    /// <summary>
+    /// Lower-cased path segments: "C:\Users\me" → ["c:", "users", "me"]. Under a DISKMAP_HOME
+    /// override (the demo PC) the home folder reads as a user profile, C:\Users\demo, so the
+    /// profile rules (Videos, AppData, Downloads…) apply to it as they would to a real one.
+    /// </summary>
+    private static string[] Segments(string path)
+    {
+        if (UserFolders.Override is { } home
+            && (path.Equals(home, StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith(home + "\\", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith(home + "/", StringComparison.OrdinalIgnoreCase)))
+            path = @"C:\Users\demo" + path[home.Length..];
+        return path.ToLowerInvariant().Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries);
+    }
+
+    /// <summary>
+    /// Cargo's build output: a "target" folder beside a Cargo.toml (Mac: the deps rule's
+    /// Cargo.toml sibling hint). Without the hint "target" is too common a name to claim.
+    /// </summary>
+    private static bool IsCargoTarget(FileTree tree, int node)
+    {
+        if (!tree.NameOf(node).Equals("target", StringComparison.OrdinalIgnoreCase)) return false;
+        int parent = tree.Parent[node];
+        if (parent < 0) return false;
+        for (int c = tree.FirstChild[parent]; c != -1; c = tree.NextSibling[c])
+            if (!tree.IsDirectory[c] && tree.NameOf(c).Equals("Cargo.toml", StringComparison.OrdinalIgnoreCase))
+                return true;
+        return false;
+    }
 
     /// <summary>
     /// The first folder rule whose pattern ends at <paramref name="count"/>
@@ -509,7 +575,13 @@ public static class StorageClassifier
     {
         if (FileNames.TryGetValue(name, out var byName)) return byName;
         int dot = name.LastIndexOf('.');
-        return dot > 0 && Extensions.TryGetValue(name[dot..], out var byExt) ? byExt : null;
+        if (dot > 0 && Extensions.TryGetValue(name[dot..], out var byExt)) return byExt;
+        // An .exe is usually a program, but one named like a setup is an installer you already ran.
+        if (dot > 0 && name[dot..].Equals(".exe", StringComparison.OrdinalIgnoreCase)
+            && (name.Contains("setup", StringComparison.OrdinalIgnoreCase)
+                || name.Contains("install", StringComparison.OrdinalIgnoreCase)))
+            return new StorageVerdict(Installers, CleanupAdvice.Fine);
+        return null;
     }
 
     /// <summary>
@@ -617,6 +689,11 @@ public static class StorageClassifier
                 {
                     // Same exception as Classify: dependencies inside AppData are the tool's.
                     Add(rule.Class == Dependencies && UnderAppData(segs.AsSpan(0, frame.Depth + 1)) ? AppData : rule.Class, c, size);
+                    continue;
+                }
+                if (IsCargoTarget(tree, c))
+                {
+                    Add(UnderAppData(segs.AsSpan(0, frame.Depth + 1)) ? AppData : Dependencies, c, size);
                     continue;
                 }
                 stack.Push((c, frame.Depth + 1, rule?.Class ?? frame.Area));

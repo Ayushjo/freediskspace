@@ -20,13 +20,8 @@ public sealed record CleanupRecord(
 {
     public sealed record Item(string OriginalPath, string TrashedPath, long Bytes);
 
-    public static string DefaultPath() => PathOverride ??
-        Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "DiskMap", "last-cleanup.json");
-
-    /// <summary>Test seam: tests commit real files, and must not replace the user's own receipt.</summary>
-    internal static string? PathOverride { get; set; }
+    public static string DefaultPath() =>
+        Path.Combine(UserFolders.StateDirectory, "last-cleanup.json");
 
     public static CleanupRecord? Load(string? path = null)
     {

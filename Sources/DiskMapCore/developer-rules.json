@@ -112,6 +112,7 @@
       "reclaimability": "keep",
       "isToolRoot": true,
       "projectFromParent": false,
+      "umbrella": true,
       "whyLarge": "Xcode support files under Developer — inspect before clearing.",
       "rebuildCost": "cheap"
     },

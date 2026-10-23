@@ -1124,25 +1124,16 @@ dot-folders, SDK/tool classes); a tool cache inside an SDK is the SDK's. Quick
 Wins reuse the same evidence. The user folders themselves (profile, AppData,
 Documents, Downloads…) and drive roots are excluded in `CleanupQueue` by exact
 match — only what is inside them can be staged. Duplicates skip dependency,
-dot-, app and project folders and git work trees. The folder-wide Clean
-buttons are gone: every removal is a row someone ticked.
+dot-, app and project folders, git work trees and files under 1 MB. A folder's
+or project's Clean on the Developer page stages only these evidence-backed
+items, into the basket, which still asks before anything moves.
 
-### Windows: selection is not state (2026-10-14)
-
-`SelectedNode` raised `StateChanged`, so a row click rebuilt every visible
-page — the list re-ranked, scroll jumped, and a row's ⋯ menu closed the moment
-it opened (its anchor was torn down). Selection now has its own event: the
-inspector and charts follow it, lists repaint only their highlight. One
-`RowMenu` serves ⋯ and right-click on every list.
-
-### Windows: onboarding decides what Tools & Projects shows (2026-10-14)
+### Windows: onboarding decides what Developer shows (2026-10-14)
 
 First launch asks what the PC is for (software, Windows apps, cloud, hardware
 — FPGA/HDL/PCB/embedded —, data & AI, architecture/CAD, creative, gaming,
 everyday) and which tools are used; tools found on disk (a path exists,
 nothing read) start ticked. `profiles.json` maps tools to developer
-ecosystems; Developer Storage became Tools & Projects, shows the profile's
-ecosystems with the rest as "also found on this PC", and leaves the sidebar
-when a profile has none. Skipping shows everything. Risky and protected rows
-(OS, WSL/VM disks, apps, browser profiles, user folders) stay listed but sink
-to a greyed group with no checkbox, however large.
+ecosystems; Developer shows the profile's ecosystems with the rest as "also
+found on this PC" (one click shows one), and leaves the sidebar when a profile
+has none. Skipping shows everything; Settings → General → Your setup reopens it.

@@ -19,6 +19,12 @@ public sealed class AppSettings
     /// <summary>WIN-066: after each scan on a ReFS volume, map extents and count block clones once.</summary>
     [JsonPropertyName("cloneAccounting")] public bool CloneAccounting { get; set; }
     [JsonPropertyName("showDusty")] public bool ShowDusty { get; set; } = true;
+    /// <summary>Clean up ticks what rebuilds by itself for you (Mac: CleanUp.TickRebuilds); off = tick everything yourself.</summary>
+    [JsonPropertyName("tickRebuilds")] public bool TickRebuilds { get; set; } = true;
+    /// <summary>The notification-area icon with free space and the last scan (Mac: ShowMenuBarExtra).</summary>
+    [JsonPropertyName("showTray")] public bool ShowTray { get; set; } = true;
+    /// <summary>Which copy Duplicates keeps (Mac: Duplicates.Keep): oldest | newest | shortestPath.</summary>
+    [JsonPropertyName("duplicatesKeep")] public string DuplicatesKeep { get; set; } = "oldest";
     /// <summary>Onboarding: what the person does (profiles.json role ids) — empty = skipped.</summary>
     [JsonPropertyName("roles")] public List<string> Roles { get; set; } = [];
     /// <summary>Onboarding: the tools they picked (profiles.json tool ids).</summary>
@@ -33,9 +39,7 @@ public sealed class AppSettings
     /// </summary>
     public bool ShowsToolsPage => UserProfiles.EcosystemsFor(Roles, Tools) is not { Count: 0 };
 
-    private static string Path0 => System.IO.Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "DiskMap", "settings.json");
+    private static string Path0 => System.IO.Path.Combine(DiskMap.Core.UserFolders.StateDirectory, "settings.json");
 
     public static AppSettings Load()
     {

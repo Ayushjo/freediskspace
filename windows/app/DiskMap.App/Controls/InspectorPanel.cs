@@ -25,7 +25,7 @@ public sealed class InspectorPanel : UserControl
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
         };
-        ModelEvents.WhileLoaded(this, Refresh, selection: true);
+        ModelEvents.WhileLoaded(this, Refresh);
     }
 
     private ScanModel Model => ScanModel.Shared;
@@ -324,7 +324,7 @@ public sealed class InspectorPanel : UserControl
         bool canStage = id != 0 && !CleanupQueue.IsExcludedPath(path) && verdict.Advice != CleanupAdvice.Never;
         var cleanup = inCleanup
             ? Ui.Button("In Cleanup ✓", Icons.Cleanup, Ui.ButtonStyle.Outline,
-                () => Model.ShowPage("Cleanup"))
+                () => Model.OpenBasket())
             : Ui.Button(verdict.Advice == CleanupAdvice.Warn ? "Add to Cleanup…" : "Add to Cleanup",
                 Icons.Cleanup, Ui.ButtonStyle.Primary, () => Model.Stage(id, "from inspector"));
         cleanup.IsEnabled = inCleanup || canStage;

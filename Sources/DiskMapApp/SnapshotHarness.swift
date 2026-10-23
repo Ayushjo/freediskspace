@@ -30,6 +30,16 @@ enum SnapshotHarness {
     static let fixedVolume = VolumeStats(volumeName: "Macintosh HD", totalBytes: 500_000_000_000,
                                          freeBytes: 120_000_000_000, usedBytes: 380_000_000_000)
 
+    /// The container behind `fixedVolume`, so "Where's the rest?" renders
+    /// the same parts every time (sums to its 380 GB used).
+    static let fixedBreakdown = ContainerBreakdown(
+        containerTotalBytes: 500_000_000_000, containerFreeBytes: 120_000_000_000,
+        volumes: [.init(mountPoint: "/System/Volumes/Data", role: .data, usedBytes: 330_000_000_000),
+                  .init(mountPoint: "/", role: .system, usedBytes: 12_600_000_000),
+                  .init(mountPoint: "/System/Volumes/Preboot", role: .preboot, usedBytes: 10_700_000_000),
+                  .init(mountPoint: "/System/Volumes/VM", role: .swap, usedBytes: 4_300_000_000)],
+        swapInUseBytes: 2_100_000_000)
+
     /// The modifiers of the synthetic click being delivered. A synthetic
     /// event cannot hold a real key down, so selection code asks here first.
     static var clickModifiers: NSEvent.ModifierFlags?
@@ -58,15 +68,69 @@ enum SnapshotHarness {
             NSApp.terminate(nil)
             return
         }
+        // `--settings`: the Settings window on its own, then quit.
+        if arguments.contains("--settings") {
+            let window = NSWindow(contentRect: NSRect(origin: .zero, size: snapshotSize()),
+                                  styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            window.contentView = NSHostingView(rootView: SettingsView())
+            window.setContentSize(snapshotSize())
+            window.makeKeyAndOrderFront(nil)
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            write(window: window, to: dir.appendingPathComponent("settings-\(appearanceName).png"))
+            NSApp.terminate(nil)
+            return
+        }
+        // `--render-sheet trash|bulk|risky`: one confirmation sheet on its own, then quit.
+        if let which = value(after: "--render-sheet") {
+            let home = NSHomeDirectory()
+            let rows = [("Library/Developer/Xcode/DerivedData", 12_100_000_000), ("Library/Developer/CoreSimulator/Devices", 10_400_000_000),
+                        ("Library/Caches/com.spotify.client", 5_600_000_000), ("Downloads/Install Xcode.xip", 3_100_000_000),
+                        ("Library/Caches/Homebrew", 2_400_000_000)].map { ConfirmPathRow(path: home + "/" + $0.0, bytes: Int64($0.1)) }
+            let view: AnyView
+            switch which {
+            case "risky":
+                let docker = URL(fileURLWithPath: home + "/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw")
+                view = AnyView(RiskyStageSheet(proposal: RiskyStageProposal(
+                    request: CleanupStageRequest(url: docker, size: 18_000_000_000, reason: "Biggest file: Docker.raw"),
+                    verdict: StorageClassifier.classify(path: docker.path, isDirectory: false), resolve: { _ in })))
+            case "menubar":
+                // After the scan, so the figures are real.
+                for _ in 0..<600 where model.tree == nil || model.isScanning { try? await Task.sleep(nanoseconds: 100_000_000) }
+                await model.ensureCatalog(.reviewables)
+                view = AnyView(MenuBarStatusView(model: model))
+            case "save":
+                view = AnyView(SaveScanSheet(name: .constant(SnapshotMeta.defaultName(for: Date())), note: .constant(""),
+                                             itemCount: 2_418_337, bytes: 320_400_000_000, onCancel: {}, onSave: {}))
+            case "bulk":
+                view = AnyView(PathListConfirmSheet(title: "Add 5 items to the basket?",
+                    message: "Nothing is deleted yet — you review the basket and confirm again before anything moves to the Trash.",
+                    footnote: "1 risky item (Docker.raw) won’t be added — add it on its own to see why.",
+                    rows: rows, confirmTitle: "Add to basket", onConfirm: {}, onCancel: {}))
+            default:
+                view = AnyView(PathListConfirmSheet(title: "Move 5 items to the Trash?",
+                    message: "Moves 5 items to the Trash — nothing is deleted permanently. About 33.6 GB is freed once you empty the Trash.",
+                    footnote: nil, rows: rows, confirmTitle: "Move to Trash", destructive: true, onConfirm: {}, onCancel: {}))
+            }
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
+            let host = NSHostingView(rootView: view)
+            window.contentView = host
+            window.setContentSize(host.fittingSize)
+            window.makeKeyAndOrderFront(nil)
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            write(window: window, to: dir.appendingPathComponent("sheet-\(which)-\(appearanceName).png"))
+            NSApp.terminate(nil)
+            return
+        }
         // Optional mid-scan frame: `--snapshot-at 3` captures 3 s after launch.
         if let at = value(after: "--snapshot-at").flatMap(Double.init),
            let window = mainWindow() {
-            window.setContentSize(NSSize(width: 1280, height: 820))
+            window.setContentSize(snapshotSize())
             try? await Task.sleep(nanoseconds: UInt64(at * 1_000_000_000))
             write(window: window, to: dir.appendingPathComponent("scanning-\(appearanceName).png"))
         }
         // Wait for the launch scan (--scan) to finish, up to two minutes.
-        for _ in 0..<1_200 {
+        // No --scan: render the first-launch screen straight away.
+        for _ in 0..<1_200 where arguments.contains("--scan") {
             if model.tree != nil && !model.isScanning { break }
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
@@ -101,6 +165,19 @@ enum SnapshotHarness {
                 CleanupStageRequest(url: root.appendingPathComponent(String($0)), size: 0, reason: "Selected: \($0)")
             })
             await model.refreshQueue()
+        }
+        // `--snapshot-store <dir> --seed-history 7`: write weekly fixture scans
+        // of this tree into <dir> (never the real snapshot folder), so What
+        // changed renders a history. Sizes vary by area, as real use does.
+        if let count = value(after: "--seed-history").flatMap(Int.init), let dir = snapshotStore,
+           let tree = model.tree, let root = model.rootURL {
+            try? seedHistory(tree: tree, root: root, count: count, into: dir)
+        }
+        // `--seed-cleanups <dir>`: an in-memory history of five cleanups for
+        // History & Put Back. Items "in the Trash" are small real files under
+        // <dir>; the rest point nowhere, so they read as emptied. Never saved.
+        if let dir = value(after: "--seed-cleanups") {
+            model.cleanupHistory = seedCleanups(in: URL(fileURLWithPath: dir, isDirectory: true))
         }
         // `--size-basis logical`: show logical sizes (demo trees use sparse
         // files, which report their size but allocate almost nothing).
@@ -187,14 +264,28 @@ enum SnapshotHarness {
             }
             // `--sheet cleanup`: also open the Cleanup sheet and capture it
             // (sheets are their own windows, outside the content view).
-            if let sheetName = value(after: "--sheet"), ["cleanup", "explain"].contains(sheetName) {
+            if let sheetName = value(after: "--sheet"), ["cleanup", "explain", "rest"].contains(sheetName) {
                 if sheetName == "cleanup" { model.isCleanupQueuePresented = true }
+                else if sheetName == "rest" { model.isSpaceAccountPresented = true }
                 else { NotificationCenter.default.post(name: .diskMapOpenExplain, object: nil) }
                 try? await Task.sleep(nanoseconds: UInt64(settle * 1_000_000_000))
                 if let sheet = window.attachedSheet {
                     write(window: sheet, to: dir.appendingPathComponent("\(sheetName)-\(appearanceName).png"))
+                    // `--rest-action delete` (live runs only, never with
+                    // --deterministic): delete the real Time Machine
+                    // snapshots the way the confirm button does, then
+                    // capture the sheet again once it has finished.
+                    if sheetName == "rest", value(after: "--rest-action") == "delete", !isDeterministic {
+                        model.deleteTimeMachineSnapshots()
+                        for _ in 0..<600 where model.snapshotDeletion == .running {
+                            try? await Task.sleep(nanoseconds: 100_000_000)
+                        }
+                        try? await Task.sleep(nanoseconds: 1_500_000_000)
+                        write(window: sheet, to: dir.appendingPathComponent("\(sheetName)-after-\(appearanceName).png"))
+                    }
                 }
                 model.isCleanupQueuePresented = false
+                model.isSpaceAccountPresented = false
                 NotificationCenter.default.post(name: .diskMapOpenExplain, object: false)
                 try? await Task.sleep(nanoseconds: 400_000_000)
             }
@@ -411,7 +502,7 @@ enum SnapshotHarness {
         ("forgottenFiles", .forgottenFiles), ("duplicates", .duplicates), ("cleanSafe", .cleanSafe),
         ("cleanCaches", .cleanCaches), ("cleanDownloads", .cleanDownloads), ("cleanMedia", .cleanMedia),
         ("fileBrowser", .fileBrowser), ("visualize", .visualize), ("developerStorage", .developerStorage),
-        ("applications", .applications), ("snapshots", .snapshots),
+        ("applications", .applications), ("snapshots", .snapshots), ("history", .history),
     ]
 
     private static func destinations() -> [AppDestination] {
@@ -423,6 +514,109 @@ enum SnapshotHarness {
     private static func key(_ destination: AppDestination) -> String {
         all.first { $0.1 == destination }?.0 ?? "unknown"
     }
+
+    /// `--snapshot-store <dir>`: where What changed reads and saves scans in this run.
+    static var snapshotStore: URL? {
+        guard isActive || arguments.contains("--snapshot-dir") else { return nil }
+        return value(after: "--snapshot-store").map { URL(fileURLWithPath: $0, isDirectory: true) }
+    }
+
+    /// Weekly scans before today: Developer grows, caches shrink, the rest drifts.
+    static func seedHistory(tree: FileTree, root: URL, count: Int, into dir: URL) throws {
+        guard count > 0, tree.count > 0 else { return }
+        let paths = (0..<tree.count).map { tree.path(of: Int32($0), root: root).path.lowercased() }
+        for k in 0..<count {
+            let t = Double(k) / Double(count)
+            var copy = FileTree()
+            var total: Int64 = 0
+            for i in 0..<tree.count {
+                let p = paths[i]
+                let factor: Double = p.contains("/developer") || p.contains("node_modules") ? 0.55 + 0.45 * t
+                    : p.contains("/caches") ? 1.45 - 0.45 * t
+                    : p.contains("/downloads") ? 0.75 + 0.25 * t
+                    : 0.97 + 0.03 * t
+                let logical = tree.isDirectory[i] ? tree.logicalSize[i] : Int64(Double(tree.logicalSize[i]) * factor)
+                let allocated = tree.isDirectory[i] ? tree.allocatedSize[i] : Int64(Double(tree.allocatedSize[i]) * factor)
+                if !tree.isDirectory[i] { total += logical }
+                copy.addNode(name: tree.name(of: Int32(i)), parent: tree.parent[i], isDirectory: tree.isDirectory[i],
+                             logicalSize: logical, allocatedSize: allocated, modifiedDaysSinceEpoch: tree.modifiedDay[i])
+            }
+            let date = Date().addingTimeInterval(-Double(count - k) * 7 * 86_400)
+            let meta = SnapshotMeta(name: SnapshotMeta.defaultName(for: date), scannedBytes: total)
+            _ = try SnapshotStore.save(DiskSnapshot(rootPath: root.path, capturedAt: date, tree: copy), meta: meta, in: dir)
+        }
+    }
+
+    static func seedCleanups(in dir: URL) -> CleanupHistory {
+        let trash = dir.appendingPathComponent("Trash", isDirectory: true)
+        try? FileManager.default.createDirectory(at: trash, withIntermediateDirectories: true)
+        let home = NSHomeDirectory()
+        func item(_ original: String, _ gb: Double, inTrash: Bool) -> CleanupRecord.Item {
+            let name = (original as NSString).lastPathComponent
+            let trashed = trash.appendingPathComponent(inTrash ? name : "emptied-" + name)
+            if inTrash { FileManager.default.createFile(atPath: trashed.path, contents: Data("fixture".utf8)) }
+            return .init(originalPath: home + "/" + original, trashedPath: trashed.path, bytes: Int64(gb * 1e9))
+        }
+        let day: TimeInterval = 86_400
+        let now = Date()
+        let cleanups: [(TimeInterval, [CleanupRecord.Item])] = [
+            (-44 * day, [item("Library/Caches/old-a", 2.1, inTrash: false), item("Downloads/old.dmg", 4.1, inTrash: false)]),
+            (-29 * day, [item("Library/Caches/com.old.b", 3.0, inTrash: false), item("Movies/Export/render.mov", 5.1, inTrash: false)]),
+            (-15 * day, [item("Downloads/installers.zip", 9.4, inTrash: false)]),
+            (-3 * day, [item("Downloads/AirDrop", 5.5, inTrash: true), item("Projects/site/node_modules", 3.6, inTrash: false),
+                        item("Library/Caches/Homebrew", 2.4, inTrash: false), item("Pictures/Export", 0.5, inTrash: true)]),
+            (-2 * 3_600, [item("Library/Developer/Xcode/DerivedData", 12.1, inTrash: true),
+                          item("Library/Developer/CoreSimulator/Devices", 10.4, inTrash: true),
+                          item("Library/Caches/com.spotify.client", 5.6, inTrash: true)]),
+        ]
+        var history = CleanupHistory()
+        for (offset, items) in cleanups { history.append(CleanupRecord(date: now.addingTimeInterval(offset), items: items)) }
+        return history
+    }
+
+    /// `--tab projects`: the tab a page with tabs opens on (Developer for now).
+    static var requestedTab: String? { value(after: "--tab") }
+    /// `--rest-state confirm`: render "Where's the rest?" with the snapshot
+    /// confirmation open. `--rest-state deleted|failed|running`: with that
+    /// deletion state.
+    static var restState: String? { value(after: "--rest-state") }
+
+    /// "What macOS keeps" for deterministic renders: the bundled entries
+    /// with fixed sizes, plus one installer so the Cleanup button shows.
+    static let fixedSystemStorage: [SystemStorageCatalog.Item] = {
+        let sizes: [String: Int64] = ["intelligence-siri": 2_230_000_000, "language-speech": 2_010_000_000,
+                                      "aerial-videos": 467_000_000, "pending-updates": 256_000_000,
+                                      "wallpaper-cache": 96_700_000, "system-logs": 2_880_000_000,
+                                      "macos-installers": 14_200_000_000]
+        return SystemStorageCatalog.loadEntries().compactMap { entry in
+            guard let bytes = sizes[entry.id] else { return nil }
+            let path = entry.id == "macos-installers" ? "/Applications/Install macOS Sequoia.app" : entry.paths[0]
+            return SystemStorageCatalog.Item(entry: entry, found: [(path: path, bytes: bytes)], isPartial: entry.id == "system-logs")
+        }.sorted { $0.bytes > $1.bytes }
+    }()
+
+    /// Xcode storage for deterministic renders of the Developer › Xcode tab.
+    static let fixedXcodeStorage: [SystemStorageCatalog.Item] = {
+        let entries = Dictionary(uniqueKeysWithValues: SystemStorageCatalog.loadEntries(resource: "developer-storage").map { ($0.id, $0) })
+        let ds = "/Users/demo/Library/Developer/Xcode/iOS DeviceSupport/"
+        var items: [SystemStorageCatalog.Item] = []
+        if let e = entries["device-support"] {
+            items.append(.init(entry: e, found: [(ds + "17.10 (21X1)", 4_100_000_000), (ds + "17.4.1 (21E236)", 3_900_000_000),
+                                                 (ds + "16.7 (20H19)", 3_600_000_000)],
+                               isPartial: false, keep: [ds + "17.10 (21X1)"]))
+        }
+        for (id, bytes) in [("simulator-runtimes", Int64(18_400_000_000)), ("swiftui-previews", 6_200_000_000),
+                            ("simulator-devices", 5_300_000_000), ("simulator-caches", 2_900_000_000),
+                            ("xcode-archives", 1_700_000_000), ("swiftpm-cache", 640_000_000)] {
+            if let e = entries[id] { items.append(.init(entry: e, found: [(e.paths[0], bytes)], isPartial: false)) }
+        }
+        return items.sorted { $0.bytes > $1.bytes }
+    }()
+
+    /// Two Time Machine snapshots for deterministic renders of the sheet.
+    static let fixedSnapshots: [LocalSnapshots.Snapshot] = [
+        "com.apple.TimeMachine.2026-10-21-101500.local", "com.apple.TimeMachine.2026-10-22-091500.local",
+    ].map { .init(name: $0, uuid: "", purgeable: true, kind: LocalSnapshots.kind(of: $0), volumeMountPoint: "/System/Volumes/Data") }
 
     private static func value(after flag: String) -> String? {
         guard let index = arguments.firstIndex(of: flag), arguments.indices.contains(index + 1) else { return nil }

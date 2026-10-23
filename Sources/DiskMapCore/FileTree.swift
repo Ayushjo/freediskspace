@@ -15,6 +15,8 @@ import Foundation
 /// and repeated strings (folder names like "node_modules", "Library",
 /// ".git") are interned once instead of re-allocated per occurrence.
 public struct FileTree: Sendable {
+    /// An empty tree, filled with `addNode`.
+    public init() {}
 
     // MARK: Name interning
     //

@@ -39,6 +39,8 @@ public sealed class ScanEngine
         public required string Backend { get; init; }
         /// <summary>Why the walk ran instead of the MFT ("needs administrator", …); null when that was by design.</summary>
         public string? FallbackReason { get; init; }
+        /// <summary>A journal replay ("usn"): how many changed records it applied; 0 otherwise.</summary>
+        public int ChangedRecords { get; init; }
         /// <summary>
         /// Node ids of directories that refused to list (access denied):
         /// every total above them is silently short without this. Always
@@ -113,6 +115,7 @@ public sealed class ScanEngine
             NotDownloadedCount = walked.NotDownloadedCount,
             Backend = walked.Backend,
             FallbackReason = walked.FallbackReason,
+            ChangedRecords = walked.ChangedRecords,
             DeniedDirectoryIds = walked.DeniedDirectoryIds,
             FailedDirectoryCount = walked.FailedDirectoryCount,
             NoIdentityCount = walked.NoIdentityCount,
@@ -285,15 +288,29 @@ public sealed class ScanEngine
     /// <summary>
     /// FILE_ATTRIBUTE_* → the decide() inputs. Shared by both scanners.
     /// </summary>
+    /// <param name="fromDirectoryEnumeration">
+    /// True when the attributes came from a directory listing (FindFirstFile
+    /// and friends). The MFT scanner reads NTFS's on-disk
+    /// $STANDARD_INFORMATION flags instead, where 0x40000 is
+    /// FILE_ATTRIBUTE_EA ("has extended attributes", common on files WSL
+    /// touched), not RECALL_ON_OPEN — Microsoft documents RECALL_ON_OPEN as
+    /// appearing only in directory enumeration classes. Treating it as cloud
+    /// there marked EA files "not downloaded" and skipped EA folders.
+    /// </param>
     internal static ItemDecision DecideFromAttributes(
-        uint attributes, long logicalSize, long allocatedSize)
+        uint attributes, long logicalSize, long allocatedSize, bool fromDirectoryEnumeration = true)
     {
         bool isDir = (attributes & Win32.FILE_ATTRIBUTE_DIRECTORY) != 0;
         bool isReparse = (attributes & Win32.FILE_ATTRIBUTE_REPARSE_POINT) != 0;
-        bool isCloud = (attributes & (Win32.FILE_ATTRIBUTE_OFFLINE
-            | Win32.FILE_ATTRIBUTE_RECALL_ON_OPEN
-            | Win32.FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS)) != 0;
-        return Decide(isDir, isReparse, isCloud, logicalSize, allocatedSize);
+        return Decide(isDir, isReparse, IsCloudPlaceholder(attributes, fromDirectoryEnumeration), logicalSize, allocatedSize);
+    }
+
+    /// <summary>OneDrive / cloud-files placeholder bits, read the same way by every scan path.</summary>
+    internal static bool IsCloudPlaceholder(uint attributes, bool fromDirectoryEnumeration)
+    {
+        uint mask = Win32.FILE_ATTRIBUTE_OFFLINE | Win32.FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS;
+        if (fromDirectoryEnumeration) mask |= Win32.FILE_ATTRIBUTE_RECALL_ON_OPEN;
+        return (attributes & mask) != 0;
     }
 
     private static void LogSummary(Result result)
@@ -321,6 +338,7 @@ internal sealed class WalkResult
     public ulong PeakResidentBytesDuringWalk { get; init; }
     public required string Backend { get; init; }
     public string? FallbackReason { get; set; }
+    public int ChangedRecords { get; init; }
     public List<int> DeniedDirectoryIds { get; init; } = [];
     public int FailedDirectoryCount { get; init; }
     public int NoIdentityCount { get; init; }

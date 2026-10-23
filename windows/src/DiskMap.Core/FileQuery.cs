@@ -395,7 +395,7 @@ public sealed class FileQuery : IEquatable<FileQuery>
         isCancelled ??= () => false;
         if (tree.Count <= 1 || totals.Length != tree.Count) return Result.Empty;
         var notes = new List<string>();
-        string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        string home = UserFolders.Home;
         int today = context.EffectiveToday;
 
         // Places: resolve to tree nodes once, mark descendants in one
@@ -797,16 +797,6 @@ public static class HumanUnits
     }
 
     /// <summary>Decimal-unit formatting — same scale as Windows Explorer.</summary>
-    public static string Format(long bytes)
-    {
-        const long kb = 1000, mb = kb * 1000, gb = mb * 1000, tb = gb * 1000;
-        return bytes switch
-        {
-            >= tb => $"{bytes / (double)tb:0.##} TB",
-            >= gb => $"{bytes / (double)gb:0.##} GB",
-            >= mb => $"{bytes / (double)mb:0.##} MB",
-            >= kb => $"{bytes / (double)kb:0.#} KB",
-            _ => $"{bytes} B",
-        };
-    }
+    /// <summary>One size format everywhere, the Mac's (see <see cref="ShellFormat.Bytes"/>).</summary>
+    public static string Format(long bytes) => ShellFormat.Bytes(bytes);
 }

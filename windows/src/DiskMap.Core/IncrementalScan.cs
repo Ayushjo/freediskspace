@@ -186,7 +186,9 @@ internal static class IncrementalScan
         bool Unchanged(long frn) => frn != 0 && !removedFrns.Contains(frn) && !updates.ContainsKey(frn);
 
         var tree = new FileTree(Math.Max(baseTree.Count, 16));
-        int rootId = tree.AddNode(Win32Scanner.RootName(root).AsSpan(), -1, true, 0, 0, 0);
+        var (rootModified, rootCreated) = Win32Scanner.RootDays(root);
+        int rootId = tree.AddNode(Win32Scanner.RootName(root).AsSpan(), -1, true, 0, 0, rootModified,
+            createdDaysSinceEpoch: rootCreated);
         var queue = new Queue<(long Frn, int NewId, int OldId)>();
         queue.Enqueue((rootFrn, rootId, 0));
         int itemCount = 0, notDownloaded = 0;
@@ -259,17 +261,19 @@ internal static class IncrementalScan
             try
             {
                 onDisk = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach (string entry in Directory.EnumerateFileSystemEntries(path))
+                // Attributes from the listing itself, as the Win32 scanner
+                // reads them (File.GetAttributes never reports
+                // RECALL_ON_OPEN), so both apply the same cloud test.
+                foreach (var entry in new DirectoryInfo(path).EnumerateFileSystemInfos())
                 {
                     // Filter like the scanner does: non-cloud reparse
                     // points never enter the tree, so they can't be
                     // evidence either.
-                    var attrs = File.GetAttributes(entry);
-                    if ((attrs & FileAttributes.ReparsePoint) != 0
-                        && (attrs & (FileAttributes)0x00400000) == 0)   // RECALL_ON_OPEN
+                    uint attrs = (uint)entry.Attributes;
+                    if ((attrs & Win32.FILE_ATTRIBUTE_REPARSE_POINT) != 0
+                        && !ScanEngine.IsCloudPlaceholder(attrs, fromDirectoryEnumeration: true))
                         continue;
-                    string? n = Path.GetFileName(entry);
-                    if (n is not null) onDisk.Add(n);
+                    onDisk.Add(entry.Name);
                 }
             }
             catch { continue; }   // a folder we can't list isn't evidence
@@ -290,6 +294,7 @@ internal static class IncrementalScan
             NotDownloadedCount = notDownloaded,
             Backend = "usn",
             FallbackReason = null,
+            ChangedRecords = changedFrns.Count,
             ScanMarker = changes.Marker,
             // 0-denied can't be told from a journal replay — the baseline's
             // number would be a lie about the new tree; leave empty and let
