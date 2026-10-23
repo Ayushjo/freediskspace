@@ -4,126 +4,100 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="freedisk.space" Height="780" Width="1280" MinHeight="600" MinWidth="880"
+        Title="freedisk.space" Height="820" Width="1280" MinHeight="600" MinWidth="880"
+        Background="{DynamicResource RdPage}"
         AllowDrop="True" DragOver="Window_DragOver" Drop="Window_Drop">
-    <Grid>
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition x:Name="SidebarColumn" Width="212" />
-            <ColumnDefinition Width="*" />
-        </Grid.ColumnDefinitions>
+    <!-- The Mac window hides its title bar (.hiddenTitleBar): the page colour runs to the top
+         edge and the traffic lights sit in a 32 pt strip above the page bar. Same here: the
+         caption is drawn into the client area, with the caption buttons at the strip's right.
+         The caption covers the strip and the 44 pt page bar, so both drag the window; the
+         bar's controls opt out with IsHitTestVisibleInChrome. -->
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="76" ResizeBorderThickness="6" GlassFrameThickness="0,0,0,1"
+                      CornerRadius="0" UseAeroCaptionButtons="False" />
+    </WindowChrome.WindowChrome>
+    <!-- WIN-104: the Mac v0.3.0 shell (AppShellView.swift): the caption strip, a 44 pt page
+         bar across the window, a hairline, then the sidebar | page. -->
+    <!-- Its own background: the harness renders this grid, not the window, and a transparent
+         page area came out black in light-theme shots. -->
+    <Grid x:Name="ShellRoot" Background="{DynamicResource RdPage}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="32" />
+            <RowDefinition Height="44" />
+            <RowDefinition Height="1" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
 
-        <!-- Sidebar: logo, grouped nav, drive card. -->
-        <Border x:Name="SidebarBorder" Grid.Column="0"
-                BorderBrush="{DynamicResource AppCardBorder}" BorderThickness="0,0,1,0"
-                Background="{DynamicResource AppSidebar}" Panel.ZIndex="6">
-            <Grid>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="*" />
-                    <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
-
-                <DockPanel Grid.Row="0" Margin="18,16,18,14">
-                    <Border x:Name="LogoTile" Width="32" Height="32" DockPanel.Dock="Left" />
-                    <TextBlock Text="freedisk.space" FontSize="14" FontWeight="Bold"
-                               Margin="8,0,0,0" VerticalAlignment="Center" />
-                </DockPanel>
-
-                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-                    <StackPanel x:Name="NavPanel" Margin="10,0,10,0" />
-                </ScrollViewer>
-
-                <!-- The scanned drive; click to scan another folder (Ctrl+O). -->
-                <Border x:Name="DriveCard" Grid.Row="2" Margin="12,0,12,12" Padding="6,12,6,0"
-                        Background="Transparent" Cursor="Hand"
-                        ToolTip="Scan another folder or drive… (Ctrl+O)"
-                        MouseLeftButtonUp="DriveCard_Click"
-                        BorderBrush="{DynamicResource AppCardBorder}" BorderThickness="0,1,0,0">
-                    <StackPanel>
-                        <DockPanel Margin="0,0,0,6">
-                            <ContentControl x:Name="DriveIcon" DockPanel.Dock="Left" Margin="0,0,8,0" />
-                            <TextBlock x:Name="DriveName" FontSize="12" FontWeight="SemiBold"
-                                       VerticalAlignment="Center" />
-                        </DockPanel>
-                        <ContentControl x:Name="DriveBar" />
-                        <TextBlock x:Name="DriveStats" FontSize="11" Margin="0,6,0,0"
-                                   FontFamily="Cascadia Mono, Consolas"
-                                   Foreground="{DynamicResource AppSubtle}" />
-                    </StackPanel>
-                </Border>
-            </Grid>
+        <!-- Caption strip: empty like the Mac's; minimise / maximise / close on the right. -->
+        <Border Grid.Row="0" Background="{DynamicResource RdPage}">
+            <ContentControl x:Name="CaptionButtonsHost" HorizontalAlignment="Right" />
         </Border>
 
-        <!-- Right side: top bar over content + inspector. -->
-        <Grid Grid.Column="1">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="44" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
-            </Grid.RowDefinitions>
+        <!-- Page bar: page context left; scan status and Rescan right. -->
+        <!-- Right 22: the Mac bar ends in a zero-width ⌘K button after a 10 pt gap. -->
+        <Border Grid.Row="1" Padding="14,0,22,0" Background="{DynamicResource RdPage}">
+            <DockPanel LastChildFill="True">
+                <ContentControl x:Name="SidebarButtonHost" DockPanel.Dock="Left" Margin="0,0,10,0"
+                                VerticalAlignment="Center" />
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                    <ContentControl x:Name="ScanStatusHost" VerticalAlignment="Center" Margin="12,0,10,0" />
+                    <ContentControl x:Name="RescanButtonHost" VerticalAlignment="Center" />
+                </StackPanel>
+                <ContentControl x:Name="PageContextHost" VerticalAlignment="Center" />
+            </DockPanel>
+        </Border>
+        <Border Grid.Row="2" Background="{DynamicResource RdLine}" />
 
-            <Border Grid.Row="0" BorderBrush="{DynamicResource AppCardBorder}" BorderThickness="0,0,0,1"
-                    Padding="8,6" Background="{DynamicResource AppBackground}">
+        <!-- Row 3 is empty: the first scan shows on Overview's scanning board, a rescan in the
+             page bar ("Rescanning · N"), as on the Mac. -->
+
+        <Grid Grid.Row="4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="SidebarColumn" Width="220" />
+                <ColumnDefinition x:Name="SidebarLineColumn" Width="1" />
+                <ColumnDefinition Width="*" />
+                <!-- The Mac redesign has no standing inspector; Ctrl+I opens this one. -->
+                <ColumnDefinition x:Name="InspectorColumn" Width="0" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Sidebar: six destinations, MORE, two more; the basket; Ctrl+K and Settings. -->
+            <Border x:Name="SidebarBorder" Grid.Column="0" Background="{DynamicResource RdSidebar}"
+                    Padding="9,12,9,10" Panel.ZIndex="6">
                 <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <StackPanel Grid.Column="0" Orientation="Horizontal">
-                        <ContentControl x:Name="SidebarButtonHost" Margin="0,0,4,0" />
-                    </StackPanel>
-                    <ContentControl x:Name="SearchHost" Grid.Column="1" Margin="12,0,0,0"
-                                    HorizontalAlignment="Left" />
-                    <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right">
-                        <ContentControl x:Name="AppearanceButtonHost" Margin="0,0,4,0" />
-                        <ContentControl x:Name="InspectorButtonHost" Margin="0,0,8,0" />
-                        <ContentControl x:Name="CleanupButtonHost" />
-                        <ContentControl x:Name="RescanButtonHost" Margin="8,0,0,0" />
-                    </StackPanel>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto">
+                        <StackPanel x:Name="NavPanel" />
+                    </ScrollViewer>
+                    <ContentControl x:Name="BasketHost" Grid.Row="1" Margin="0,12,0,0" />
+                    <ContentControl x:Name="SidebarFooterHost" Grid.Row="2" />
                 </Grid>
             </Border>
+            <Border Grid.Column="1" Background="{DynamicResource RdLine}" x:Name="SidebarLine" />
 
-            <!-- Live scan strip: items found, rate, current folder, cancel. -->
-            <Border x:Name="ScanBanner" Grid.Row="1" Visibility="Collapsed"
-                    BorderBrush="{DynamicResource AppCardBorder}" BorderThickness="0,0,0,1"
-                    Padding="16,6" Background="{DynamicResource AppBackground}">
-                <DockPanel>
-                    <ContentControl x:Name="ScanCancelHost" DockPanel.Dock="Right" />
-                    <ContentControl x:Name="ScanDustyHost" DockPanel.Dock="Right" Margin="0,0,12,0" />
-                    <StackPanel VerticalAlignment="Center">
-                        <TextBlock x:Name="ScanBannerText" FontSize="11.5"
-                                   Foreground="{DynamicResource AppSubtle}" />
-                        <ItemsControl x:Name="ScanTopLevels" Margin="0,4,0,0" />
-                    </StackPanel>
-                </DockPanel>
+            <ContentControl x:Name="PageHost" Grid.Column="2" />
+            <Border x:Name="InspectorBorder" Grid.Column="3" Visibility="Collapsed"
+                    BorderBrush="{DynamicResource RdLine}" BorderThickness="1,0,0,0"
+                    Background="{DynamicResource RdSidebar}" Panel.ZIndex="5">
+                <ContentControl x:Name="InspectorHost" />
             </Border>
-
-            <Grid Grid.Row="2">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="*" />
-                </Grid.RowDefinitions>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition x:Name="InspectorColumn" Width="290" />
-                </Grid.ColumnDefinitions>
-                <ContentControl x:Name="PageHost" Grid.Column="0" />
-                <Border x:Name="InspectorBorder" Grid.Column="1"
-                        BorderBrush="{DynamicResource AppCardBorder}" BorderThickness="1,0,0,0"
-                        Background="{DynamicResource AppBackground}" Panel.ZIndex="5">
-                    <ContentControl x:Name="InspectorHost" />
-                </Border>
-            </Grid>
         </Grid>
 
-        <!-- WIN-063: transient confirmations — stage / commit / put-back. -->
-        <Border x:Name="ToastHost" Grid.ColumnSpan="2" Visibility="Collapsed"
-                HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,56,0,0"
-                Background="{DynamicResource AppCard}" CornerRadius="17"
-                BorderBrush="{DynamicResource AppCardBorder}" BorderThickness="1"
-                Padding="14,8" Panel.ZIndex="10">
-            <TextBlock x:Name="ToastText" Foreground="{DynamicResource AppForeground}" FontSize="13"
-                       FontWeight="Medium" />
+        <!-- Toast: a capsule under the page bar (Mac: 34 tall, raised, hairline, soft shadow). -->
+        <Border x:Name="ToastHost" Grid.RowSpan="5" Visibility="Collapsed"
+                HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,88,0,0"
+                Background="{DynamicResource RdCard}" CornerRadius="17" Height="34"
+                BorderBrush="{DynamicResource RdLine}" BorderThickness="1"
+                Padding="14,0" Panel.ZIndex="10">
+            <Border.Effect>
+                <DropShadowEffect BlurRadius="20" ShadowDepth="3" Direction="270" Opacity="0.08" />
+            </Border.Effect>
+            <TextBlock x:Name="ToastText" Foreground="{DynamicResource RdInk}" FontSize="13"
+                       FontWeight="Medium" VerticalAlignment="Center" />
         </Border>
     </Grid>
 </Window>

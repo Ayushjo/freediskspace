@@ -28,6 +28,7 @@ public static class Icons
     public const string Link = "BsLink45Deg";
     public const string Drive = "BsDeviceHdd";
     public const string ChevronDown = "BsChevronDown";
+    public const string ChevronRight = "BsChevronRight";
     public const string Grid = "BsGrid";
     public const string DarkMode = "BsMoon";
     public const string LightMode = "BsSun";
@@ -35,6 +36,18 @@ public static class Icons
 
     // Sidebar destinations
     public const string Overview = "BsGrid";
+
+    // WIN-104: the Mac sidebar's symbols (house, trash, square.split.2x2,
+    // chevron.left.forwardslash.chevron.right, square.on.square,
+    // chart.line.uptrend.xyaxis, square.grid.2x2, clock.arrow.circlepath).
+    public const string NavOverview = "BsHouse";
+    public const string NavCleanUp = "BsTrash3";
+    public const string NavExplore = "BsBorderAll";
+    public const string NavDeveloper = "BsCodeSlash";
+    public const string NavDuplicates = "BsCopy";
+    public const string NavWhatChanged = "BsGraphUpArrow";
+    public const string NavApplications = "BsGrid";
+    public const string NavHistory = "BsClockHistory";
     public const string BiggestFiles = "BsFileEarmark";
     public const string BiggestFolders = "BsFolder";
     public const string Forgotten = "BsClockHistory";

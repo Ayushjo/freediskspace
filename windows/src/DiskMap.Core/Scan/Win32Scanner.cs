@@ -34,6 +34,22 @@ internal static class Win32Scanner
         return string.IsNullOrEmpty(name) ? trimmed : name;
     }
 
+    /// <summary>
+    /// The scan root's own modified and created days (days since 1970), so the root reads
+    /// "2 days ago" like every other folder instead of "—". 0 when Windows won't say.
+    /// </summary>
+    internal static (int Modified, int Created) RootDays(string rootPath)
+    {
+        try
+        {
+            var info = new DirectoryInfo(rootPath);
+            if (!info.Exists) return (0, 0);
+            return (Win32.FileTimeToModifiedDay(info.LastWriteTimeUtc.ToFileTimeUtc()),
+                    Win32.FileTimeToModifiedDay(info.CreationTimeUtc.ToFileTimeUtc()));
+        }
+        catch { return (0, 0); }
+    }
+
     /// <summary>One parsed directory entry from a query page.</summary>
     internal readonly record struct Entry(
         string Name,
@@ -117,7 +133,9 @@ internal static class Win32Scanner
         TimeSpan? headStart, CancellationToken cancellationToken = default)
     {
         var tree = new FileTree();
-        int rootId = tree.AddNode(RootName(rootPath).AsSpan(), -1, true, 0, 0, 0);
+        var (rootModified, rootCreated) = RootDays(rootPath);
+        int rootId = tree.AddNode(RootName(rootPath).AsSpan(), -1, true, 0, 0, rootModified,
+            createdDaysSinceEpoch: rootCreated);
         var state = new State(tree, progress, cancellationToken, rootPath.TrimEnd('\\').Length);
         state.Jobs.Enqueue(new Job(rootId, rootPath, -1));
         state.Inflight = 1;

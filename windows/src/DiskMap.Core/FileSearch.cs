@@ -16,10 +16,19 @@ public static class FileSearch
     /// </summary>
     public static List<int> Search(
         FileTree tree, long[] totals, string query, int limit = 200,
+        bool filesOnly = false, bool foldersOnly = false) =>
+        SearchCounted(tree, totals, query, limit, filesOnly, foldersOnly).Ids;
+
+    /// <summary>
+    /// <see cref="Search"/> plus how many nodes matched in all (Mac:
+    /// FileSearchIndex.Result.totalMatches), so Find can say "the first 500 of 2,140".
+    /// </summary>
+    public static (List<int> Ids, int TotalMatches) SearchCounted(
+        FileTree tree, long[] totals, string query, int limit = 200,
         bool filesOnly = false, bool foldersOnly = false)
     {
         if (tree.Count == 0 || query.Trim().Length == 0 || totals.Length != tree.Count)
-            return [];
+            return ([], 0);
 
         string needle = query.Trim();
         var matchingNameIds = new HashSet<int>();
@@ -28,14 +37,18 @@ public static class FileSearch
             if (tree.NameTable[nameId].Contains(needle, StringComparison.OrdinalIgnoreCase))
                 matchingNameIds.Add(nameId);
         }
-        if (matchingNameIds.Count == 0) return [];
+        if (matchingNameIds.Count == 0) return ([], 0);
 
-        return TopSizes.Largest(1, tree.Count, limit, id => totals[id], id =>
+        int total = 0;
+        var ids = TopSizes.Largest(1, tree.Count, limit, id => totals[id], id =>
         {
             if (!matchingNameIds.Contains(tree.NameIndex[id])) return false;
             if (filesOnly && tree.IsDirectory[id]) return false;
             if (foldersOnly && !tree.IsDirectory[id]) return false;
-            return totals[id] > 0;
+            if (totals[id] <= 0) return false;
+            total++;
+            return true;
         });
+        return (ids, total);
     }
 }

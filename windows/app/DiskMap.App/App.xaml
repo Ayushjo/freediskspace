@@ -257,7 +257,11 @@
             </Setter>
         </Style>
 
+        <!-- macOS overlay scrollers: invisible until the pointer is over the scrolling area,
+             faint then, solid while over the bar itself; always shown to keyboard and
+             screen-reader users through the ScrollViewer itself. -->
         <Style TargetType="ScrollBar">
+            <Setter Property="Opacity" Value="0" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ScrollBar">
@@ -290,6 +294,14 @@
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=ScrollViewer}}" Value="True">
+                    <Setter Property="Opacity" Value="0.7" />
+                </DataTrigger>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Opacity" Value="1" />
+                </Trigger>
+            </Style.Triggers>
         </Style>
 
         <Style TargetType="ContextMenu">
@@ -313,9 +325,12 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="MenuItem">
+                        <!-- A MenuItem's text is its Header: without ContentSource="Header" every
+                             menu drew as an empty box. -->
                         <Border x:Name="bg" Background="Transparent" CornerRadius="5"
                                 Padding="9,6" Margin="1">
-                            <ContentPresenter VerticalAlignment="Center" />
+                            <ContentPresenter ContentSource="Header" RecognizesAccessKey="True"
+                                              VerticalAlignment="Center" />
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsHighlighted" Value="True">
@@ -349,7 +364,14 @@
                                 BorderBrush="{DynamicResource AppCardBorder}"
                                 BorderThickness="1" CornerRadius="6" Padding="8,5"
                                 MaxWidth="380">
-                            <ContentPresenter />
+                            <!-- Text wraps at the box's width; unwrapped, a long path was cut off. -->
+                            <ContentPresenter>
+                                <ContentPresenter.Resources>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="TextWrapping" Value="Wrap" />
+                                    </Style>
+                                </ContentPresenter.Resources>
+                            </ContentPresenter>
                         </Border>
                     </ControlTemplate>
                 </Setter.Value>

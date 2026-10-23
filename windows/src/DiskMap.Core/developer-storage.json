@@ -1,0 +1,80 @@
+{
+  "_comment": "Developer tool storage on Windows, listed where it lives (AGENTS.md: patterns are data). The Windows twin of the Mac's developer-storage.json (Xcode and simulators): same format. action: trash = may be added to Cleanup (the Recycle Bin); guide = the tool's own command or settings, shown to copy, never run; never = nothing to do. perChild = one row per child folder; keepNewest = suggest keeping the highest version per folder. Paths take %LOCALAPPDATA%, %USERPROFILE%, %ProgramFiles%, %ProgramData% and ~; a trailing * in the last component matches by prefix. Sizes come from the scan, so a path outside the scanned folder is left out.",
+  "entries": [
+    {
+      "id": "wsl-distros",
+      "title": "WSL distributions",
+      "paths": [
+        "%LOCALAPPDATA%\\wsl",
+        "%LOCALAPPDATA%\\Packages\\CanonicalGroupLimited*",
+        "%LOCALAPPDATA%\\Packages\\TheDebianProject*",
+        "%LOCALAPPDATA%\\Packages\\KaliLinux*",
+        "%LOCALAPPDATA%\\Packages\\WhitewaterSoftware*"
+      ],
+      "action": "guide",
+      "command": "wsl --list --verbose",
+      "why": "Each Linux distribution lives in one virtual disk (ext4.vhdx) with every file inside it. Moving the folder to the Recycle Bin deletes the distro.",
+      "steps": [
+        "Remove a distro you no longer need with wsl --unregister <name>. That deletes it and everything inside.",
+        "The disk doesn't shrink when you delete files inside it: run wsl --shutdown, then compact the .vhdx."
+      ],
+      "regrows": false
+    },
+    {
+      "id": "docker-disk",
+      "title": "Docker Desktop disk",
+      "paths": ["%LOCALAPPDATA%\\Docker\\wsl", "%ProgramData%\\DockerDesktop"],
+      "action": "guide",
+      "command": "docker system prune",
+      "why": "Every image, container, volume and build cache Docker Desktop keeps, inside one virtual disk. Moving it to the Recycle Bin wipes Docker's data.",
+      "steps": [
+        "Run the command to remove stopped containers, unused networks, dangling images and build cache, or use Docker Desktop's Troubleshoot › Clean / Purge data."
+      ],
+      "regrows": true
+    },
+    {
+      "id": "android-emulators",
+      "title": "Android emulators",
+      "paths": ["%USERPROFILE%\\.android\\avd"],
+      "action": "guide",
+      "perChild": true,
+      "command": "emulator -list-avds",
+      "why": "Every emulator with its apps and data. Moving one to the Recycle Bin by hand leaves Android Studio with a broken device.",
+      "steps": ["Delete emulators you no longer use in Android Studio › Device Manager."],
+      "regrows": false
+    },
+    {
+      "id": "android-system-images",
+      "title": "Android system images",
+      "paths": ["%LOCALAPPDATA%\\Android\\Sdk\\system-images"],
+      "action": "guide",
+      "perChild": true,
+      "keepNewest": true,
+      "command": "sdkmanager --list_installed",
+      "why": "Whole Android versions for the emulator, one per API level. An emulator built on one stops working without it.",
+      "steps": ["Remove the ones no emulator uses in Android Studio › SDK Manager. The newest is marked KEEP."],
+      "regrows": false
+    },
+    {
+      "id": "dotnet-sdks",
+      "title": ".NET SDKs",
+      "paths": ["%ProgramFiles%\\dotnet\\sdk"],
+      "action": "guide",
+      "perChild": true,
+      "keepNewest": true,
+      "command": "dotnet --list-sdks",
+      "why": ".NET SDKs installed side by side. Each update adds one; the older ones stay until you remove them.",
+      "steps": ["Uninstall older SDKs in Settings › Apps › Installed apps. The newest is marked KEEP."],
+      "regrows": false
+    },
+    {
+      "id": "nuget-http-cache",
+      "title": "NuGet HTTP cache",
+      "paths": ["%LOCALAPPDATA%\\NuGet\\v3-cache"],
+      "action": "trash",
+      "why": "Package downloads NuGet keeps to make restores faster. It downloads them again when a restore needs them.",
+      "steps": ["Safe to add to Cleanup. It goes to the Recycle Bin first."],
+      "regrows": true
+    }
+  ]
+}

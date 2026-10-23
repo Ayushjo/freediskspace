@@ -186,7 +186,9 @@ internal static class IncrementalScan
         bool Unchanged(long frn) => frn != 0 && !removedFrns.Contains(frn) && !updates.ContainsKey(frn);
 
         var tree = new FileTree(Math.Max(baseTree.Count, 16));
-        int rootId = tree.AddNode(Win32Scanner.RootName(root).AsSpan(), -1, true, 0, 0, 0);
+        var (rootModified, rootCreated) = Win32Scanner.RootDays(root);
+        int rootId = tree.AddNode(Win32Scanner.RootName(root).AsSpan(), -1, true, 0, 0, rootModified,
+            createdDaysSinceEpoch: rootCreated);
         var queue = new Queue<(long Frn, int NewId, int OldId)>();
         queue.Enqueue((rootFrn, rootId, 0));
         int itemCount = 0, notDownloaded = 0;
@@ -292,6 +294,7 @@ internal static class IncrementalScan
             NotDownloadedCount = notDownloaded,
             Backend = "usn",
             FallbackReason = null,
+            ChangedRecords = changedFrns.Count,
             ScanMarker = changes.Marker,
             // 0-denied can't be told from a journal replay — the baseline's
             // number would be a lie about the new tree; leave empty and let

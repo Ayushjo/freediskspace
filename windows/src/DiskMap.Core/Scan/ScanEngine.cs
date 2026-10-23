@@ -39,6 +39,8 @@ public sealed class ScanEngine
         public required string Backend { get; init; }
         /// <summary>Why the walk ran instead of the MFT ("needs administrator", …); null when that was by design.</summary>
         public string? FallbackReason { get; init; }
+        /// <summary>A journal replay ("usn"): how many changed records it applied; 0 otherwise.</summary>
+        public int ChangedRecords { get; init; }
         /// <summary>
         /// Node ids of directories that refused to list (access denied):
         /// every total above them is silently short without this. Always
@@ -113,6 +115,7 @@ public sealed class ScanEngine
             NotDownloadedCount = walked.NotDownloadedCount,
             Backend = walked.Backend,
             FallbackReason = walked.FallbackReason,
+            ChangedRecords = walked.ChangedRecords,
             DeniedDirectoryIds = walked.DeniedDirectoryIds,
             FailedDirectoryCount = walked.FailedDirectoryCount,
             NoIdentityCount = walked.NoIdentityCount,
@@ -335,6 +338,7 @@ internal sealed class WalkResult
     public ulong PeakResidentBytesDuringWalk { get; init; }
     public required string Backend { get; init; }
     public string? FallbackReason { get; set; }
+    public int ChangedRecords { get; init; }
     public List<int> DeniedDirectoryIds { get; init; } = [];
     public int FailedDirectoryCount { get; init; }
     public int NoIdentityCount { get; init; }

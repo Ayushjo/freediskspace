@@ -51,9 +51,7 @@ public sealed class StorageHistory
         DirectoryPath = directory ?? DefaultDirectory();
 
     public static string DefaultDirectory() =>
-        Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "DiskMap", "History");
+        Path.Combine(UserFolders.StateDirectory, "History");
 
     // MARK: - Building an entry
 

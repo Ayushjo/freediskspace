@@ -32,6 +32,23 @@ public class StorageClassifierTests
         Assert.Equal(advice, verdict.Advice);
     }
 
+    [Theory]
+    [InlineData(@"C:\Users\me\AppData\Local\Google\Chrome\User Data\Default\Cache", "caches", CleanupAdvice.Fine)]
+    [InlineData(@"C:\Users\me\AppData\Local\Google\Chrome\User Data\Profile 1\Code Cache", "caches", CleanupAdvice.Fine)]
+    [InlineData(@"C:\Users\me\AppData\Local\Google\Chrome\User Data\ShaderCache", "caches", CleanupAdvice.Fine)]
+    [InlineData(@"C:\Users\me\AppData\Local\Microsoft\Edge\User Data\Default\GPUCache", "caches", CleanupAdvice.Fine)]
+    [InlineData(@"C:\Users\me\AppData\Local\Mozilla\Firefox\Profiles\ab12.default\cache2", "caches", CleanupAdvice.Fine)]
+    // The profile around the caches stays a warning: logins, history, extensions.
+    [InlineData(@"C:\Users\me\AppData\Local\Google\Chrome\User Data\Default", "browsers", CleanupAdvice.Warn)]
+    [InlineData(@"C:\Users\me\AppData\Local\Google\Chrome\User Data", "browsers", CleanupAdvice.Warn)]
+    [InlineData(@"C:\Users\me\AppData\Local\Google\Chrome\User Data\Default\Extensions", "browsers", CleanupAdvice.Warn)]
+    public void ABrowsersCacheRebuildsButItsProfileIsKept(string path, string classId, CleanupAdvice advice)
+    {
+        var verdict = StorageClassifier.Classify(path, isDirectory: true);
+        Assert.Equal(classId, verdict.Class.Id);
+        Assert.Equal(advice, verdict.Advice);
+    }
+
     [Fact]
     public void DependenciesInsideAProjectFolderStayDependencies()
     {

@@ -10,15 +10,16 @@ public partial class App : Application
         // WIN-058: the user's Appearance choice decides the Fluent theme
         // and our palette together.
         var settings = AppSettings.Load();
+        bool dark = Harness.Dark ?? settings.WantsDark; // a render-harness run can pin the theme
 #pragma warning disable WPF0001 // ThemeMode is experimental but stable in practice on .NET 10
-        ThemeMode = settings.WantsDark ? ThemeMode.Dark : ThemeMode.Light;
+        ThemeMode = dark ? ThemeMode.Dark : ThemeMode.Light;
 #pragma warning restore WPF0001
-        Theme.Apply(settings.WantsDark); // our own palette brushes on top of Fluent
+        Theme.Apply(dark); // our own palette brushes on top of Fluent
         SystemParameters.StaticPropertyChanged += (_, args) =>
         {
             if (args.PropertyName == nameof(SystemParameters.HighContrast))
             {
-                Theme.Apply(AppSettings.Load().WantsDark);
+                Theme.Apply(Harness.Dark ?? AppSettings.Load().WantsDark);
                 (Current.MainWindow as MainWindow)?.RebuildForTheme();
             }
         };

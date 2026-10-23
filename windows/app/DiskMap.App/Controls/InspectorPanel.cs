@@ -337,7 +337,7 @@ public sealed class InspectorPanel : UserControl
         bool canStage = id != 0 && !CleanupQueue.IsExcludedPath(path);
         var cleanup = inCleanup
             ? Ui.Button("In Cleanup ✓", Icons.Cleanup, Ui.ButtonStyle.Outline,
-                () => Model.ShowPage("Cleanup"))
+                () => Model.OpenBasket())
             : Ui.Button("Add to Cleanup", Icons.Cleanup, Ui.ButtonStyle.Primary,
                 () =>
                 {

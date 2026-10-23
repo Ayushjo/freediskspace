@@ -14,6 +14,8 @@
     <EmbeddedResource Include="quick-wins-patterns.json" />
     <EmbeddedResource Include="file-type-categories.json" />
     <EmbeddedResource Include="developer-rules.json" />
+    <EmbeddedResource Include="developer-storage.json" />
+    <EmbeddedResource Include="system-storage-windows.json" />
     <EmbeddedResource Include="cleanup-recipes.json" />
     <InternalsVisibleTo Include="DiskMap.Core.Tests" />
   </ItemGroup>

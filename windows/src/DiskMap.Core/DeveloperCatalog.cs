@@ -121,7 +121,17 @@ public sealed record DeveloperItem(
     /// <summary>Tree node of the project root, when the item belongs to a project.</summary>
     int? ProjectNodeID,
     /// <summary>The owning tool's cleanup command, when one exists (TASK-055).</summary>
-    CleanupRecipe? Recipe);
+    CleanupRecipe? Recipe)
+{
+    /// <summary>Stable id within one catalog ("dev-" and the tree node), as on the Mac.</summary>
+    public string Id => $"dev-{NodeID}";
+
+    /// <summary>The path as shown: the profile as "~" (CanonicalPath.DisplayPath).</summary>
+    public string DisplayPath => CanonicalPath.DisplayPath(AbsolutePath);
+
+    /// <summary>The safety verdict for this folder (Mac DeveloperItem.safety): the inspector's safety line.</summary>
+    public SafetyAssessment Safety { get; init; } = new(SafetyLevel.Review, "", "");
+}
 
 public sealed record DeveloperProject(
     string Key,
@@ -134,6 +144,12 @@ public sealed record DeveloperProject(
     int ModifiedDay,
     List<int> NodeIDs)
 {
+    /// <summary>The project's id: its folder path (Mac DeveloperProject.id).</summary>
+    public string Id => Key;
+
+    /// <summary>The path as shown: the profile as "~".</summary>
+    public string DisplayPath => CanonicalPath.DisplayPath(AbsolutePath);
+
     public string Status { get; set; } = "";
     /// <summary>The manifest that makes this folder a project (TASK-051).</summary>
     public string? Manifest { get; set; }
@@ -292,7 +308,7 @@ internal sealed class ProjectLocator
 /// Classifies known developer directories from an existing scan — no
 /// second walk of disk. Rules are data (developer-rules.json, embedded).
 /// </summary>
-public static class DeveloperCatalog
+public static partial class DeveloperCatalog
 {
     private sealed class Rule
     {
@@ -489,12 +505,14 @@ public static class DeveloperCatalog
         var items = new List<DeveloperItem>(kept.Count);
         var locator = new ProjectLocator(tree, ManifestNames, ManifestSuffixes);
         var lockfiles = LockfilesByEcosystem;
-        string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
-            .TrimEnd('\\');
+        string home = UserFolders.Home.TrimEnd('\\');
 
         foreach (var hit in kept)
         {
-            bool isProtected = CleanupQueue.IsExcludedPath(hit.Path);
+            // Mac: protected when the safety rules say so; Windows also keeps the excluded-paths
+            // list (CleanupQueue) as the last line of defense.
+            var safety = SafetyClassifier.Assess(hit.Path, hit.Name, isDirectory: true);
+            bool isProtected = CleanupQueue.IsExcludedPath(hit.Path) || safety.Level == SafetyLevel.Protected;
             var reclaim = hit.Rule.Reclaimability;
             if (isProtected) reclaim = DeveloperReclaimability.Keep;
             var ecosystem = RefineEcosystem(hit.Rule, hit.Path, hit.Name);
@@ -557,7 +575,7 @@ public static class DeveloperCatalog
                 Lockfile: lockfile,
                 ProjectManifest: projectManifest,
                 ProjectNodeID: projectRootId,
-                Recipe: CleanupRecipes.RecipeFor(hit.Path)));
+                Recipe: CleanupRecipes.RecipeFor(hit.Path)) { Safety = safety });
         }
 
         items.Sort((a, b) => b.Bytes.CompareTo(a.Bytes));

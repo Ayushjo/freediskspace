@@ -205,8 +205,7 @@ public static class SnapshotStore
 {
     public static string DefaultDirectory()
     {
-        string baseDir = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        return Path.Combine(baseDir, "DiskMap", "snapshots");
+        return Path.Combine(UserFolders.StateDirectory, "snapshots");
     }
 
     public static string Save(DiskSnapshot snapshot, string directory)
@@ -257,6 +256,48 @@ public static class SnapshotStore
         }
         return result.OrderBy(t => t.Item2.CapturedAt).ToList();
     }
+
+    /// <summary>"1760000000-uuid.snapshot" → "1760000000-uuid.meta.json", beside it (Mac: metaURL).</summary>
+    public static string MetaPath(string snapshotPath) =>
+        System.IO.Path.ChangeExtension(snapshotPath, "meta.json");
+
+    /// <summary>The scan's notes; a missing or unreadable file gives the default name for its date.</summary>
+    public static SnapshotMeta LoadMeta(string snapshotPath)
+    {
+        try
+        {
+            var meta = System.Text.Json.JsonSerializer.Deserialize<SnapshotMeta>(
+                File.ReadAllText(MetaPath(snapshotPath)), SnapshotMeta.Json);
+            if (meta is not null) return meta;
+        }
+        catch { /* fall through to the default name */ }
+        try { return new SnapshotMeta { Name = SnapshotMeta.DefaultName(ReadHeader(snapshotPath).CapturedAt) }; }
+        catch { return new SnapshotMeta { Name = "Snapshot" }; }
+    }
+
+    /// <summary>Writes the notes beside the snapshot (temp file, then move).</summary>
+    public static void SaveMeta(SnapshotMeta meta, string snapshotPath)
+    {
+        string path = MetaPath(snapshotPath);
+        string temp = path + ".tmp";
+        File.WriteAllText(temp, System.Text.Json.JsonSerializer.Serialize(meta, SnapshotMeta.Json));
+        File.Move(temp, path, overwrite: true);
+    }
+
+    /// <summary>Saves the snapshot and its notes; returns the snapshot's path.</summary>
+    public static string Save(DiskSnapshot snapshot, SnapshotMeta meta, string directory)
+    {
+        string path = Save(snapshot, directory);
+        SaveMeta(meta, path);
+        return path;
+    }
+
+    /// <summary>Every saved scan of <paramref name="rootPath"/>, newest first, with its notes.</summary>
+    public static List<SnapshotRecord> Records(string directory, string rootPath) =>
+        Summaries(directory, rootPath)
+            .Select(s => new SnapshotRecord(s.Path, s.Header, LoadMeta(s.Path), IsCurrent: false))
+            .OrderByDescending(r => r.Header.CapturedAt)
+            .ToList();
 }
 
 public static class SnapshotDiff
