@@ -2,14 +2,13 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
-using System.Windows.Media;
 using DiskMap.Core;
 
 namespace DiskMap.App;
 
 /// <summary>
 /// First launch (and Settings → Your setup): "what do you use this PC
-/// for", then "what do you use". The answers tailor Tools &amp; Projects —
+/// for", then "what do you use". The answers tailor Developer —
 /// profiles.json maps each tool to the ecosystems that page shows. Tools
 /// found on this PC (a path exists — nothing is read) start ticked. Skip
 /// keeps everything visible.
@@ -42,6 +41,7 @@ public sealed class OnboardingWindow : Window
         MinHeight = 520;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         ShowInTaskbar = false;
+        Background = Ui.Brush("RdPage");
         PreviewKeyDown += (_, e) => { if (e.Key == Key.Escape) { Skip(); e.Handled = true; } };
         ShowRoles();
     }
@@ -50,21 +50,21 @@ public sealed class OnboardingWindow : Window
 
     private void ShowRoles()
     {
-        var body = Frame("1 OF 2", "What do you use this PC for?",
+        var body = Frame("1 of 2", "What do you use this PC for?",
             "Pick everything that fits. freedisk.space looks for what your tools leave behind — and stays away from what they need. You can change this any time in Settings.");
         var grid = new UniformGrid { Columns = 3, Margin = new Thickness(0, 4, 0, 0) };
         foreach (var role in UserProfiles.Roles)
         {
             bool on = _roles.Contains(role.Id);
             var text = new StackPanel { Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
-            text.Children.Add(Ui.T(role.Title, 13, FontWeights.SemiBold));
-            var blurb = Ui.Faint(role.Blurb, 11.5);
-            blurb.TextWrapping = TextWrapping.Wrap;
+            text.Children.Add(Rd.Text(role.Title, 13, FontWeights.SemiBold));
+            var blurb = Rd.Text(role.Blurb, 12, null, "RdInk3", wrap: true);
+            blurb.Margin = new Thickness(0, 2, 0, 0);
             text.Children.Add(blurb);
             var row = new DockPanel();
             var icon = Ui.IconTile(Icons.ForRole(role.Id), 34,
-                on ? Ui.Brush("AppAccent") : Ui.Brush("AppHover"),
-                on ? Ui.Brush("AppInkButtonFg") : Ui.Brush("AppSubtle"), 8);
+                on ? Ui.Brush("AppAccent") : Ui.Brush("RdSoft"),
+                on ? Ui.Brush("RdOnAccent") : Ui.Brush("RdInk2"), 9);
             DockPanel.SetDock(icon, Dock.Left);
             row.Children.Add(icon);
             row.Children.Add(text);
@@ -75,9 +75,10 @@ public sealed class OnboardingWindow : Window
             }, $"{role.Title} — {role.Blurb}"));
         }
         body.Content.Children.Add(grid);
-        body.Back.Content = Ui.Button("Skip for now", null, Ui.ButtonStyle.Ghost, Skip);
-        var next = Ui.Button(_roles.SetEquals(["everyday"]) ? "Done" : "Next", Icons.Forward, Ui.ButtonStyle.Primary,
-            () => { if (_roles.SetEquals(["everyday"])) Finish(); else ShowTools(); });
+        body.Back.Content = Rd.SecondaryButton("Skip for now", Skip);
+        bool everydayOnly = _roles.SetEquals(["everyday"]);
+        var next = Rd.AccentButton(everydayOnly ? "Done" : "Next",
+            () => { if (everydayOnly) Finish(); else ShowTools(); });
         next.IsEnabled = _roles.Count > 0;
         body.Next.Content = next;
     }
@@ -94,17 +95,17 @@ public sealed class OnboardingWindow : Window
                 _tools.Add(tool.Id);
 
         int found = offered.Count(t => _detected.Contains(t.Id));
-        var body = Frame("2 OF 2", "What do you use?",
+        var body = Frame("2 of 2", "What do you use?",
             found > 0
                 ? $"We ticked the {found} we found on this PC. Untick anything you don't use, tick what we missed."
-                : "Tick the tools you use — Tools & Projects will show what they keep on disk.");
+                : "Tick the tools you use — Developer will show what they keep on disk.");
         var shown = new HashSet<string>(StringComparer.Ordinal);
         foreach (var role in UserProfiles.Roles.Where(r => _roles.Contains(r.Id)))
         {
             // A tool shared by two roles is listed once, under the first.
             var tools = offered.Where(t => t.Roles.Contains(role.Id) && shown.Add(t.Id)).ToList();
             if (tools.Count == 0) continue;
-            var label = Ui.MonoLabel(role.Title.ToUpperInvariant(), Ui.Brush("AppSubtle"));
+            var label = Rd.MonoLabel(role.Title);
             label.Margin = new Thickness(0, 14, 0, 8);
             body.Content.Children.Add(label);
             var wrap = new WrapPanel();
@@ -113,13 +114,11 @@ public sealed class OnboardingWindow : Window
             body.Content.Children.Add(wrap);
         }
         if (_roles.Contains("everyday") && _roles.Count == 1 || shown.Count == 0)
-        {
-            var none = Ui.Subtle("Nothing to pick — freedisk.space will focus on Downloads, photos and videos, caches and duplicates.", 12.5);
-            none.TextWrapping = TextWrapping.Wrap;
-            body.Content.Children.Add(none);
-        }
-        body.Back.Content = Ui.Button("Back", Icons.Back, Ui.ButtonStyle.Ghost, ShowRoles);
-        body.Next.Content = Ui.Button("Done", null, Ui.ButtonStyle.Primary, Finish);
+            body.Content.Children.Add(Rd.Text(
+                "Nothing to pick — freedisk.space will focus on Downloads, photos and videos, caches and duplicates.",
+                13, null, "RdInk2", wrap: true));
+        body.Back.Content = Rd.SecondaryButton("Back", ShowRoles);
+        body.Next.Content = Rd.AccentButton("Done", Finish);
     }
 
     private FrameworkElement ToolChip(ProfileTool tool)
@@ -130,15 +129,12 @@ public sealed class OnboardingWindow : Window
         {
             var check = Ui.Glyph(Icons.Check, 12, Ui.Brush("AppAccent"));
             check.Margin = new Thickness(0, 0, 6, 0);
+            check.VerticalAlignment = VerticalAlignment.Center;
             row.Children.Add(check);
         }
-        row.Children.Add(Ui.T(tool.Title, 12.5, on ? FontWeights.SemiBold : FontWeights.Normal));
+        row.Children.Add(Rd.Text(tool.Title, 13, on ? FontWeights.Medium : FontWeights.Normal));
         if (_detected.Contains(tool.Id))
-        {
-            var dot = Ui.Faint("  · on this PC", 11);
-            dot.VerticalAlignment = VerticalAlignment.Center;
-            row.Children.Add(dot);
-        }
+            row.Children.Add(Rd.Text("  · on this PC", 12, null, "RdInk3"));
         var chip = Toggle(row, on, () =>
         {
             if (!_tools.Remove(tool.Id)) _tools.Add(tool.Id);
@@ -147,6 +143,7 @@ public sealed class OnboardingWindow : Window
         chip.Padding = new Thickness(10, 6, 10, 6);
         chip.Margin = new Thickness(0, 0, 8, 8);
         chip.MinHeight = 0;
+        chip.CornerRadius = new CornerRadius(8);
         return chip;
     }
 
@@ -161,10 +158,10 @@ public sealed class OnboardingWindow : Window
             Padding = new Thickness(12),
             Margin = new Thickness(0, 0, 10, 10),
             MinHeight = 64,
-            CornerRadius = new CornerRadius(10),
+            CornerRadius = new CornerRadius(12),
             BorderThickness = new Thickness(on ? 1.5 : 1),
-            BorderBrush = on ? Ui.Brush("AppAccent") : Ui.Brush("AppCardBorder"),
-            Background = on ? Ui.Brush("AppAccentSoft") : Ui.Brush("AppCard"),
+            BorderBrush = on ? Ui.Brush("AppAccent") : Ui.Brush("RdLine"),
+            Background = on ? Ui.Brush("RdAccentWash") : Ui.Brush("RdCard"),
             Cursor = Cursors.Hand,
             Focusable = true,
         };
@@ -174,8 +171,8 @@ public sealed class OnboardingWindow : Window
         {
             if (e.Key is Key.Space or Key.Enter) { toggle(); e.Handled = true; }
         };
-        card.MouseEnter += (_, _) => { if (!on) card.Background = Ui.Brush("AppHover"); };
-        card.MouseLeave += (_, _) => { if (!on) card.Background = Ui.Brush("AppCard"); };
+        card.MouseEnter += (_, _) => { if (!on) card.Background = Ui.Brush("RdHover"); };
+        card.MouseLeave += (_, _) => { if (!on) card.Background = Ui.Brush("RdCard"); };
         return card;
     }
 
@@ -187,18 +184,16 @@ public sealed class OnboardingWindow : Window
         var head = new StackPanel { Margin = new Thickness(32, 28, 32, 12) };
         var brand = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 14) };
         brand.Children.Add(Ui.BrandIcon(28));
-        var name = Ui.T("freedisk.space", 13, FontWeights.SemiBold);
-        name.VerticalAlignment = VerticalAlignment.Center;
+        var name = Rd.Text("freedisk.space", 13, FontWeights.SemiBold);
         name.Margin = new Thickness(8, 0, 0, 0);
         brand.Children.Add(name);
         head.Children.Add(brand);
-        var eyebrow = Ui.MonoLabel($"YOUR SETUP · {step}", Ui.Brush("AppSubtle"));
+        var eyebrow = Rd.MonoLabel($"Your setup · {step}");
         eyebrow.Margin = new Thickness(0, 0, 0, 6);
         head.Children.Add(eyebrow);
-        head.Children.Add(Ui.PageTitle(title));
-        var sub = Ui.PageSubtitle(subtitle);
-        sub.TextWrapping = TextWrapping.Wrap;
-        sub.Margin = new Thickness(0, 4, 0, 0);
+        head.Children.Add(Rd.PageTitle(title));
+        var sub = Rd.Text(subtitle, 13, null, "RdInk2", wrap: true);
+        sub.Margin = new Thickness(0, 6, 0, 0);
         head.Children.Add(sub);
 
         var content = new StackPanel { Margin = new Thickness(32, 4, 22, 16) };
@@ -216,9 +211,8 @@ public sealed class OnboardingWindow : Window
         DockPanel.SetDock(next, Dock.Right);
         footer.Children.Add(back);
         footer.Children.Add(next);
-        var privacy = Ui.Faint("Stays on this PC — freedisk.space never sends anything anywhere.", 11);
+        var privacy = Rd.Text("Stays on this PC — freedisk.space never sends anything anywhere.", 12, null, "RdInk3");
         privacy.HorizontalAlignment = HorizontalAlignment.Center;
-        privacy.VerticalAlignment = VerticalAlignment.Center;
         footer.Children.Add(privacy);
 
         var dock = new DockPanel();
@@ -226,7 +220,7 @@ public sealed class OnboardingWindow : Window
         dock.Children.Add(head);
         var footerBorder = new Border
         {
-            BorderBrush = Ui.Brush("AppBorder"), BorderThickness = new Thickness(0, 1, 0, 0),
+            BorderBrush = Ui.Brush("RdLine"), BorderThickness = new Thickness(0, 1, 0, 0),
             Child = footer,
         };
         DockPanel.SetDock(footerBorder, Dock.Bottom);

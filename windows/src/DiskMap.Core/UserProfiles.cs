@@ -13,7 +13,7 @@ public sealed record ProfileTool(
 
 /// <summary>
 /// The onboarding catalog (profiles.json): roles, the tools each role
-/// picks from, and what a choice means for Tools &amp; Projects. Detection
+/// picks from, and what a choice means for Developer. Detection
 /// only asks whether a path exists — nothing is read, nothing leaves the PC.
 /// </summary>
 public static class UserProfiles
@@ -92,7 +92,7 @@ public static class UserProfiles
     }
 
     /// <summary>
-    /// What Tools &amp; Projects shows for a profile: null = everything (no
+    /// What Developer shows for a profile: null = everything (no
     /// profile yet, or the person skipped onboarding). Picked tools decide;
     /// roles without picked tools fall back to every tool of those roles.
     /// An empty set means nothing developer-shaped (an everyday user).

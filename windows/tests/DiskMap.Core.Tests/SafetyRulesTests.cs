@@ -337,6 +337,28 @@ public class SafetyRulesTests
     }
 
     [Fact]
+    public void ProfileNarrowsTheCatalogAndItsTotals()
+    {
+        var (t, root) = Home();
+        int web = Dir(t, root, "web");
+        File(t, web, "package.json");
+        Filled(t, web, "node_modules");
+        int ml = Dir(t, root, "ml");
+        File(t, ml, "pyproject.toml");
+        int venv = Filled(t, ml, ".venv");
+        File(t, venv, "pyvenv.cfg");
+        var full = DeveloperCatalog.Build(t, @"C:\Users\me", t.RollUpSizes(SizeBasis.Allocated));
+        Assert.Equal(2, full.Projects.Count);
+
+        var node = DeveloperCatalog.Only(full, new HashSet<DeveloperEcosystem> { DeveloperEcosystem.Node });
+
+        Assert.Equal(["node_modules"], node.Items.Select(i => i.DisplayName));
+        Assert.Equal(["web"], node.Projects.Select(p => p.Name));
+        Assert.Equal(node.Items.Sum(i => i.Bytes), node.Summary.TotalBytes);
+        Assert.True(node.Summary.TotalBytes < full.Summary.TotalBytes);
+    }
+
+    [Fact]
     public void DetectionOnlyAsksWhetherPathsExist()
     {
         string vivado = Environment.ExpandEnvironmentVariables(@"%SystemDrive%\Xilinx");

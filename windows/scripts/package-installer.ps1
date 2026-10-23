@@ -1,4 +1,4 @@
-param([string]$Version = "0.2.4")
+param([string]$Version = (Get-Content (Join-Path $PSScriptRoot '..\..\VERSION') -Raw).Trim())
 # Builds windows/dist/freedisk.space-setup-<version>-x64.exe: a normal Windows
 # installer (Program Files, Start menu entry, uninstall from Settings → Apps).
 # Needs Inno Setup 6: winget install JRSoftware.InnoSetup

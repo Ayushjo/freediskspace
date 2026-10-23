@@ -6,7 +6,7 @@ param(
     [Parameter(Mandatory=$true)][string]$Publisher,
     [Parameter(Mandatory=$true)][string]$PublisherDisplayName,
     # Store versions must keep the fourth part 0.
-    [string]$Version = "0.2.4.0"
+    [string]$Version = (Get-Content (Join-Path $PSScriptRoot '..\..\VERSION') -Raw).Trim() + '.0'
 )
 # Builds windows/dist/freedisk.space_<version>_x64.msixupload for Microsoft
 # Store submission. Unsigned on purpose: the Store signs it on ingestion.

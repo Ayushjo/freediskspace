@@ -17,6 +17,8 @@ public partial class MainWindow : Window
     private TrayIcon? _tray;
     private readonly Dictionary<string, Func<UserControl>> _pageFactories = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Border> _navItems = new(StringComparer.Ordinal);
+    /// <summary>Onboarding's tools (null = no profile): the Developer row's figure counts only these, as the page does.</summary>
+    private HashSet<DeveloperEcosystem>? _developerProfile;
     // One instance per page for the session: a page keeps its state
     // (filters, results) and isn't rebuilt on every sidebar click.
     private readonly Dictionary<string, UserControl> _pages = new(StringComparer.Ordinal);
@@ -57,6 +59,7 @@ public partial class MainWindow : Window
         _model.ConfirmBulk = (title, message, items, footnote) =>
             Dialogs.Confirm(this, title, message, items, "Add to basket", footnote: footnote);
         _model.ScanRequested += async () => await PickAndScan();
+        _model.OnboardingRequested += () => ShowOnboarding();
         _model.StagedChanged += (_, _) => RefreshBasket();
         _model.PropertyChanged += OnModelChanged;
         SizeChanged += (_, _) => RefreshAdaptiveLayout();
@@ -74,6 +77,8 @@ public partial class MainWindow : Window
                 string? scanPath = App.StartupPath
                     ?? Environment.GetEnvironmentVariable("DISKMAP_AUTOSCAN");
                 Trace("loaded");
+                // First launch: what do you do, what do you use — once. The render harness never stops for it.
+                if (!Harness.IsActive && !AppSettings.Load().Onboarded) ShowOnboarding();
                 if (scanPath is { Length: > 0 }
                     && Directory.Exists(scanPath)
                     && !_model.IsScanning && _model.Tree is null)
@@ -103,6 +108,9 @@ public partial class MainWindow : Window
                         var risky = Dialogs.RiskyWindow(this, "ext4.vhdx", wsl, _ => { });
                         SaveWindowShot(risky, stem + "-risky.png");
                         risky.Close();
+                        var welcome = new OnboardingWindow { Owner = this };
+                        SaveWindowShot(welcome, stem + "-onboarding.png");
+                        welcome.Close();
                         if (_model.SpaceAccount is { } account)
                         {
                             var rest = Dialogs.SpaceAccountWindow(this, account, _model.SystemStorage);
@@ -268,7 +276,11 @@ public partial class MainWindow : Window
 
         NavPanel.Children.Clear();
         _navItems.Clear();
-        foreach (var dest in PrimaryNav) AddNavRow(dest);
+        var setup = AppSettings.Load();
+        _developerProfile = UserProfiles.EcosystemsFor(setup.Roles, setup.Tools);
+        // A profile with no tools (everyday use) gets no Developer row; Overview's links still open it.
+        foreach (var dest in PrimaryNav)
+            if (_developerProfile is not { Count: 0 } || dest.PageKey != "Developer Storage") AddNavRow(dest);
         var more = Rd.MonoLabel("More");
         // 14 above and 6 below like the Mac; +1.5 below for SF Mono's taller line (measured).
         more.Margin = new Thickness(10, 14, 10, 7.5);
@@ -369,7 +381,10 @@ public partial class MainWindow : Window
                 return Bytes(_model.SafeReclaimableBytes, accent: true);
             case "Developer":
                 // AppShellView: cachedDeveloper.summary.totalBytes once the catalog is ready.
-                return _model.Developer is { } developer ? Bytes(developer.Summary.TotalBytes) : null;
+                return _model.Developer is not { } developer ? null
+                    : Bytes(_developerProfile is { } tools
+                        ? developer.Items.Where(i => tools.Contains(i.Ecosystem)).Sum(i => i.Bytes)
+                        : developer.Summary.TotalBytes);
             case "Duplicates":
                 if (!_model.DuplicatesSearched) return null;
                 // Mac: physicalCopies − 1 — copies sharing blocks free nothing, so a clone family is one copy.
@@ -700,9 +715,20 @@ public partial class MainWindow : Window
             _settingsWindow.Activate();
             return;
         }
-        _settingsWindow = new SettingsWindow(SetAppearance, SetTextScale, RebuildForTheme) { Owner = this };
+        _settingsWindow = new SettingsWindow(SetAppearance, SetTextScale, RebuildForTheme, w => ShowOnboarding(w)) { Owner = this };
         _settingsWindow.Closed += (_, _) => _settingsWindow = null;
         _settingsWindow.Show();
+    }
+
+    /// <summary>
+    /// "What do you do / what do you use": first launch, Settings → Your setup, and the
+    /// Developer page. Saving rebuilds the sidebar and pages.
+    /// </summary>
+    internal void ShowOnboarding(Window? owner = null)
+    {
+        var window = new OnboardingWindow { Owner = owner ?? this };
+        window.ShowDialog();
+        if (window.Saved) RebuildForTheme();
     }
 
     internal void OpenAbout()

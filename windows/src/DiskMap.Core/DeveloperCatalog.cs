@@ -665,6 +665,22 @@ public static partial class DeveloperCatalog
         items.Sort((a, b) => b.Bytes.CompareTo(a.Bytes));
         var projects = BuildProjects(items);
         EnrichProjects(projects, items, tree, rootPath, totals, today, locator);
+        return Result(items, projects, today);
+    }
+
+    /// <summary>
+    /// The catalog narrowed to <paramref name="ecosystems"/> (onboarding's profile): their items,
+    /// the projects holding any of them, and the summary and biggest wins over just those.
+    /// </summary>
+    public static DeveloperCatalogResult Only(DeveloperCatalogResult catalog, IReadOnlySet<DeveloperEcosystem> ecosystems)
+    {
+        var items = catalog.Items.Where(i => ecosystems.Contains(i.Ecosystem)).ToList();
+        var keys = items.Select(i => i.ProjectKey).OfType<string>().ToHashSet();
+        return Result(items, catalog.Projects.Where(p => keys.Contains(p.Key)).ToList(), AgeMap.Today());
+    }
+
+    private static DeveloperCatalogResult Result(List<DeveloperItem> items, List<DeveloperProject> projects, int today)
+    {
         var opportunities = items
             .Where(i => i.Reclaimability != DeveloperReclaimability.Keep && !i.IsProtected)
             .Take(12).ToList();

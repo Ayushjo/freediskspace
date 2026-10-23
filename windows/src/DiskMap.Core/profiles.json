@@ -1,5 +1,5 @@
 {
-  "_comment": "Onboarding: who uses this PC and with what. Roles group the tool list; a tool's ecosystems decide what Tools & Projects shows. `detect` paths are only checked for existence (environment variables expand; a trailing * in the last segment matches by prefix) — pre-ticked as 'found on this PC'. Data, not code (AGENTS.md rule 6).",
+  "_comment": "Onboarding: who uses this PC and with what. Roles group the tool list; a tool's ecosystems decide what Developer shows. `detect` paths are only checked for existence (environment variables expand; a trailing * in the last segment matches by prefix) — pre-ticked as 'found on this PC'. Data, not code (AGENTS.md rule 6).",
   "roles": [
     { "id": "software", "title": "Software developer", "blurb": "Web, mobile, backend, scripts" },
     { "id": "windows", "title": "Windows app developer", "blurb": ".NET, C++, WinUI, MSIX" },

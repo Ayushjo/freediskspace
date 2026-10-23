@@ -1,7 +1,6 @@
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using DiskMap.Core;
 
 namespace DiskMap.App;
 
@@ -31,13 +30,6 @@ public sealed class AppSettings
     [JsonPropertyName("tools")] public List<string> Tools { get; set; } = [];
     /// <summary>True once onboarding was finished or skipped — it shows on first launch only.</summary>
     [JsonPropertyName("onboarded")] public bool Onboarded { get; set; }
-
-    /// <summary>
-    /// Whether Tools &amp; Projects belongs in the sidebar: always without a
-    /// profile, otherwise only when the profile brings any tool ecosystem
-    /// (an everyday user who picked nothing doesn't get a developer page).
-    /// </summary>
-    public bool ShowsToolsPage => UserProfiles.EcosystemsFor(Roles, Tools) is not { Count: 0 };
 
     private static string Path0 => System.IO.Path.Combine(DiskMap.Core.UserFolders.StateDirectory, "settings.json");
 
