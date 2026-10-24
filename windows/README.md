@@ -26,7 +26,7 @@ windows/
 ```powershell
 dotnet build windows\DiskMap.Win.slnx
 dotnet test windows\DiskMap.Win.slnx
-Start-Process windows\app\DiskMap.App\bin\Debug\net10.0-windows\DiskMap.App.exe
+Start-Process windows\app\DiskMap.App\bin\Debug\net10.0-windows\Freedisk.exe
 ```
 
 To build an installer (installs to Program Files, adds a Start menu

@@ -11,12 +11,12 @@ See what's filling your disk, learn what each thing is, and free space without t
 
 [![Latest release](https://img.shields.io/github/v/release/Ayushjo/freediskspace?label=release&color=7966DA)](https://github.com/Ayushjo/freediskspace/releases/latest)
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-7966DA?logo=apple&logoColor=white)](https://github.com/Ayushjo/freediskspace/releases/latest/download/freedisk.space.dmg)
-[![Windows 10 and 11](https://img.shields.io/badge/Windows-10%20%7C%2011-7966DA?logo=windows&logoColor=white)](https://github.com/Ayushjo/freediskspace/releases/download/v0.4.0/freedisk.space-0.4.0-windows-x64.exe)
+[![Windows 10 and 11](https://img.shields.io/badge/Windows-10%20%7C%2011-7966DA?logo=windows&logoColor=white)](https://github.com/Ayushjo/freediskspace/releases/download/v0.4.1/freedisk.space-0.4.1-windows-x64.exe)
 [![MIT license](https://img.shields.io/badge/license-MIT-7966DA)](LICENSE)
 [![Works offline](https://img.shields.io/badge/works-offline-7966DA)](#privacy)
 
 **[Download for Mac](https://github.com/Ayushjo/freediskspace/releases/latest/download/freedisk.space.dmg)** &nbsp;·&nbsp;
-**[Download for Windows](https://github.com/Ayushjo/freediskspace/releases/download/v0.4.0/freedisk.space-0.4.0-windows-x64.exe)** &nbsp;·&nbsp;
+**[Download for Windows](https://github.com/Ayushjo/freediskspace/releases/download/v0.4.1/freedisk.space-0.4.1-windows-x64.exe)** &nbsp;·&nbsp;
 [freedisk.space](https://www.freedisk.space)
 
 </div>
@@ -100,7 +100,7 @@ For a complete scan, grant Full Disk Access in **System Settings › Privacy & S
 
 ### Windows
 
-1. Download **[freedisk.space-0.4.0-windows-x64.exe](https://github.com/Ayushjo/freediskspace/releases/download/v0.4.0/freedisk.space-0.4.0-windows-x64.exe)** for Windows 10 or 11 (x64). It's a single file, and .NET doesn't need to be installed.
+1. Download **[freedisk.space-0.4.1-windows-x64.exe](https://github.com/Ayushjo/freediskspace/releases/download/v0.4.1/freedisk.space-0.4.1-windows-x64.exe)** for Windows 10 or 11 (x64). It's a single file, and .NET doesn't need to be installed.
 2. The file isn't code signed yet, so SmartScreen may warn about an unknown publisher. Choose **More info › Run anyway**.
 
 Checksums are listed on each [release](https://github.com/Ayushjo/freediskspace/releases).

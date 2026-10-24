@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory=$true)][string]$Out,
-    [string]$ProcessName = "DiskMap.App",
+    [string]$ProcessName = "Freedisk",
     [int]$SettleSeconds = 2
 )
 # Brings the app's main window forward, waits, captures it to a PNG.

@@ -21,7 +21,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir={#PublishDir}\..
 OutputBaseFilename=freedisk.space-setup-{#AppVersion}-x64
 SetupIconFile=..\app\DiskMap.App\app.ico
-UninstallDisplayIcon={app}\DiskMap.App.exe
+UninstallDisplayIcon={app}\Freedisk.exe
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -33,8 +33,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "{#PublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
 
 [Icons]
-Name: "{autoprograms}\freedisk.space"; Filename: "{app}\DiskMap.App.exe"
-Name: "{autodesktop}\freedisk.space"; Filename: "{app}\DiskMap.App.exe"; Tasks: desktopicon
+Name: "{autoprograms}\freedisk.space"; Filename: "{app}\Freedisk.exe"
+Name: "{autodesktop}\freedisk.space"; Filename: "{app}\Freedisk.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\DiskMap.App.exe"; Description: "{cm:LaunchProgram,freedisk.space}"; Flags: nowait postinstall skipifsilent shellexec
+Filename: "{app}\Freedisk.exe"; Description: "{cm:LaunchProgram,freedisk.space}"; Flags: nowait postinstall skipifsilent shellexec

@@ -12,6 +12,7 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
+    <AssemblyName>Freedisk</AssemblyName>
     <AssemblyTitle>freedisk.space</AssemblyTitle>
     <Product>freedisk.space</Product>
     <TargetFramework>net10.0-windows</TargetFramework>

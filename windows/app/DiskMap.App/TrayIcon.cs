@@ -29,7 +29,7 @@ public sealed class TrayIcon : IDisposable
         // app.ico into the PE resources) — no loose file in the output
         // dir, no CWD-dependent path to get wrong.
         var exeIcon = System.Drawing.Icon.ExtractAssociatedIcon(
-            Environment.ProcessPath ?? "DiskMap.App.exe") ?? System.Drawing.SystemIcons.Application;
+            Environment.ProcessPath ?? "Freedisk.exe") ?? System.Drawing.SystemIcons.Application;
         _icon = new System.Windows.Forms.NotifyIcon
         {
             Icon = exeIcon,

@@ -21,7 +21,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $repo = Resolve-Path (Join-Path $PSScriptRoot '..\..')
-$exe = Join-Path $repo 'windows\app\DiskMap.App\bin\Debug\net10.0-windows\DiskMap.App.exe'
+$exe = Join-Path $repo 'windows\app\DiskMap.App\bin\Debug\net10.0-windows\Freedisk.exe'
 if (-not (Test-Path $exe)) { throw "Build first: dotnet build windows\DiskMap.Win.slnx ($exe not found)" }
 if (-not (Test-Path $Demo)) { throw "Make the demo first: python windows\scripts\make-demo-fixture.py $Demo" }
 # `powershell -File` passes -Pages 'A','B' as one string "A,B"; split it back.
