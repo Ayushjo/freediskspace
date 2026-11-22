@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 
 namespace DiskMap.Core;
 
@@ -200,22 +199,12 @@ public static class ForgottenFiles
         [
             ("desktop", Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory)),
             ("documents", Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)),
-            ("downloads", DownloadsFolder()),
+            ("downloads", Native.Win32.DownloadsFolder() ?? ""),
             ("music", Environment.GetFolderPath(Environment.SpecialFolder.MyMusic)),
             ("pictures", Environment.GetFolderPath(Environment.SpecialFolder.MyPictures)),
             ("videos", Environment.GetFolderPath(Environment.SpecialFolder.MyVideos)),
         ];
     }
-
-    private static readonly Guid DownloadsId = new("374DE290-123F-4565-9164-39C4925E467B");
-
-    /// <summary>FOLDERID_Downloads, which .NET's SpecialFolder lacks; "" when the shell has none.</summary>
-    private static string DownloadsFolder() =>
-        SHGetKnownFolderPath(DownloadsId, 0, IntPtr.Zero, out string? path) == 0 ? path ?? "" : "";
-
-    [DllImport("shell32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
-    private static extern int SHGetKnownFolderPath(
-        [MarshalAs(UnmanagedType.LPStruct)] Guid id, uint flags, IntPtr token, out string? path);
 
     /// <summary><paramref name="knownFolders"/>: as in <see cref="Candidates"/>.</summary>
     public static ForgottenConfidence ClassifyConfidence(string path, string name, FileKind kind,
