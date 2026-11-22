@@ -21,6 +21,7 @@ public sealed class ScanModel : ViewModelBase
 
     private ScanModel()
     {
+        PropertyChanged += (_, _) => Version++;
         // A landed measurement changes the staged figures, never what is staged. With hundreds
         // staged they land in a stream for minutes: refresh the estimate at most once a second,
         // with the reclaim math (hard links of a whole cache) done here, off the UI thread. Only
@@ -69,17 +70,36 @@ public sealed class ScanModel : ViewModelBase
     /// <summary>Per-root scan history (one JSON file per root under %LOCALAPPDATA%\DiskMap\History).</summary>
     private readonly StorageHistory _history = new();
 
-    /// <summary>"What grew this week" for the current root, if history allows.</summary>
-    public StorageHistory.Comparison? HistoryComparison
+    /// <summary>
+    /// "What grew this week" for the current root, if history allows. Read once per scan, off the
+    /// UI thread: the sidebar asks on every refresh, and each read decoded the history file twice.
+    /// </summary>
+    public StorageHistory.Comparison? HistoryComparison { get; private set; }
+
+    /// <summary>"What grew this week" from a root's history file.</summary>
+    private StorageHistory.Comparison? CompareHistory(string root)
     {
-        get
+        var entries = _history.Entries(root);
+        return entries.LastOrDefault() is { } latest ? StorageHistory.Compare(entries, latest) : null;
+    }
+
+    /// <summary>One history entry for a finished scan. A full or locked disk loses the entry, never the scan.</summary>
+    private void RecordHistory(string path, VolumeInfo? volume, FileTree tree, long[] allocated, int failedDirectories)
+    {
+        try
         {
-            if (RootPath is not { } root || _totalsAllocated.Length == 0) return null;
-            var entries = _history.Entries(root);
-            var latest = entries.LastOrDefault();
-            if (latest is null) return null;
-            return StorageHistory.Compare(entries, latest);
+            _history.Record(new StorageHistory.Entry(
+                DateTimeOffset.Now,
+                volume?.FreeBytes ?? 0,
+                volume?.TotalBytes ?? 0,
+                allocated.Length > 0 ? allocated[0] : 0,
+                failedDirectories,
+                tree.Sharing.IsEmpty
+                    ? StorageHistory.Entry.SharingModeHardLinkDedup
+                    : StorageHistory.Entry.SharingModeBlockCloneDedup,
+                StorageHistory.Folders(tree, allocated)), path);
         }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
 
     /// <summary>(files, folders) descendant counts per node — "N items" labels.</summary>
@@ -175,19 +195,18 @@ public sealed class ScanModel : ViewModelBase
     public VolumeInfo? Volume { get => _volume; private set { if (Set(ref _volume, value)) Changed(); } }
 
     private SpaceAccount? _spaceAccount;
-    /// <summary>"Where's the rest?" — the drive's used space in parts that add up (WIN-113). Nil until read.</summary>
-    public SpaceAccount? SpaceAccount { get => _spaceAccount; private set { if (Set(ref _spaceAccount, value)) Changed(); } }
-
-    private async Task ReadSpaceAccountAsync(string path, long scannedOnDiskBytes, int unreadable)
-    {
-        var volume = Volume;
-        var account = await Task.Run(() => Harness.SpaceAccountFor(volume, path, scannedOnDiskBytes, unreadable));
-        if (RootPath == path) SpaceAccount = account;
-    }
+    /// <summary>
+    /// "Where's the rest?" — the drive's used space in parts that add up (WIN-113). Read with the
+    /// scan and published with its tree, so it costs no rebuild of its own.
+    /// </summary>
+    public SpaceAccount? SpaceAccount { get => _spaceAccount; private set => Set(ref _spaceAccount, value); }
 
     private IReadOnlyList<SystemStorageCatalog.Item>? _systemStorage;
-    /// <summary>"What Windows keeps" (WIN-116, P2; Mac: systemStorage). Null until measured.</summary>
-    public IReadOnlyList<SystemStorageCatalog.Item>? SystemStorage { get => _systemStorage; private set { if (Set(ref _systemStorage, value)) Changed(); } }
+    /// <summary>
+    /// "What Windows keeps" (WIN-116, P2; Mac: systemStorage). Null until measured. Lands seconds
+    /// after a scan and is read only when "Where's the rest?" opens, so it rebuilds no page.
+    /// </summary>
+    public IReadOnlyList<SystemStorageCatalog.Item>? SystemStorage { get => _systemStorage; private set => Set(ref _systemStorage, value); }
 
     /// <summary>
     /// Measures "What Windows keeps" off the UI thread: from this scan where it covers the path
@@ -344,7 +363,17 @@ public sealed class ScanModel : ViewModelBase
 
     /// <summary>Pages re-render on this — tree, totals, zoom, basis all funnel through it.</summary>
     public event EventHandler? StateChanged;
-    private void Changed() => StateChanged?.Invoke(this, EventArgs.Empty);
+    private void Changed()
+    {
+        Version++;
+        StateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// Moves on every change the model announces — <see cref="StateChanged"/>, the basket, any
+    /// property — so a page shown again rebuilds only when something it may show has moved.
+    /// </summary>
+    public int Version { get; private set; }
 
     private (FileTree Tree, long[] Totals, DeveloperCatalogResult Result)? _developer;
 
@@ -365,7 +394,8 @@ public sealed class ScanModel : ViewModelBase
             var result = await Task.Run(() => DeveloperCatalog.Build(tree, root, totals));
             if (!ReferenceEquals(tree, _tree) || !ReferenceEquals(totals, _totals)) return;
             _developer = (tree, totals, result);
-            Changed();
+            // Only the sidebar's figure shows it; the Developer page builds its own when it opens.
+            OnPropertyChanged(nameof(Developer));
         }
         catch { /* the page builds its own when opened */ }
     }
@@ -436,7 +466,7 @@ public sealed class ScanModel : ViewModelBase
                 () => _engine.ScanAsync(path, progress, cts.Token, settings.CloneAccounting),
                 cts.Token);
             ScanPhase = "summarizing";
-            var (logical, allocated, counts, quickWins, snapshot, reviewables) = await Task.Run(() =>
+            var s = await Task.Run(() =>
             {
                 var l = scanned.Tree.RollUpSizes(SizeBasis.Logical);
                 // The demo PC's files are sparse (they take no space), so deterministic renders
@@ -446,26 +476,18 @@ public sealed class ScanModel : ViewModelBase
                 var qw = Core.QuickWins.Find(scanned.Tree, path, Core.QuickWins.BundledPatterns());
                 var snap = AnalysisSnapshot.Build(scanned.Tree, path, l, a, basis, qw, volumeOf: Harness.VolumeFor);
                 var rv = BuildCatalogs(scanned.Tree, path, basis == SizeBasis.Logical ? l : a, qw);
-                return (l, a, c, qw, snap, rv);
+                // Past this check the scan is kept: a later cancel can't leave history for a dropped scan.
+                cts.Token.ThrowIfCancellationRequested();
+                // The drive, the history file and the Recycle Bin are read here, not on the UI thread.
+                var volume = Harness.VolumeFor(path);
+                // History record — one JSON line per scan, feeds "what grew".
+                // A render-harness run never writes the user's scan history.
+                if (settings.KeepHistory && !Harness.IsActive)
+                    RecordHistory(path, volume, scanned.Tree, a, scanned.FailedDirectoryCount);
+                return (Logical: l, Allocated: a, Counts: c, QuickWins: qw, Snapshot: snap, Catalogs: rv,
+                    Volume: volume, Comparison: CompareHistory(path),
+                    Account: Harness.SpaceAccountFor(volume, path, snap.ScannedOnDiskBytes, scanned.DeniedDirectoryIds.Count));
             }, cts.Token);
-            cts.Token.ThrowIfCancellationRequested();
-            // History record — one JSON line per scan, feeds "what grew".
-            var volume = Harness.VolumeFor(path);
-            // A render-harness run never writes the user's scan history.
-            if (settings.KeepHistory && !Harness.IsActive)
-            {
-                var folders = StorageHistory.Folders(scanned.Tree, allocated);
-                _history.Record(new StorageHistory.Entry(
-                    DateTimeOffset.Now,
-                    volume?.FreeBytes ?? 0,
-                    volume?.TotalBytes ?? 0,
-                    allocated.Length > 0 ? allocated[0] : 0,
-                    scanned.FailedDirectoryCount,
-                    scanned.Tree.Sharing.IsEmpty
-                        ? StorageHistory.Entry.SharingModeHardLinkDedup
-                        : StorageHistory.Entry.SharingModeBlockCloneDedup,
-                    folders), path);
-            }
             ItemCount = scanned.ItemCount;
             Elapsed = scanned.ElapsedSeconds;
             ChangedRecords = scanned.ChangedRecords;
@@ -476,15 +498,15 @@ public sealed class ScanModel : ViewModelBase
             FailedDirectoryCount = scanned.FailedDirectoryCount;
             Duplicates = [];
             _duplicatesRan = false;
-            QuickWins = quickWins;
-            (Reviewables, OldDownloads, LargeMedia) = reviewables;
-            Snapshot = snapshot;
+            QuickWins = s.QuickWins;
+            (Reviewables, OldDownloads, LargeMedia) = s.Catalogs;
+            Snapshot = s.Snapshot;
             // Totals before Tree: a view refreshed by the Tree change must
             // never pair the new tree with the old totals.
-            _totalsLogical = logical;
-            _totalsAllocated = allocated;
-            _totals = basis == SizeBasis.Logical ? logical : allocated;
-            _counts = counts;
+            _totalsLogical = s.Logical;
+            _totalsAllocated = s.Allocated;
+            _totals = basis == SizeBasis.Logical ? s.Logical : s.Allocated;
+            _counts = s.Counts;
             _zoomedNode = 0;
             _selectedNode = -1;
             MultiSelection.Clear();   // ids from the old tree name other files in the new one
@@ -492,15 +514,15 @@ public sealed class ScanModel : ViewModelBase
             _zoomForward.Clear();
             CloneProfile = scanned.CloneProfile;
             RootPath = path;
-            Volume = Harness.VolumeFor(path);
+            Volume = s.Volume;
             // The harness pins "Scanned 2 minutes ago", as the Mac's --deterministic does.
             LastScanFinishedAt = Harness.Deterministic ? DateTimeOffset.Now.AddSeconds(-120) : DateTimeOffset.Now;
-            SpaceAccount = null;
+            HistoryComparison = s.Comparison;
+            SpaceAccount = s.Account;
             SystemStorage = null;
             Tree = scanned.Tree;
             PrewarmDeveloper();
-            _ = ReadSpaceAccountAsync(path, snapshot.ScannedOnDiskBytes, scanned.DeniedDirectoryIds.Count);
-            _ = ReadSystemStorageAsync(path, scanned.Tree, allocated, scanned.DeniedDirectoryIds);
+            _ = ReadSystemStorageAsync(path, scanned.Tree, s.Allocated, scanned.DeniedDirectoryIds);
             // WIN-013: let staging measure from this tree when the journal
             // proves a staged folder's subtree is unchanged since the scan.
             Cleanup.SetScanContext(scanned.Tree, path, scanned.ScanMarker,
@@ -510,6 +532,12 @@ public sealed class ScanModel : ViewModelBase
         catch (OperationCanceledException)
         {
             // Keep the previous scan — a cancelled walk publishes nothing.
+        }
+        catch (Exception ex)
+        {
+            // Ctrl+R, the tray and the palette start scans nobody awaits: this is the one place a
+            // failure is told. The previous scan stays, as after a cancel.
+            Toast($"Scan failed: {ex.Message}");
         }
         finally
         {
@@ -529,15 +557,17 @@ public sealed class ScanModel : ViewModelBase
     public async Task LoadSnapshot(DiskSnapshot snapshot)
     {
         var basis = _sizeBasis;
-        var (logical, allocated, counts, quickWins, snap, reviewables) = await Task.Run(() =>
+        string root = snapshot.RootPath;
+        var (logical, allocated, counts, quickWins, snap, reviewables, volume, comparison, account) = await Task.Run(() =>
         {
             var l = snapshot.Tree.RollUpSizes(SizeBasis.Logical);
             var a = Harness.Deterministic ? l : snapshot.Tree.RollUpSizes(SizeBasis.Allocated);
             var c = snapshot.Tree.RollUpCounts();
-            var qw = Core.QuickWins.Find(snapshot.Tree, snapshot.RootPath, Core.QuickWins.BundledPatterns());
-            var s = AnalysisSnapshot.Build(snapshot.Tree, snapshot.RootPath, l, a, basis, qw, volumeOf: Harness.VolumeFor);
-            var rv = BuildCatalogs(snapshot.Tree, snapshot.RootPath, basis == SizeBasis.Logical ? l : a, qw);
-            return (l, a, c, qw, s, rv);
+            var qw = Core.QuickWins.Find(snapshot.Tree, root, Core.QuickWins.BundledPatterns());
+            var s = AnalysisSnapshot.Build(snapshot.Tree, root, l, a, basis, qw, volumeOf: Harness.VolumeFor);
+            var rv = BuildCatalogs(snapshot.Tree, root, basis == SizeBasis.Logical ? l : a, qw);
+            var v = Harness.VolumeFor(root);
+            return (l, a, c, qw, s, rv, v, CompareHistory(root), Harness.SpaceAccountFor(v, root, s.ScannedOnDiskBytes, 0));
         });
         ItemCount = snapshot.Tree.Count;
         Elapsed = 0;
@@ -561,14 +591,34 @@ public sealed class ScanModel : ViewModelBase
         MultiSelection.Clear();
         _zoomBack.Clear();
         _zoomForward.Clear();
-        RootPath = snapshot.RootPath;
-        Volume = Harness.VolumeFor(snapshot.RootPath);
-        SpaceAccount = null;
+        RootPath = root;
+        Volume = volume;
+        // The page bar says how old the saved scan is, not when the previous scan finished.
+        LastScanFinishedAt = snapshot.CapturedAt;
+        HistoryComparison = comparison;
+        SpaceAccount = account;
         SystemStorage = null;
         Tree = snapshot.Tree;
         PrewarmDeveloper();
-        _ = ReadSpaceAccountAsync(snapshot.RootPath, snap.ScannedOnDiskBytes, 0);
-        _ = ReadSystemStorageAsync(snapshot.RootPath, snapshot.Tree, allocated, []);
+        _ = ReadSystemStorageAsync(root, snapshot.Tree, allocated, []);
+    }
+
+    /// <summary>
+    /// A saved scan's row still describes what is on disk: the item exists, and a file keeps the
+    /// length and modified day the scan recorded (0 = the scan had no date). Staging from a saved
+    /// scan asks this first, so a weeks-old row can't put a different file in the basket.
+    /// </summary>
+    internal static bool MatchesDisk(string path, bool isDirectory, long length, int modifiedDay)
+    {
+        try
+        {
+            if (isDirectory) return Directory.Exists(path);
+            var info = new FileInfo(path);
+            if (!info.Exists || info.Length != length) return false;
+            int day = (int)(new DateTimeOffset(info.LastWriteTimeUtc).ToUnixTimeSeconds() / 86400);
+            return modifiedDay == 0 || day == modifiedDay;
+        }
+        catch (Exception) { return false; }   // unreadable: it can't be shown to be the same file
     }
 
     // Zoom navigation history for the breadcrumb ‹ › buttons.
@@ -639,9 +689,35 @@ public sealed class ScanModel : ViewModelBase
     /// <summary>Transient confirmations — stage/commit/put-back (WIN-063).</summary>
     public event Action<string>? ToastRequested;
     public void Toast(string text) => ToastRequested?.Invoke(text);
-    public void ToastAdded(int count) => Toast(count == 1
+    public void ToastAdded(int count) => Toast(AddedText(count));
+
+    private static string AddedText(int count) => count == 1
         ? "Added 1 item to the basket — Ctrl+Shift+Delete to review"
-        : $"Added {count:N0} items to the basket — Ctrl+Shift+Delete to review");
+        : $"Added {count:N0} items to the basket — Ctrl+Shift+Delete to review";
+
+    private static string Items(int count) => count == 1 ? "1 item" : $"{count:N0} items";
+
+    /// <summary>
+    /// The one toast after a bulk add: what went in, the risky items it skipped (they need a
+    /// single add, with the warning), and what the basket refused; "Already in the basket" only
+    /// when that is all that happened. Null when there is nothing to say.
+    /// </summary>
+    internal static string? BulkStageToast(int added, int already, int refused, IReadOnlyList<string> risky)
+    {
+        var parts = new List<string>();
+        if (added > 0) parts.Add(risky.Count == 0 && refused == 0 ? AddedText(added) : $"Added {Items(added)}");
+        if (risky.Count > 0)
+        {
+            string names = string.Join(", ", risky.Take(2)) + (risky.Count > 2 ? $" +{risky.Count - 2}" : "");
+            string what = $"{risky.Count} risky item{(risky.Count == 1 ? "" : "s")}";
+            parts.Add(added > 0
+                ? $"skipped {what} ({names})"
+                : $"{what} — add {(risky.Count == 1 ? "it" : "them")} one at a time to see why");
+        }
+        if (refused > 0) parts.Add($"{Items(refused)} can't go in the basket");
+        if (parts.Count == 0 && already > 0) parts.Add("Already in the basket");
+        return parts.Count == 0 ? null : string.Join(" · ", parts);
+    }
 
     /// <summary>What this node is and what removing it means (WSL disk, app, cache…).</summary>
     public StorageVerdict VerdictOf(int nodeId) =>
@@ -674,10 +750,17 @@ public sealed class ScanModel : ViewModelBase
                 Toast($"{Tree.NameOf(nodeId)} is protected — {verdict.Instead ?? verdict.Note ?? "it can't be cleaned up here"}");
             return false;
         }
+        string path = PathOf(nodeId);
+        // A saved scan can be weeks old: only what is still on disk as it was then may go in.
+        if (Backend == "snapshot"
+            && !MatchesDisk(path, Tree.IsDirectory[nodeId], Tree.LogicalSize[nodeId], Tree.ModifiedDay[nodeId]))
+        {
+            if (notify) Toast($"{Tree.NameOf(nodeId)} changed since this saved scan — rescan to add it");
+            return false;
+        }
         if (verdict.Advice == CleanupAdvice.Warn
             && !(notify && ConfirmRisky?.Invoke(Tree.NameOf(nodeId), verdict) == true))
             return false;
-        string path = PathOf(nodeId);
         long size = nodeId < _totals.Length ? _totals[nodeId] : Tree.LogicalSize[nodeId];
         bool ok = Cleanup.Stage(path, size, reason, group, groupCount);
         if (ok)
@@ -685,6 +768,8 @@ public sealed class ScanModel : ViewModelBase
             StagedSoon(path);
             if (notify) ToastAdded(1);
         }
+        // The queue refuses what is already in it and what it never takes (even after "Add anyway").
+        else if (notify) Toast(IsStaged(path) ? "Already in the basket" : "This can't go in the basket");
         return ok;
     }
 
@@ -701,7 +786,7 @@ public sealed class ScanModel : ViewModelBase
     private int StageRequests(IEnumerable<(int NodeId, string Reason)> requests)
     {
         if (Tree is null) return 0;
-        int added = 0, already = 0;
+        int added = 0, already = 0, refused = 0;
         var skipped = new List<string>();
         foreach (var (id, reason) in requests)
         {
@@ -709,25 +794,10 @@ public sealed class ScanModel : ViewModelBase
             var advice = VerdictOf(id).Advice;
             if (advice is CleanupAdvice.Warn or CleanupAdvice.Never) { skipped.Add(Tree.NameOf(id)); continue; }
             if (Stage(id, reason, notify: false)) added++;
-            else already++;
+            else if (IsStaged(PathOf(id))) already++;
+            else refused++;   // the root, an excluded path, a saved-scan row that changed
         }
-        string addedText = added == 1 ? "Added 1 item" : $"Added {added:N0} items";
-        if (skipped.Count > 0)
-        {
-            string names = string.Join(", ", skipped.Take(2)) + (skipped.Count > 2 ? $" +{skipped.Count - 2}" : "");
-            string risky = $"{skipped.Count} risky item{(skipped.Count == 1 ? "" : "s")}";
-            Toast(added > 0
-                ? $"{addedText} · skipped {risky} ({names})"
-                : $"{risky} — add {(skipped.Count == 1 ? "it" : "them")} one at a time to see why");
-        }
-        else if (added > 0)
-        {
-            ToastAdded(added);
-        }
-        else if (already > 0)
-        {
-            Toast("Already in the basket");
-        }
+        if (BulkStageToast(added, already, refused, skipped) is { } text) Toast(text);
         return added;
     }
 
@@ -842,15 +912,40 @@ public sealed class ScanModel : ViewModelBase
     /// </summary>
     public async Task<PutBackReport?> PutBackLastCleanupAsync()
     {
-        if (CleanupRecord.Load() is not { Items.Count: > 0 } record) return null;
-        var report = await Task.Run(() => PutBack.Run(record));
-        var left = record.Items.Where(i => report.Restored.All(r => r.OriginalPath != i.OriginalPath)).ToList();
-        new CleanupRecord(record.Date, left).Save();
-        Toast($"Put back {report.Restored.Count} item{(report.Restored.Count == 1 ? "" : "s")}"
-            + (report.Skipped.Count > 0 ? $" · {report.Skipped.Count} skipped ({report.Skipped[0].Reason})" : ""));
+        // Reading, restoring and rewriting the record are file work: all of it off the UI thread.
+        if (await Task.Run(PutBackLastCleanup) is not { } report) return null;
+        Toast(PutBackToast(report));
         RefreshStaged();
         Changed();
+        // What came back is on disk again: the scan should show it.
+        if (report.Restored.Count > 0 && RootPath is not null && !IsScanning) _ = RescanAsync();
         return report;
+    }
+
+    /// <summary>
+    /// Restores the last cleanup through History when it lists that cleanup, so History reads
+    /// "Put back" too and the record keeps only what is still in the bin; else on its own.
+    /// </summary>
+    private static PutBackReport? PutBackLastCleanup()
+    {
+        if (CleanupRecord.Load() is not { Items.Count: > 0 } record) return null;
+        if (CleanupHistory.LoadOrSeed().Entries.FirstOrDefault(e => e.Record.Date == record.Date) is { } entry)
+            return CleanupHistory.PutBackItems(record.Items, entry.Number);
+        var report = PutBack.Run(record);
+        var back = report.Restored.Select(r => r.TrashedPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        new CleanupRecord(record.Date, record.Items.Where(i => !back.Contains(i.TrashedPath)).ToList()).Save();
+        return report;
+    }
+
+    /// <summary>"Put back 3 items · 2 skipped (No longer in the Recycle Bin, …)": both counts and the first reason.</summary>
+    internal static string PutBackToast(PutBackReport report)
+    {
+        int back = report.Restored.Count, skipped = report.Skipped.Count;
+        string text = back == 0 ? "Nothing put back" : $"Put back {Items(back)}";
+        if (skipped == 0) return text;
+        string first = report.Skipped[0].Reason;
+        bool more = report.Skipped.Any(s => s.Reason != first);
+        return $"{text} · {skipped:N0} skipped ({first}{(more ? ", …" : "")})";
     }
 
     public void Unstage(Guid id)
@@ -881,6 +976,7 @@ public sealed class ScanModel : ViewModelBase
     private void ApplyStaged(IReadOnlyList<CleanupQueue.StagedItem> items, CleanupQueue.ReclaimEstimate estimate)
     {
         _stagedVersion++;
+        Version++;
         StagedItems.Clear();
         _stagedPaths.Clear();
         foreach (var item in items)

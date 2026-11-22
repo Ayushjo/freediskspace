@@ -25,6 +25,8 @@
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <LangVersion>latest</LangVersion>
+    <!-- Elevated app: DOTNET_STARTUP_HOOKS (a user-level variable) must not load code into it. -->
+    <StartupHookSupport>false</StartupHookSupport>
   </PropertyGroup>
 
 </Project>

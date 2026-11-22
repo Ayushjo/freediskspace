@@ -14,7 +14,8 @@ namespace DiskMap.App;
 ///   DISKMAP_SIZE_BASIS     logical | ondisk (default: ondisk)
 ///   DISKMAP_DETERMINISTIC  1 = fixed 500 GB volume with 120 GB free, like the Mac harness
 ///   DISKMAP_FIND_DUPLICATES 1 = Duplicates searches as soon as it opens
-/// A harness run never writes the user's scan history.
+/// A harness run never writes the user's scan history. An elevated run has none of these:
+/// App.OnStartup drops every DISKMAP_ variable first, so the harness runs unelevated (RunAsInvoker).
 /// </summary>
 internal static class Harness
 {

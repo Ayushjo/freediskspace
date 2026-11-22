@@ -43,6 +43,7 @@ public sealed class OnboardingWindow : Window
         Height = 640;
         MinWidth = 620;
         MinHeight = 520;
+        WindowFit.ToWorkArea(this);
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         ShowInTaskbar = false;
         Background = Ui.Brush("RdPage");

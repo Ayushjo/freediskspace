@@ -16,7 +16,7 @@ public partial class MainWindow : Window
     private readonly ScanModel _model = ScanModel.Shared;
     private TrayIcon? _tray;
     private readonly Dictionary<string, Func<UserControl>> _pageFactories = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, Border> _navItems = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Button> _navItems = new(StringComparer.Ordinal);
     /// <summary>Onboarding's tools (null = no profile): the Developer row's figure counts only these, as the page does.</summary>
     private HashSet<DeveloperEcosystem>? _developerProfile;
     // One instance per page for the session: a page keeps its state
@@ -40,6 +40,7 @@ public partial class MainWindow : Window
             content.Height = size.Height;
             SizeToContent = SizeToContent.WidthAndHeight;
         }
+        else WindowFit.ToWorkArea(this);
         ApplyTextScale(AppSettings.Load());
         BuildNav();
         BuildTopBar();
@@ -293,20 +294,15 @@ public partial class MainWindow : Window
 
     private void AddNavRow(NavDestination dest)
     {
-        var item = new Border
-        {
-            Height = Ui.Scaled(30),
-            CornerRadius = new CornerRadius(7),
-            Margin = new Thickness(0, 0, 0, 1),
-            Tag = dest,
-            Background = System.Windows.Media.Brushes.Transparent,
-            Cursor = Cursors.Hand,
-        };
-        item.MouseLeftButtonUp += (_, _) =>
+        // A button, so Tab reaches the row and Enter or Space opens it; RefreshNav draws its face.
+        var item = PlainButton.Create(new Grid(), dest.Title, () =>
         {
             if (dest.PageKey != "Overview" && _model.Tree is null) return;
             SelectPage(dest.PageKey);
-        };
+        }, radius: 7);
+        item.Height = Ui.Scaled(30);
+        item.Margin = new Thickness(0, 0, 0, 1);
+        item.Tag = dest;
         _navItems[dest.Title] = item;
         NavPanel.Children.Add(item);
     }
@@ -357,7 +353,7 @@ public partial class MainWindow : Window
                     Background = Ui.Brush("AppAccent"),
                 });
             }
-            item.Child = body;
+            item.Content = body;
             item.Background = selected ? Ui.Brush("RdSoft") : System.Windows.Media.Brushes.Transparent;
             item.Cursor = locked ? Cursors.Arrow : Cursors.Hand;
             item.ToolTip = locked ? "Scan your PC first." : dest.Title;
@@ -426,7 +422,9 @@ public partial class MainWindow : Window
         stack.Children.Add(figure);
         if (count > 0 && (_model.Volume ?? Harness.VolumeFor(null)) is { } vol)
         {
-            var after = Rd.MonoLabel($"Free after · {ByteFormat.Format(vol.FreeBytes + bytes)}");
+            var after = Rd.MonoLabel(FreeAfterText(vol.FreeBytes, bytes));
+            after.TextWrapping = TextWrapping.Wrap;   // two lines in the 200-wide sidebar
+            after.TextTrimming = TextTrimming.None;
             after.Margin = new Thickness(0, 3, 0, 0);
             stack.Children.Add(after);
         }
@@ -446,6 +444,10 @@ public partial class MainWindow : Window
         System.Windows.Automation.AutomationProperties.SetName((Border)BasketHost.Content,
             count == 0 ? "Basket, empty" : $"Basket, {count} items, {ByteFormat.Format(bytes)}");
     }
+
+    /// <summary>The Recycle Bin still holds what a cleanup moves, so nothing is free until it is emptied.</summary>
+    internal static string FreeAfterText(long freeBytes, long basketBytes) =>
+        $"{ByteFormat.Format(freeBytes + basketBytes)} free after emptying the bin";
 
     /// <summary>"Ctrl+K Find anything" and the Settings gear (AppShellView.sidebarFooter).</summary>
     private void BuildSidebarFooter()
@@ -584,7 +586,7 @@ public partial class MainWindow : Window
     internal Task ScanFolder() => PickAndScan();
 
     /// <summary>Export the current scan (JSON / NDJSON / CSV / ncdu) — the Snapshots header has the same.</summary>
-    internal void ExportScan()
+    internal async void ExportScan()
     {
         if (_model.Tree is not { } t || _model.RootPath is not { } root) return;
         var dlg = new Microsoft.Win32.SaveFileDialog
@@ -600,10 +602,13 @@ public partial class MainWindow : Window
             4 => TreeExporter.Format.Ncdu,
             _ => TreeExporter.Format.Json,
         };
+        var totals = _model.Totals;
+        string file = dlg.FileName;
         try
         {
-            File.WriteAllText(dlg.FileName, TreeExporter.Export(t, _model.Totals, root, format));
-            _model.Toast($"Exported to {Path.GetFileName(dlg.FileName)}");
+            // Millions of rows take seconds to format and write: off the UI thread, then say so.
+            await Task.Run(() => File.WriteAllText(file, TreeExporter.Export(t, totals, root, format)));
+            _model.Toast($"Exported to {Path.GetFileName(file)}");
         }
         catch (Exception ex)
         {
@@ -735,11 +740,7 @@ public partial class MainWindow : Window
         var settings = AppSettings.Load();
         settings.Appearance = mode;
         settings.Save();
-        bool dark = settings.WantsDark;
-#pragma warning disable WPF0001
-        Application.Current.ThemeMode = dark ? ThemeMode.Dark : ThemeMode.Light;
-#pragma warning restore WPF0001
-        Theme.Apply(dark);
+        App.ApplyTheme(settings.WantsDark);
         RebuildForTheme();
     }
 
@@ -930,20 +931,29 @@ public partial class MainWindow : Window
         PageHost.Focus();
     }
 
+    /// <summary>The page bar's scan button: none before a scan, Cancel while a rescan runs, else Rescan.</summary>
+    internal static string? ScanButtonTitle(bool scanned, bool scanning) =>
+        !scanned ? null : scanning ? "Cancel" : "Rescan";
+
     /// <summary>
     /// Rescan (Secondary style): a click re-reads what changed; its menu (right-click, or the
     /// keyboard's menu key) offers Quick Update and Full Rescan, like the Mac's Rescan menu.
-    /// Shown once a scan exists; disabled while one runs.
+    /// Shown once a scan exists; Cancel while one runs (the last finished scan stays).
     /// </summary>
     private void RefreshScanButton()
     {
-        if (_model.Tree is null)
+        switch (ScanButtonTitle(_model.Tree is not null, _model.IsScanning))
         {
-            RescanButtonHost.Content = null;
-            return;
+            case null:
+                RescanButtonHost.Content = null;
+                return;
+            case "Cancel":
+                var cancel = Rd.SecondaryButton("Cancel", _model.CancelScan);
+                cancel.ToolTip = "Stop this rescan. The last scan stays.";
+                RescanButtonHost.Content = cancel;
+                return;
         }
         var button = Rd.SecondaryButton("Rescan", async () => await Rescan());
-        button.IsEnabled = !_model.IsScanning;
         button.ToolTip = "Rescan — re-reads only what changed. Right-click for a full rescan.";
         var menu = new ContextMenu();
         var quick = new MenuItem { Header = "Quick Update — re-read what changed" };
@@ -977,26 +987,20 @@ public partial class MainWindow : Window
             case nameof(ScanModel.ReclaimEstimate):
                 RefreshBasket();
                 break;
+            case nameof(ScanModel.Developer):
+                RefreshNav();   // the prewarmed catalog's figure; it rebuilds no page
+                break;
         }
     }
 
     // ---- Scanning ----
 
+    /// <summary>A failed scan says so itself (ScanModel's toast), wherever it was started.</summary>
     private async Task PickAndScan()
     {
         if (_model.IsScanning) return;
         var hwnd = new WindowInteropHelper(this).Handle;
-        var path = FolderPicker.Pick(hwnd);
-        if (path is null) return;
-        try
-        {
-            await _model.ScanAsync(path);
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show($"Scan failed: {ex.Message}", "freedisk.space",
-                MessageBoxButton.OK, MessageBoxImage.Warning);
-        }
+        if (FolderPicker.Pick(hwnd) is { } path) await _model.ScanAsync(path);
     }
 
     private async Task Rescan()
@@ -1006,15 +1010,6 @@ public partial class MainWindow : Window
             await PickAndScan();
             return;
         }
-        if (_model.IsScanning) return;
-        try
-        {
-            await _model.RescanAsync();
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show($"Rescan failed: {ex.Message}", "freedisk.space",
-                MessageBoxButton.OK, MessageBoxImage.Warning);
-        }
+        if (!_model.IsScanning) await _model.RescanAsync();
     }
 }
