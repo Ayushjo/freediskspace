@@ -23,11 +23,11 @@ public sealed class SettingsWindow : Window
     private readonly Grid _root = new();
     private readonly ScrollViewer _scroll = new() { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false };
     private readonly Dictionary<string, FrameworkElement> _groups = [];
-    private string _section = "General";
+    private string _section = "Your setup";
 
     private static readonly (string Title, string Icon)[] Sections =
     [
-        ("General", Icons.Settings), ("Scanning", Icons.Search), ("Clean up", Icons.Cleanup), ("Updates", "BsCheck2"),
+        ("Your setup", Icons.Folder), ("General", Icons.Settings), ("Scanning", Icons.Search), ("Clean up", Icons.Cleanup), ("Updates", "BsCheck2"),
         ("Appearance", Icons.DarkMode), ("Saved scans", "BsClockHistory"), ("Privacy", "BsLock"),
     ];
 
@@ -144,6 +144,7 @@ public sealed class SettingsWindow : Window
             _groups[key] = group;
             col.Children.Add(group);
         }
+        add(left, "Your setup", YourSetup());
         add(left, "General", General());
         add(left, "Scanning", Scanning());
         add(left, "Saved scans", SavedScans());
@@ -158,9 +159,62 @@ public sealed class SettingsWindow : Window
     }
 
     private FrameworkElement General() => Group("General",
-        Row("Your setup", SetupSummary(), Rd.SecondaryButton("Change…", ChangeSetup)),
         Row("Show free space in the notification area", "The free space and the last scan, one click away.",
             Switch(_settings.ShowTray, on => { _settings.ShowTray = on; Save(); })));
+
+    private static readonly int[] ActiveChoices = [7, 14, 30];
+    private static readonly int[] OldChoices = [90, 180, 365];
+
+    /// <summary>
+    /// Who this PC is for and where the code is: the onboarding answers, editable here — the
+    /// persona, the folders Developer lists first on every scan, and what "working on it" and
+    /// "old" mean.
+    /// </summary>
+    private FrameworkElement YourSetup()
+    {
+        var folders = new StackPanel();
+        if (_settings.CodeFolders.Count == 0)
+            folders.Children.Add(Rd.Text("None picked — Developer guesses them from where your projects cluster.", 12, null, "RdInk3", wrap: true));
+        foreach (var folder in _settings.CodeFolders.ToList())
+        {
+            var row = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
+            var remove = Rd.IconButton(Icons.Cancel, $"Remove {folder}", () => { _settings.CodeFolders.Remove(folder); Save(); }, 22);
+            DockPanel.SetDock(remove, Dock.Right);
+            row.Children.Add(remove);
+            var icon = Ui.Glyph(Icons.Folder, 13, Ui.Brush("AppAccent"));
+            icon.Margin = new Thickness(0, 0, 8, 0);
+            icon.VerticalAlignment = VerticalAlignment.Center;
+            DockPanel.SetDock(icon, Dock.Left);
+            row.Children.Add(icon);
+            var name = Rd.Figure(CanonicalPath.DisplayPath(folder), 12);
+            name.VerticalAlignment = VerticalAlignment.Center;
+            name.TextTrimming = TextTrimming.CharacterEllipsis;
+            name.ToolTip = folder;
+            row.Children.Add(name);
+            folders.Children.Add(row);
+        }
+        var add = Rd.SecondaryButton("Add folder…", () =>
+        {
+            if (FolderPicker.Pick(new System.Windows.Interop.WindowInteropHelper(this).Handle) is { } picked
+                && !_settings.CodeFolders.Contains(picked, StringComparer.OrdinalIgnoreCase))
+            {
+                _settings.CodeFolders.Add(picked);
+                Save();
+            }
+        });
+        add.HorizontalAlignment = HorizontalAlignment.Left;
+        add.Margin = new Thickness(0, 6, 0, 0);
+        folders.Children.Add(add);
+        return Group("Your setup",
+            Row("What you use this PC for", SetupSummary(), Rd.SecondaryButton("Change…", ChangeSetup)),
+            Row("Where your code lives", "Projects here are listed first on every scan.", folders, stacked: true),
+            Row("Working on it now", "Projects committed to or changed this recently stay out of bulk cleans.",
+                Picker(ActiveChoices.Select(d => $"{d} days").ToArray(), Math.Max(0, Array.IndexOf(ActiveChoices, _settings.ActiveDays)),
+                    i => { _settings.ActiveDays = ActiveChoices[i]; Save(); })),
+            Row("Old projects", "What Clean old ones picks when the Last used filter is off.",
+                Picker(OldChoices.Select(DeveloperBoard.LastUsedTitle).ToArray(), Math.Max(0, Array.IndexOf(OldChoices, _settings.OldAfterDays)),
+                    i => { _settings.OldAfterDays = OldChoices[i]; Save(); })));
+    }
 
     /// <summary>What onboarding chose: roles, then the first tools.</summary>
     private string SetupSummary()
@@ -181,6 +235,7 @@ public sealed class SettingsWindow : Window
         var saved = AppSettings.Load();
         _settings.Roles = saved.Roles;
         _settings.Tools = saved.Tools;
+        _settings.CodeFolders = saved.CodeFolders;
         _settings.Onboarded = saved.Onboarded;
         Rebuild();
     }
@@ -350,6 +405,9 @@ public sealed class SettingsWindow : Window
         _settings.ShowTray = fresh.ShowTray;
         _settings.Roles = fresh.Roles;
         _settings.Tools = fresh.Tools;
+        _settings.CodeFolders = fresh.CodeFolders;
+        _settings.ActiveDays = fresh.ActiveDays;
+        _settings.OldAfterDays = fresh.OldAfterDays;
         _settings.Onboarded = fresh.Onboarded;
         _onTextScale(fresh.TextScale);
         _onAppearance(fresh.Appearance);

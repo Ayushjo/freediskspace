@@ -298,8 +298,8 @@ internal static class ListKit
 
         var edge = new Border
         {
-            Width = 2, HorizontalAlignment = HorizontalAlignment.Left,
-            Background = selected ? Ui.Brush("AppAccent") : Brushes.Transparent,
+            Width = staged ? 3 : 2, HorizontalAlignment = HorizontalAlignment.Left,
+            Background = selected || staged ? Ui.Brush("AppAccent") : Brushes.Transparent,
         };
         var layers = new Grid();
         layers.Children.Add(grid);
@@ -307,17 +307,18 @@ internal static class ListKit
         var host = new Border
         {
             Height = columns.RowHeight, Child = layers, Cursor = Cursors.Hand,
-            Background = selected ? Ui.Brush("RdAccentWash") : Brushes.Transparent,
+            Background = staged ? Rd.InBasketFill : selected ? Ui.Brush("RdAccentWash") : Brushes.Transparent,
             BorderBrush = Ui.Brush("RdLine"), BorderThickness = new Thickness(0, 0, 0, 1),
         };
-        host.MouseEnter += (_, _) => { if (!selected) host.Background = Ui.Brush("RdHover"); };
-        host.MouseLeave += (_, _) => { if (!selected) host.Background = Brushes.Transparent; };
+        Brush rest = host.Background;
+        host.MouseEnter += (_, _) => { if (staged) host.Background = Rd.InBasketHover; else if (!selected) host.Background = Ui.Brush("RdHover"); };
+        host.MouseLeave += (_, _) => host.Background = rest;
         host.MouseLeftButtonDown += (_, e) =>
         {
             if (e.ClickCount == 2 && open is not null) open();
             else select();
         };
-        System.Windows.Automation.AutomationProperties.SetName(host, $"{name}, {ByteFormat.Format(bytes)}, changed {changed}");
+        System.Windows.Automation.AutomationProperties.SetName(host, $"{name}, {ByteFormat.Format(bytes)}, changed {changed}{(staged ? ", in the basket" : "")}");
         // An arrow-key move rebuilds the list; the new selected row scrolls into view once.
         if (selected && RevealSelection)
             host.Loaded += (_, _) =>
@@ -362,21 +363,7 @@ internal static class ListKit
             kept.ToolTip = "Windows or your account needs this, so it can't go in the basket";
             return kept;
         }
-        if (staged)
-        {
-            var inBasket = new StackPanel { Orientation = Orientation.Horizontal };
-            if (columns.ShowFree)
-            {
-                var t = Rd.Text("In basket", 12, null, "RdAccentDeep");
-                t.Margin = new Thickness(0, 0, 6, 0);
-                inBasket.Children.Add(t);
-            }
-            var check = Ui.Glyph("BsCheckLg", 11, Ui.Brush("AppAccent"));
-            check.Width = 26;
-            inBasket.Children.Add(check);
-            System.Windows.Automation.AutomationProperties.SetName(inBasket, "In the basket");
-            return inBasket;
-        }
+        if (staged) return new Border { Width = 26 };   // the violet row says it; no button to press twice
         var row = new StackPanel { Orientation = Orientation.Horizontal, Background = Brushes.Transparent, Cursor = Cursors.Hand };
         if (selected && columns.ShowFree)
         {

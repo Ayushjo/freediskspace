@@ -1,6 +1,7 @@
 """Dusty, the freedisk.space mascot. Generates every pose from one set of shapes.
 
     python3 dusty.py          -> svg/*.svg + parts.json (used by index.html)
+                                 + dusty.avatar.json (used by dusty-avatar.js / dusty-lab.html)
 """
 import json, math, os, random
 
@@ -283,6 +284,18 @@ POSES = {
     "small":   dict(small=True),
 }
 
+def step(pose, hold=2200, ms=320, ease="smooth"): return dict(pose=pose, holdMs=hold, transitionMs=ms, transition=ease)
+BLINK = dict(enabled=True, initialDelayMs=1600, minIntervalMs=2200, maxIntervalMs=5400, durationMs=130)
+# Sequences of poses for dusty.avatar.json; dusty-lab.html edits these.
+ANIMATIONS = {
+    "idle":    dict(playbackMode="loop", steps=[step("hello", 4000)], blink=BLINK),
+    "proud":   dict(playbackMode="loop", steps=[step("hello", 1800), step("proud", 2300, 260, "spring"), step("happy", 2300)], blink=BLINK),
+    "cleanup": dict(playbackMode="once", steps=[step("dusty", 1600), step("shake", 900, 180, "snappy"), step("happy", 1600, 260, "spring"), step("proud", 2400)], blink=BLINK),
+    "curious": dict(playbackMode="loop", steps=[step("hello", 2400), step("curious", 2600, 380)], blink=BLINK),
+    "doze":    dict(playbackMode="pingPong", steps=[step("hello", 2400), step("sleepy", 3600, 900)], blink=BLINK),
+    "oops":    dict(playbackMode="once", steps=[step("hello", 900), step("oops", 2200, 160, "snappy"), step("hello", 2000, 500)], blink=BLINK),
+}
+
 if __name__ == "__main__":
     os.makedirs("svg", exist_ok=True)
     parts = {}
@@ -294,4 +307,12 @@ if __name__ == "__main__":
     peek = dusty(uid="peek", face="dot", look=(0, 2.5), ears=("up", "flopR"))
     parts["peek"] = peek
     json.dump(parts, open("parts.json", "w"))
-    print("wrote", len(parts), "poses")
+    states = {k: v.get("state", "clean") for k, v in POSES.items()} | {"peek": "clean"}
+    for a in ANIMATIONS.values():
+        assert all(s["pose"] in parts for s in a["steps"]), a
+    avatar = dict(schema="freedisk/dusty-avatar", schemaVersion=1, name="Dusty", viewBox="0 0 240 240", ink=INK,
+                  palettes=dict(clean=CLEAN, dusty=DUSTY),
+                  poses={k: dict(svg=v, palette=states[k], blinks='class="eye"' in v) for k, v in parts.items()},
+                  poseOrder=list(parts), animations=ANIMATIONS, animationOrder=list(ANIMATIONS))
+    json.dump(avatar, open("dusty.avatar.json", "w"))
+    print("wrote", len(parts), "poses,", len(ANIMATIONS), "animations")

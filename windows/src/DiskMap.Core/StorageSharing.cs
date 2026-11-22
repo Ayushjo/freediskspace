@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using DiskMap.Core.Native;
 
@@ -162,88 +163,129 @@ public static class StorageSharing
     /// a staged folder's measured bytes should equal what its tree
     /// subtree showed. A directory it can't list flags the profile
     /// incomplete rather than shrinking the figure quietly.
+    /// That per-file open costs ~0.2 ms (antivirus included) and a
+    /// node_modules holds hundreds of thousands, so helper threads —
+    /// shared by every walk — take folders off the same stack.
     /// </summary>
-    private static unsafe void Walk(string directory, uint rootVolume, Profile profile)
+    private static void Walk(string directory, uint rootVolume, Profile profile)
     {
-        var buffer = new byte[128 * 1024];
-        var pending = new Stack<string>();
+        var pending = new ConcurrentStack<string>();
         pending.Push(directory);
-        while (pending.Count > 0)
-        {
-            string current = pending.Pop();
-            using var handle = Win32.CreateFileW(
-                Win32.ExtendedPath(current),
-                Win32.FILE_LIST_DIRECTORY | Win32.FILE_READ_ATTRIBUTES | Win32.SYNCHRONIZE,
-                Win32.FILE_SHARE_READ | Win32.FILE_SHARE_WRITE | Win32.FILE_SHARE_DELETE,
-                IntPtr.Zero, Win32.OPEN_EXISTING,
-                Win32.FILE_FLAG_BACKUP_SEMANTICS | Win32.FILE_SYNCHRONOUS_IO_NONALERT,
-                IntPtr.Zero);
-            if (handle.IsInvalid) { profile.IsComplete = false; continue; }
+        int unfinished = 1;   // folders pushed and not yet listed
 
-            bool restart = true;
-            fixed (byte* p = buffer)
+        void Work()
+        {
+            var buffer = new byte[128 * 1024];
+            var spin = new SpinWait();
+            while (Volatile.Read(ref unfinished) > 0)
             {
+                if (!pending.TryPop(out var current)) { spin.SpinOnce(); continue; }
+                try { List(current, buffer); }
+                finally { Interlocked.Decrement(ref unfinished); }
+            }
+        }
+
+        void List(string current, byte[] buffer)
+        {
+            var found = new List<FileFacts>();
+            bool complete = ListFolder(current, rootVolume, buffer, found, child =>
+            {
+                Interlocked.Increment(ref unfinished);
+                pending.Push(child);
+            });
+            lock (profile)
+            {
+                foreach (var facts in found) profile.Add(facts);
+                if (!complete) profile.IsComplete = false;
+            }
+            if (!pending.IsEmpty && WalkHelpers.Wait(0))
+                Task.Factory.StartNew(() => { try { Work(); } finally { WalkHelpers.Release(); } },
+                    CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        }
+
+        Work();
+    }
+
+    // Dedicated threads, not the pool's: a staging wave must not starve the app's own tasks.
+    private static readonly SemaphoreSlim WalkHelpers = new(Math.Clamp(Environment.ProcessorCount / 2, 1, 8));
+
+    /// <summary>One folder: files into <paramref name="found"/>, subfolders to <paramref name="push"/>. False when part of it couldn't be read.</summary>
+    private static unsafe bool ListFolder(string current, uint rootVolume, byte[] buffer, List<FileFacts> found, Action<string> push)
+    {
+        using var handle = Win32.CreateFileW(
+            Win32.ExtendedPath(current),
+            Win32.FILE_LIST_DIRECTORY | Win32.FILE_READ_ATTRIBUTES | Win32.SYNCHRONIZE,
+            Win32.FILE_SHARE_READ | Win32.FILE_SHARE_WRITE | Win32.FILE_SHARE_DELETE,
+            IntPtr.Zero, Win32.OPEN_EXISTING,
+            Win32.FILE_FLAG_BACKUP_SEMANTICS | Win32.FILE_SYNCHRONOUS_IO_NONALERT,
+            IntPtr.Zero);
+        if (handle.IsInvalid) return false;
+
+        bool complete = true;
+        bool restart = true;
+        fixed (byte* p = buffer)
+        {
+            while (true)
+            {
+                int status = Win32.NtQueryDirectoryFile(
+                    handle, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, out _,
+                    p, buffer.Length, Win32.FileIdBothDirectoryInformation,
+                    ReturnSingleEntry: false, IntPtr.Zero, RestartScan: restart);
+                restart = false;
+                if (status == Win32.STATUS_NO_MORE_FILES || status == Win32.STATUS_NO_SUCH_FILE
+                    || status == Win32.STATUS_OBJECT_NAME_NOT_FOUND)
+                {
+                    break;
+                }
+                if (status != Win32.STATUS_SUCCESS)
+                {
+                    complete = false;
+                    break;
+                }
+                int offset = 0;
                 while (true)
                 {
-                    int status = Win32.NtQueryDirectoryFile(
-                        handle, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, out _,
-                        p, buffer.Length, Win32.FileIdBothDirectoryInformation,
-                        ReturnSingleEntry: false, IntPtr.Zero, RestartScan: restart);
-                    restart = false;
-                    if (status == Win32.STATUS_NO_MORE_FILES || status == Win32.STATUS_NO_SUCH_FILE
-                        || status == Win32.STATUS_OBJECT_NAME_NOT_FOUND)
-                    {
-                        break;
-                    }
-                    if (status != Win32.STATUS_SUCCESS)
-                    {
-                        profile.IsComplete = false;
-                        break;
-                    }
-                    int offset = 0;
-                    while (true)
-                    {
-                        var rec = new ReadOnlySpan<byte>(p + offset, buffer.Length - offset);
-                        int next = BinaryPrimitives.ReadInt32LittleEndian(rec);
-                        int nameLen = BinaryPrimitives.ReadInt32LittleEndian(rec[60..]);
-                        if (nameLen < 0 || 104 + nameLen > rec.Length) { profile.IsComplete = false; break; }
-                        string name = System.Text.Encoding.Unicode.GetString(rec.Slice(104, nameLen));
-                        uint attrs = BinaryPrimitives.ReadUInt32LittleEndian(rec[56..]);
-                        long allocated = BinaryPrimitives.ReadInt64LittleEndian(rec[48..]);
-                        if (next <= 0) { offset = -1; }
-                        else offset += next;
+                    var rec = new ReadOnlySpan<byte>(p + offset, buffer.Length - offset);
+                    int next = BinaryPrimitives.ReadInt32LittleEndian(rec);
+                    int nameLen = BinaryPrimitives.ReadInt32LittleEndian(rec[60..]);
+                    if (nameLen < 0 || 104 + nameLen > rec.Length) { complete = false; break; }
+                    string name = System.Text.Encoding.Unicode.GetString(rec.Slice(104, nameLen));
+                    uint attrs = BinaryPrimitives.ReadUInt32LittleEndian(rec[56..]);
+                    long allocated = BinaryPrimitives.ReadInt64LittleEndian(rec[48..]);
+                    if (next <= 0) { offset = -1; }
+                    else offset += next;
 
-                        if (name is not ("." or ".."))
+                    if (name is not ("." or ".."))
+                    {
+                        var decision = ScanEngine.DecideFromAttributes(attrs, 0, allocated);
+                        bool isDir = (attrs & Win32.FILE_ATTRIBUTE_DIRECTORY) != 0;
+                        if (decision.Include)
                         {
-                            var decision = ScanEngine.DecideFromAttributes(attrs, 0, allocated);
-                            bool isDir = (attrs & Win32.FILE_ATTRIBUTE_DIRECTORY) != 0;
-                            if (decision.Include)
+                            string child = current + '\\' + name;
+                            if (isDir)
                             {
-                                string child = current + '\\' + name;
-                                if (isDir)
-                                {
-                                    if (!decision.SkipDescendants) pending.Push(child);
-                                }
-                                else if (decision.NotDownloaded)
-                                {
-                                    // A cloud placeholder frees what it
-                                    // actually holds locally — usually 0.
-                                    profile.Add(new FileFacts(rootVolume, 0, false, 1, allocated));
-                                }
-                                else if (FactsOf(child) is { } facts)
-                                {
-                                    // A mount point inside the staged
-                                    // folder is not part of this reclaim.
-                                    if (facts.Volume == rootVolume) profile.Add(facts);
-                                    else profile.IsComplete = false;
-                                }
-                                else profile.IsComplete = false;
+                                if (!decision.SkipDescendants) push(child);
                             }
+                            else if (decision.NotDownloaded)
+                            {
+                                // A cloud placeholder frees what it
+                                // actually holds locally — usually 0.
+                                found.Add(new FileFacts(rootVolume, 0, false, 1, allocated));
+                            }
+                            else if (FactsOf(child) is { } facts)
+                            {
+                                // A mount point inside the staged
+                                // folder is not part of this reclaim.
+                                if (facts.Volume == rootVolume) found.Add(facts);
+                                else complete = false;
+                            }
+                            else complete = false;
                         }
-                        if (offset < 0) break;
                     }
+                    if (offset < 0) break;
                 }
             }
         }
+        return complete;
     }
 }

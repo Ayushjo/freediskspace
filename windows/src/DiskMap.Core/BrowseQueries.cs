@@ -85,6 +85,25 @@ public static class AgeMap
         });
     }
 
+    /// <summary>Newest file date anywhere under <paramref name="id"/> (itself, for a file). 0 = no dates.</summary>
+    public static int NewestDay(FileTree tree, int id)
+    {
+        if (id < 0 || id >= tree.Count) return 0;
+        if (!tree.IsDirectory[id]) return tree.ModifiedDay[id];
+        int newest = 0;
+        var stack = new Stack<int>();
+        stack.Push(id);
+        while (stack.Count > 0)
+        {
+            for (int child = tree.FirstChild[stack.Pop()]; child != -1; child = tree.NextSibling[child])
+            {
+                if (tree.IsDirectory[child]) stack.Push(child);
+                else newest = Math.Max(newest, tree.ModifiedDay[child]);
+            }
+        }
+        return newest;
+    }
+
     public static Dictionary<AgeBucket, long> BucketSizes(FileTree tree, long[] totals, int today)
     {
         var sizes = new Dictionary<AgeBucket, long>();

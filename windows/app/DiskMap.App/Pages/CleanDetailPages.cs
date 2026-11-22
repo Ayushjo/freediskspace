@@ -246,7 +246,14 @@ public abstract class CleanDetailPage : UserControl
     private ContextMenu RowMenu(CleanDetailRow row)
     {
         var menu = new ContextMenu();
-        if (row.Requests.Count > 0)
+        var staged = StagedSet();
+        if (CleanDetail.InBasket(row, p => staged.Contains(Normalize(p))))
+        {
+            var remove = new MenuItem { Header = "Take Out of the Basket" };
+            remove.Click += (_, _) => Model.UnstagePaths(row.StagePaths);
+            menu.Items.Add(remove);
+        }
+        else if (row.Requests.Count > 0)
         {
             var add = new MenuItem { Header = "Add to basket" };
             add.Click += (_, _) => Add([row]);
@@ -258,14 +265,28 @@ public abstract class CleanDetailPage : UserControl
         return menu;
     }
 
-    /// <summary>"5 shown · 22.9 GB" and the page's bulk add.</summary>
+    /// <summary>
+    /// "5 shown · 22.9 GB", the page's suggested add (what rebuilds, what's likely done with) and
+    /// an add for everything the filters show — pick Videos and that adds only the videos.
+    /// Rows already in the basket are left out of both.
+    /// </summary>
     private FrameworkElement Footer(List<CleanDetailRow> rows)
     {
-        var bulk = CleanDetail.Bulk(rows, BulkFilter);
+        var staged = StagedSet();
+        bool fresh(CleanDetailRow r) => !CleanDetail.InBasket(r, p => staged.Contains(Normalize(p)));
+        var shown = CleanDetail.Bulk(rows, fresh);
+        var suggested = CleanDetail.Bulk(rows, r => fresh(r) && BulkFilter(r));
         var text = ListKit.FooterText((CleanDetail.FooterLine(rows), "RdInk2"));
-        if (bulk.Count == 0) return ListKit.FooterBar(text);
-        long bytes = bulk.Sum(b => b.Bytes);
-        return ListKit.FooterBar(text, Rd.SecondaryButton(BulkTitle(bulk.Count, bytes), () => Add(bulk)));
+        var buttons = new List<FrameworkElement>();
+        if (suggested.Count > 0 && suggested.Count < shown.Count)
+            buttons.Add(Rd.SecondaryButton(BulkTitle(suggested.Count, suggested.Sum(b => b.Bytes)), () => Add(suggested)));
+        if (shown.Count > 0)
+        {
+            var all = Rd.SecondaryButton(CleanDetail.ShownBulkTitle(shown.Count, shown.Sum(b => b.Bytes)), () => Add(shown));
+            all.ToolTip = "Everything the filters above show — you'll see the list first";
+            buttons.Add(all);
+        }
+        return ListKit.FooterBar(text, [.. buttons]);
     }
 
     // ---- Actions ----

@@ -30,6 +30,9 @@ public sealed class CleanUpPage : UserControl
     private readonly HashSet<CleanGroup> _expanded = [];
     private object? _tickedFor;
     private bool _isMoving;
+    /// <summary>"Last used" filter, in days (0 = any time), and each row's newest file date, per catalog.</summary>
+    private int _lastUsed;
+    private readonly Dictionary<string, int> _lastDay = [];
     private Rd.WidthClass _class = Rd.WidthClass.Regular;
 
     public CleanUpPage()
@@ -198,15 +201,30 @@ public sealed class CleanUpPage : UserControl
         if (Ready && !ReferenceEquals(_tickedFor, Model.Reviewables))
         {
             _tickedFor = Model.Reviewables;
+            _lastDay.Clear();
             _ticked.Clear();
             _ticked.UnionWith(DefaultTicks(all, Model.IsStaged, AppSettings.Load().TickRebuilds));
         }
-        _ticked.IntersectWith(all.Select(i => i.Id));
+        if (_lastUsed > 0 && Model.Tree is { } tree)
+        {
+            int today = AgeMap.Today();
+            all = all.Where(i => DeveloperBoard.LastUsedBefore(LastDay(i, tree), today, _lastUsed)).ToList();
+        }
+        _ticked.IntersectWith(all.Select(i => i.Id));   // a hidden row never moves
+        _ticked.ExceptWith(all.Where(i => Model.IsStaged(i.RevealPath)).Select(i => i.Id));   // already in the basket
         double offset = _listScroll.VerticalOffset;
         _listScroll.Content = BuildList(all);
         _listScroll.ScrollToVerticalOffset(offset);
         var picked = all.Where(i => _ticked.Contains(i.Id)).ToList();
         _receiptScroll.Content = BuildReceiptColumn(picked);
+    }
+
+    /// <summary>The newest file anywhere in the row's folders — when it was last used.</summary>
+    private int LastDay(CleanItem item, FileTree tree)
+    {
+        if (!_lastDay.TryGetValue(item.Id, out int day))
+            _lastDay[item.Id] = day = item.Targets.Select(t => AgeMap.NewestDay(tree, t.NodeId)).DefaultIfEmpty(0).Max();
+        return day;
     }
 
     private FrameworkElement BuildList(List<CleanItem> all)
@@ -222,7 +240,9 @@ public sealed class CleanUpPage : UserControl
         }
         else if (all.Count == 0)
         {
-            var none = Rd.Text("Nothing to clean up in this scan. Explore shows everything that takes space.", 13, null, "RdInk2", wrap: true);
+            var none = Rd.Text(_lastUsed > 0
+                    ? $"Nothing here was last used {DeveloperBoard.LastUsedTitle(_lastUsed).ToLowerInvariant()}."
+                    : "Nothing to clean up in this scan. Explore shows everything that takes space.", 13, null, "RdInk2", wrap: true);
             none.Margin = new Thickness(0, 32, 0, 0);
             stack.Children.Add(none);
         }
@@ -240,9 +260,14 @@ public sealed class CleanUpPage : UserControl
     private FrameworkElement Header(List<CleanItem> all)
     {
         var dock = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
-        if (Ready && all.Count > 0)
+        if (Ready)
         {
             var buttons = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Top };
+            var lastUsed = ListKit.Dropdown("Last used", DeveloperBoard.LastUsedChoices, _lastUsed, DeveloperBoard.LastUsedTitle,
+                days => { _lastUsed = days; Rebuild(); });
+            lastUsed.ToolTip = "Only what nothing has touched for a while — the newest file inside each item";
+            lastUsed.Margin = new Thickness(0, 0, 8, 0);
+            buttons.Children.Add(lastUsed);
             buttons.Children.Add(Rd.SecondaryButton("Tick safe only", () =>
             {
                 _ticked.Clear();
@@ -338,11 +363,12 @@ public sealed class CleanUpPage : UserControl
         bool staged = Model.IsStaged(item.RevealPath);
         void toggle()
         {
+            if (staged) return;   // in the basket: the violet row is the tick
             if (!_ticked.Remove(item.Id)) _ticked.Add(item.Id);
             Rebuild();
         }
         var row = new DockPanel { Margin = new Thickness(3, 0, 2, 0) };
-        var box = TickBox(ticked ? TickState.On : TickState.Off, toggle);
+        var box = TickBox(ticked || staged ? TickState.On : TickState.Off, toggle);
         box.Margin = new Thickness(0, 0, 13, 0);
         DockPanel.SetDock(box, Dock.Left);
         row.Children.Add(box);
@@ -353,39 +379,40 @@ public sealed class CleanUpPage : UserControl
         var title = Rd.Text(item.Title, 13, FontWeights.Medium);
         DockPanel.SetDock(title, Dock.Left);
         row.Children.Add(title);
-        if (staged)
-        {
-            var tag = Rd.Tag("In basket", Rd.TagTone.Accent);
-            tag.Margin = new Thickness(13, 0, 0, 0);
-            tag.VerticalAlignment = VerticalAlignment.Center;
-            DockPanel.SetDock(tag, Dock.Right);
-            row.Children.Add(tag);
-        }
         var why = Rd.Text(item.Why, 12, null, "RdInk3");
         why.Margin = new Thickness(13, 0, 0, 0);
         why.TextTrimming = TextTrimming.CharacterEllipsis;
         row.Children.Add(why);
 
         double height = _class switch { Rd.WidthClass.Compact => 40, Rd.WidthClass.Regular => 44, _ => 48 };
+        var layers = new Grid();
+        layers.Children.Add(row);
+        if (staged) layers.Children.Add(Rd.InBasketEdge());
         var host = new Border
         {
-            Height = height, Child = row, Background = Brushes.Transparent, Cursor = Cursors.Hand,
+            Height = height, Child = layers, Cursor = staged ? Cursors.Arrow : Cursors.Hand,
             BorderBrush = Rd.WithOpacity(Ui.Brush("RdLine"), 0.55), BorderThickness = new Thickness(0, 0, 0, 1),
-            ToolTip = item.RevealPath,
+            ToolTip = staged ? $"In the basket — right-click to take it out\n{item.RevealPath}" : item.RevealPath,
         };
-        host.MouseEnter += (_, _) => host.Background = Ui.Brush("RdHover");
-        host.MouseLeave += (_, _) => host.Background = Brushes.Transparent;
+        Brush rest = staged ? Rd.InBasketFill : Brushes.Transparent;
+        host.Background = rest;
+        host.MouseEnter += (_, _) => host.Background = staged ? Rd.InBasketHover : Ui.Brush("RdHover");
+        host.MouseLeave += (_, _) => host.Background = rest;
         host.MouseLeftButtonUp += (_, e) => { if (!e.Handled) toggle(); };
         var menu = new ContextMenu();
-        var tick = new MenuItem { Header = ticked ? "Untick" : "Tick" };
-        tick.Click += (_, _) => toggle();
+        var tick = new MenuItem { Header = staged ? "Take Out of the Basket" : ticked ? "Untick" : "Tick" };
+        tick.Click += (_, _) =>
+        {
+            if (staged) Model.UnstagePaths(item.Targets.Select(t => t.Path).Append(item.RevealPath));
+            else toggle();
+        };
         var reveal = new MenuItem { Header = "Show in File Explorer" };
         reveal.Click += (_, _) => Explorer.Reveal(item.RevealPath);
         menu.Items.Add(tick);
         menu.Items.Add(reveal);
         host.ContextMenu = menu;
         System.Windows.Automation.AutomationProperties.SetName(host,
-            $"{item.Title}, {ByteFormat.Format(item.Bytes)}, {(ticked ? "ticked" : "not ticked")}");
+            $"{item.Title}, {ByteFormat.Format(item.Bytes)}, {(staged ? "in the basket" : ticked ? "ticked" : "not ticked")}");
         return host;
     }
 

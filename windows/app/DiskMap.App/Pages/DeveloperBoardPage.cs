@@ -59,6 +59,12 @@ public sealed class DeveloperBoardPage : UserControl
     /// <summary>Tools outside the profile shown anyway, from "Also found on this PC".</summary>
     private readonly HashSet<DeveloperEcosystem> _alsoShown = [];
     private Rd.WidthClass _class = Rd.WidthClass.Regular;
+    /// <summary>"Last used" filter, in days (0 = any time).</summary>
+    private int _lastUsed;
+    /// <summary>Basket paths, read once per rebuild; a row is in the basket when it or a parent is.</summary>
+    private HashSet<string> _staged = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Each project's last source change, for its items' "Last used".</summary>
+    private Dictionary<string, int> _projectDay = [];
     private object? _scanFor;
     private double _listOffset;
     private Tab _offsetTab;
@@ -78,6 +84,8 @@ public sealed class DeveloperBoardPage : UserControl
     public DeveloperBoardPage()
     {
         _profile = UserProfiles.EcosystemsFor(_setup.Roles, _setup.Tools);
+        // Told where their code lives: open on the projects there.
+        if (_setup.CodeFolders.Count > 0) _tab = Tab.Projects;
         Background = Ui.Brush("RdPage");
         Content = _layout;
         ModelEvents.WhileLoaded(this, Rebuild);
@@ -212,6 +220,7 @@ public sealed class DeveloperBoardPage : UserControl
         if (_listScroll is not null && _offsetTab == _tab) _listOffset = _listScroll.VerticalOffset;
         else _listOffset = 0;
         _class = Rd.ClassFor(WindowWidth);
+        _staged = Model.StagedItems.Select(s => s.Path.TrimEnd('\\')).ToHashSet(StringComparer.OrdinalIgnoreCase);
         _layout.Children.Clear();
         _layout.ColumnDefinitions.Clear();
         _tableHost.Content = null;
@@ -262,6 +271,7 @@ public sealed class DeveloperBoardPage : UserControl
     private void RenderBody(FileTree tree, string root, DeveloperCatalogResult catalog)
     {
         _listScroll = null;
+        _projectDay = catalog.Projects.GroupBy(p => p.Key).ToDictionary(g => g.Key, g => g.First().LastUsedDay);
         _tableHost.Content = _tab switch
         {
             Tab.WhereItLives => WhereList(tree, root, catalog),
@@ -518,6 +528,13 @@ public sealed class DeveloperBoardPage : UserControl
         }
         if (_tab is Tab.Projects or Tab.AllItems or Tab.Opportunities)
         {
+            var lastUsed = ListKit.Dropdown("Last used", DeveloperBoard.LastUsedChoices, _lastUsed, DeveloperBoard.LastUsedTitle,
+                days => { _lastUsed = days; Rebuild(); });
+            lastUsed.HorizontalAlignment = HorizontalAlignment.Right;
+            lastUsed.Margin = new Thickness(8, 0, 0, 0);
+            lastUsed.ToolTip = "Projects: the newer of their last git activity (clone, commit, checkout) and their last source edit. Everything else: the newest file in it.";
+            Grid.SetColumn(lastUsed, 2);
+            grid.Children.Add(lastUsed);
             var field = SearchField("Filter by name, path or tool", _class == Rd.WidthClass.Compact ? 180 : 260);
             field.Margin = new Thickness(8, 0, 0, 0);
             Grid.SetColumn(field, 3);
@@ -712,7 +729,8 @@ public sealed class DeveloperBoardPage : UserControl
             _selection == new Selection.Folder(folder.Id),
             () => Select(new Selection.Folder(folder.Id)),
             () => { _whereFolder = folder.Id; _selection = null; Rebuild(); },
-            Model.PathOf(folder.Id), canGo ? () => StageFolder(folder, catalog) : null);
+            Model.PathOf(folder.Id), canGo ? () => StageFolder(folder, catalog) : null,
+            removable.Select(i => i.AbsolutePath).ToList());
     }
 
     private void StageFolder(DeveloperFolders.Folder folder, DeveloperCatalogResult catalog)
@@ -726,10 +744,12 @@ public sealed class DeveloperBoardPage : UserControl
     private List<DeveloperProject> FilteredProjects(DeveloperCatalogResult catalog)
     {
         string q = _query.Trim();
-        if (q.Length == 0) return catalog.Projects;
-        return catalog.Projects.Where(p => p.Name.Contains(q, StringComparison.OrdinalIgnoreCase)
-            || p.DisplayPath.Contains(q, StringComparison.OrdinalIgnoreCase)
-            || p.Ecosystem.Title().Contains(q, StringComparison.OrdinalIgnoreCase)).ToList();
+        int today = AgeMap.Today();
+        return catalog.Projects.Where(p => DeveloperBoard.LastUsedBefore(p.LastUsedDay, today, _lastUsed)
+            && (q.Length == 0
+                || p.Name.Contains(q, StringComparison.OrdinalIgnoreCase)
+                || p.DisplayPath.Contains(q, StringComparison.OrdinalIgnoreCase)
+                || p.Ecosystem.Title().Contains(q, StringComparison.OrdinalIgnoreCase))).ToList();
     }
 
     private static List<DeveloperItem> ProjectItems(DeveloperProject project, DeveloperCatalogResult catalog)
@@ -738,45 +758,115 @@ public sealed class DeveloperBoardPage : UserControl
         return catalog.Items.Where(i => nodes.Contains(i.NodeID)).OrderByDescending(i => i.Bytes).ToList();
     }
 
+    /// <summary>What a project's Clean adds: everything in it that can go.</summary>
+    private static List<DeveloperItem> ProjectStageable(DeveloperProject project, DeveloperCatalogResult catalog) =>
+        ProjectItems(project, catalog).Where(i => CanStage(i) && i.Reclaimability != DeveloperReclaimability.Keep).ToList();
+
     /// <summary>Everything in a project that can go, in one confirmed add.</summary>
     private void StageProject(DeveloperProject project, DeveloperCatalogResult catalog) =>
-        Stage(ProjectItems(project, catalog).Where(i => i.Reclaimability != DeveloperReclaimability.Keep).ToList(), confirm: true);
+        Stage(ProjectStageable(project, catalog), confirm: true);
+
+    /// <summary>The folders picked in Your setup, else where this scan's projects cluster (guessed = true).</summary>
+    private (List<string> Folders, bool Guessed) CodeFolders(DeveloperCatalogResult catalog) =>
+        _setup.CodeFolders.Count > 0
+            ? (_setup.CodeFolders, false)
+            : (DeveloperBoard.GuessCodeFolders(catalog.Projects.Select(p => p.AbsolutePath)), true);
 
     private FrameworkElement ProjectsList(DeveloperCatalogResult catalog)
     {
-        var projects = FilteredProjects(catalog).OrderByDescending(p => p.ReclaimableBytes).Take(60).ToList();
+        int today = AgeMap.Today();
+        // Old first: what you're working on now sinks to the bottom of its card.
+        var projects = FilteredProjects(catalog)
+            .OrderBy(p => DeveloperBoard.IsActive(p.LastUsedDay, today, _setup.ActiveDays))
+            .ThenByDescending(p => p.ReclaimableBytes).ToList();
         if (projects.Count == 0)
-            return EmptyState("folder", "No projects found",
-                "No project folders with node_modules, bin and obj, .venv or build output in this scan.", dusty: true);
+            return _lastUsed > 0
+                ? EmptyState("folder", "Nothing that old", $"No project was last changed {DeveloperBoard.LastUsedTitle(_lastUsed).ToLowerInvariant()}.")
+                : EmptyState("folder", "No projects found",
+                    "No project folders with node_modules, bin and obj, .venv or build output in this scan.", dusty: true);
+        var (folders, guessed) = CodeFolders(catalog);
+        var mine = projects.Where(p => DeveloperBoard.IsUnder(p.AbsolutePath, folders)).ToList();
+        var rest = projects.Where(p => !mine.Contains(p)).ToList();
+        var stack = new StackPanel();
+        if (mine.Count > 0)
+        {
+            string where = string.Join(", ", folders.Select(f => CanonicalPath.DisplayPath(f)));
+            stack.Children.Add(ProjectsCard(guessed ? "Where your code seems to live" : "Your code folders",
+                guessed ? $"{where} · guessed — set yours in Settings → Your setup" : where, mine, catalog, today));
+        }
+        if (rest.Count > 0)
+        {
+            var card = ProjectsCard(mine.Count > 0 ? "Other projects" : "Projects",
+                $"{DeveloperBoard.CountLabel(rest.Count, "project")} · {ShellFormat.HeroBytes(rest.Sum(p => p.ReclaimableBytes))} removable",
+                rest, catalog, today);
+            if (stack.Children.Count > 0) card.Margin = new Thickness(0, _class.Gap(), 0, 0);
+            stack.Children.Add(card);
+        }
+        return Scroll(stack);
+    }
+
+    /// <summary>
+    /// One card of projects. "Clean old ones" adds every project in it that passes the Last used
+    /// filter (untouched 6+ months when it's off) — never one changed in the last two weeks.
+    /// </summary>
+    private FrameworkElement ProjectsCard(string title, string detail, List<DeveloperProject> projects,
+        DeveloperCatalogResult catalog, int today)
+    {
+        int olderThan = _lastUsed > 0 ? _lastUsed : _setup.OldAfterDays;
+        var old = projects.Where(p => !DeveloperBoard.IsActive(p.LastUsedDay, today, _setup.ActiveDays)
+                && DeveloperBoard.LastUsedBefore(p.LastUsedDay, today, olderThan))
+            .SelectMany(p => ProjectStageable(p, catalog))
+            .Where(i => !InBasket(i.AbsolutePath)).ToList();
+        FrameworkElement? actions = null;
+        if (old.Count > 0)
+        {
+            var button = Rd.SecondaryButton($"Clean old ones · {ShellFormat.HeroBytes(old.Sum(i => i.Bytes))}", () => Stage(old, confirm: true));
+            button.ToolTip = $"Projects last changed {DeveloperBoard.LastUsedTitle(olderThan).ToLowerInvariant()} — you'll see the list first. Active projects are left alone.";
+            actions = button;
+        }
         var card = new StackPanel();
-        card.Children.Add(SectionHeader("Projects",
-            $"{DeveloperBoard.CountLabel(catalog.Projects.Count, "project")} · {ShellFormat.HeroBytes(catalog.Projects.Sum(p => p.ReclaimableBytes))} removable",
-            _class == Rd.WidthClass.Compact ? "Removable" : "Places · removable", null));
-        foreach (var project in projects)
+        card.Children.Add(SectionHeader(title, detail, _class == Rd.WidthClass.Compact ? "Removable" : "Places · removable", actions));
+        foreach (var project in projects.Take(60))
         {
             var items = ProjectItems(project, catalog);
             bool canGo = project.ReclaimableBytes > 0;
+            bool active = DeveloperBoard.IsActive(project.LastUsedDay, today, _setup.ActiveDays);
             var p = project;
             card.Children.Add(DevRow(Icons.Folder, project.Name, project.DisplayPath,
                 items.Take(_class == Rd.WidthClass.Compact ? 2 : 3)
                     .Select(i => (i.DisplayName, (long?)i.Bytes, i.Reclaimability == DeveloperReclaimability.Reclaimable)).ToList(),
-                DeveloperBoard.GitShort(project.Git),
+                active ? "Working on it now · " + DeveloperBoard.GitShort(project.Git) : DeveloperBoard.GitShort(project.Git),
                 DeveloperBoard.CountLabel(project.ItemCount, "place"),
-                ShellFormat.HeroBytes(canGo ? project.ReclaimableBytes : project.Bytes), canGo,
-                "changed " + DeveloperBoard.LastChange(project.LastSourceDay, AgeMap.Today()).ToLowerInvariant(),
+                ShellFormat.HeroBytes(canGo ? project.ReclaimableBytes : project.Bytes), canGo && !active,
+                project.LastUsedWhat + " " + DeveloperBoard.LastChange(project.LastUsedDay, today).ToLowerInvariant(),
                 canGo ? ("Clean", () => StageProject(p, catalog)) : null,
                 _selection == new Selection.Project(project.Id),
                 () => Select(new Selection.Project(p.Id)), null,
-                project.AbsolutePath, canGo ? () => StageProject(p, catalog) : null));
+                project.AbsolutePath, canGo ? () => StageProject(p, catalog) : null,
+                ProjectStageable(project, catalog).Select(i => i.AbsolutePath).ToList()));
         }
-        return Scroll(Rd.Card(card));
+        if (projects.Count > 60)
+            card.Children.Add(MoreRow($"+ {DeveloperBoard.CountLabel(projects.Count - 60, "smaller project")}", projects.Skip(60).Sum(x => x.ReclaimableBytes)));
+        return Rd.Card(card);
     }
 
     // ---- Items ----
 
+    /// <summary>When an item was last used: its project's last source change, else the newest file the scan saw.</summary>
+    private int ItemDay(DeveloperItem item) =>
+        item.ProjectKey is { } key && _projectDay.TryGetValue(key, out int day) && day > 0
+            ? day
+            : Model.Tree is { } tree && item.NodeID < tree.Count ? AgeMap.NewestDay(tree, item.NodeID) : item.ModifiedDay;
+
+    /// <summary>In a project changed in the last two weeks — bulk cleans leave it alone.</summary>
+    private bool IsActiveItem(DeveloperItem item) =>
+        item.ProjectKey is { } key && _projectDay.TryGetValue(key, out int day) && DeveloperBoard.IsActive(day, AgeMap.Today(), _setup.ActiveDays);
+
     private List<DeveloperItem> Filter(IEnumerable<DeveloperItem> items)
     {
         string q = _query.Trim();
+        int today = AgeMap.Today();
+        if (_lastUsed > 0) items = items.Where(i => DeveloperBoard.LastUsedBefore(ItemDay(i), today, _lastUsed));
         if (q.Length == 0) return items.ToList();
         return items.Where(i => i.DisplayName.Contains(q, StringComparison.OrdinalIgnoreCase)
             || i.DisplayPath.Contains(q, StringComparison.OrdinalIgnoreCase)
@@ -787,14 +877,18 @@ public sealed class DeveloperBoardPage : UserControl
     {
         IEnumerable<DeveloperItem> list = catalog.Items;
         if (_ecosystemFilter is { } eco) list = list.Where(i => i.Ecosystem == eco);
-        return Filter(list);
+        // Items in your code folders come first, biggest first within each.
+        var (folders, _) = CodeFolders(catalog);
+        return Filter(list).OrderBy(i => !DeveloperBoard.IsUnder(i.AbsolutePath, folders)).ToList();
     }
 
     private FrameworkElement ItemsList(List<DeveloperItem> items, string title, DeveloperCatalogResult catalog)
     {
         var shown = items.Take(120).ToList();
         if (shown.Count == 0) return EmptyState("shippingbox", "Nothing here", "No matching developer items.");
-        var removable = shown.Where(i => CanStage(i) && i.Reclaimability == DeveloperReclaimability.Reclaimable).ToList();
+        // Every item the filters match, not just the 120 drawn.
+        var removable = items.Where(i => CanStage(i) && i.Reclaimability == DeveloperReclaimability.Reclaimable
+            && !IsActiveItem(i) && !InBasket(i.AbsolutePath)).ToList();
         var actions = new StackPanel { Orientation = Orientation.Horizontal };
         if (removable.Count > 0)
             actions.Children.Add(Rd.SecondaryButton($"Clean what rebuilds · {ShellFormat.HeroBytes(removable.Sum(i => i.Bytes))}",
@@ -829,7 +923,8 @@ public sealed class DeveloperBoardPage : UserControl
             ShellFormat.HeroBytes(item.Bytes), rebuilds && CanStage(item), ItemSubline(item), action,
             _selection == new Selection.Item(item.Id),
             () => Select(new Selection.Item(item.Id)), null,
-            item.AbsolutePath, CanStage(item) ? () => Stage([item], confirm: false) : null);
+            item.AbsolutePath, CanStage(item) ? () => Stage([item], confirm: false) : null,
+            CanStage(item) ? [item.AbsolutePath] : null);
     }
 
     // ---- By tool (former Regenerable Data) ----
@@ -871,7 +966,7 @@ public sealed class DeveloperBoardPage : UserControl
                     ShellFormat.HeroBytes(ToolSize(id)), true, "rebuilds",
                     ("Clean", () => StageTools([id], category, confirm: false)),
                     _selection == new Selection.Tool(id), () => Select(new Selection.Tool(id)), null,
-                    path, () => StageTools([id], category, confirm: false)));
+                    path, () => StageTools([id], category, confirm: false), [path]));
             }
             if (group.Count > 30)
                 card.Children.Add(MoreRow($"+ {DeveloperBoard.CountLabel(group.Count - 30, "smaller folder")}",
@@ -1103,12 +1198,12 @@ public sealed class DeveloperBoardPage : UserControl
         bool canGo = project.ReclaimableBytes > 0;
         return Panel("Selected project", project.Name, project.DisplayPath,
             canGo ? project.ReclaimableBytes : project.Bytes, canGo ? project.Bytes : null,
-            [("Last changed", DeveloperBoard.LastChange(project.LastSourceDay, AgeMap.Today())),
+            [("Last used", $"{DeveloperBoard.LastChange(project.LastUsedDay, AgeMap.Today())} · {project.LastUsedWhat}"),
              ("Lockfile", project.Lockfile ?? "none found"),
              ("Git", project.Git.Title)],
             removable.Take(6).Select(i => (i.DisplayName, i.Lockfile ?? DeveloperBoard.RebuildShort(i.RebuildCost), i.Bytes)).ToList(),
             removable.Count == 0 ? null : DeveloperBoard.ReinstallLine(removable),
-            DeveloperBoard.FolderNote(DeveloperBoard.IsStale(project.LastSourceDay, AgeMap.Today())),
+            DeveloperBoard.FolderNote(DeveloperBoard.IsStale(project.LastUsedDay, AgeMap.Today())),
             project.AbsolutePath,
             removable.Count == 0 ? null : $"Add {ShellFormat.HeroBytes(removable.Sum(i => i.Bytes))} to basket",
             () => StageProject(project, catalog));
@@ -1164,6 +1259,7 @@ public sealed class DeveloperBoardPage : UserControl
         {
             facts.Add(("Project", project.Name));
             facts.Add(("Git", project.Git.Title));
+            if (project.LastGitDay > 0) facts.Add(("Last git activity", $"{DeveloperBoard.LastChange(project.LastGitDay, AgeMap.Today())} · {project.LastGitWhat}"));
             facts.Add(("Last source change", DeveloperBoard.LastChange(project.LastSourceDay, AgeMap.Today())));
         }
         else facts.Add(("Last changed", DeveloperBoard.LastChange(item.ModifiedDay, AgeMap.Today())));
@@ -1432,9 +1528,12 @@ public sealed class DeveloperBoardPage : UserControl
     private FrameworkElement DevRow(string icon, string name, string path,
         IReadOnlyList<(string Text, long? Bytes, bool Accent)> chips, string? note, string places,
         string figure, bool figureAccent, string subline, (string Title, Action Run)? action,
-        bool selected, Action select, Action? open, string actionsPath, Action? stage)
+        bool selected, Action select, Action? open, string actionsPath, Action? stage,
+        IReadOnlyList<string>? stagePaths = null)
     {
         bool compact = _class == Rd.WidthClass.Compact;
+        // Everything this row's Clean adds is already in the basket: the row turns violet, no Clean.
+        bool inBasket = stagePaths is { Count: > 0 } && stagePaths.All(InBasket);
         var grid = new Grid { Margin = new Thickness(18, 12, 18, 12) };
         void col(GridLength w) => grid.ColumnDefinitions.Add(new ColumnDefinition { Width = w });
         col(GridLength.Auto); col(new GridLength(1, GridUnitType.Star)); col(GridLength.Auto); col(GridLength.Auto); col(GridLength.Auto);
@@ -1498,8 +1597,8 @@ public sealed class DeveloperBoardPage : UserControl
         figures.Children.Add(small);
         Grid.SetColumn(figures, 3);
         grid.Children.Add(figures);
-        var actionBox = new Border { Width = 76, Margin = new Thickness(14, 0, 0, 0) };
-        if (action is { } a)
+        var actionBox = new Border { Width = 96, Margin = new Thickness(14, 0, 0, 0) };
+        if (action is { } a && !inBasket)
         {
             var button = Rd.SecondaryButton(a.Title, a.Run);
             button.HorizontalAlignment = HorizontalAlignment.Right;
@@ -1511,12 +1610,11 @@ public sealed class DeveloperBoardPage : UserControl
 
         var layers = new Grid();
         layers.Children.Add(grid);
-        if (selected)
-            layers.Children.Add(new Border { Width = 3, HorizontalAlignment = HorizontalAlignment.Left, Background = Ui.Brush("AppAccent") });
+        if (selected || inBasket) layers.Children.Add(Rd.InBasketEdge());
         var host = new Border
         {
             Child = layers, Cursor = Cursors.Hand, Focusable = true,
-            Background = selected ? Ui.Brush("RdAccentWash") : Brushes.Transparent,
+            Background = inBasket ? Rd.InBasketFill : selected ? Ui.Brush("RdAccentWash") : Brushes.Transparent,
             BorderBrush = Ui.Brush("RdLine"), BorderThickness = new Thickness(0, 0, 0, 1),
         };
         host.MouseLeftButtonDown += (_, e) =>
@@ -1532,13 +1630,21 @@ public sealed class DeveloperBoardPage : UserControl
             else if (e.Key == Key.Enter) { (open ?? select)(); e.Handled = true; }
         };
         var menu = new ContextMenu();
-        if (stage is not null) menu.Items.Add(MenuEntry("Add to basket", stage));
+        if (inBasket) menu.Items.Add(MenuEntry("Take Out of the Basket", () => Model.UnstagePaths(stagePaths!)));
+        else if (stage is not null) menu.Items.Add(MenuEntry("Add to basket", stage));
         menu.Items.Add(MenuEntry("Show in File Explorer", () => Explorer.Reveal(actionsPath)));
         menu.Items.Add(MenuEntry("Open", () => OpenFolder(actionsPath)));
         if (open is not null) menu.Items.Add(MenuEntry("Open in Where it lives", open));
         host.ContextMenu = menu;
-        System.Windows.Automation.AutomationProperties.SetName(host, $"{name}, {figure}{(selected ? ", selected" : "")}");
+        System.Windows.Automation.AutomationProperties.SetName(host, $"{name}, {figure}{(inBasket ? ", in basket" : "")}{(selected ? ", selected" : "")}");
         return host;
+    }
+
+    private bool InBasket(string path)
+    {
+        for (string? p = path.TrimEnd('\\'); !string.IsNullOrEmpty(p); p = System.IO.Path.GetDirectoryName(p))
+            if (_staged.Contains(p)) return true;
+        return false;
     }
 
     private static MenuItem MenuEntry(string title, Action action)

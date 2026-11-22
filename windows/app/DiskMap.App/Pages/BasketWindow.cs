@@ -34,7 +34,8 @@ public sealed class BasketWindow : Window
     /// <summary>Open the basket over the main window (one at a time).</summary>
     public static void Show(Window? owner)
     {
-        if (_open is not null) { _open.Activate(); return; }
+        // Closed mid-move it only hid; opening it again brings it back, still moving.
+        if (_open is not null) { _open.Show(); _open.Activate(); return; }
         _open = new BasketWindow { Owner = owner };
         _open.Closed += (_, _) => _open = null;
         _open.ShowDialog();
@@ -52,13 +53,21 @@ public sealed class BasketWindow : Window
         Content = _root;
         Model.StagedChanged += OnStaged;
         Closed += (_, _) => Model.StagedChanged -= OnStaged;
-        // Esc closes (Done is the cancel action), but never mid-move.
+        // Esc closes (Done is the cancel action); mid-move that only hides it.
         PreviewKeyDown += (_, e) =>
         {
-            if (e.Key == Key.Escape && !_busy) { Close(); e.Handled = true; }
+            if (e.Key == Key.Escape) { Close(); e.Handled = true; }
             if (e.Key == Key.Z && Keyboard.Modifiers == ModifierKeys.Control && _lastRemoved is { } item) { UndoRemove(item); e.Handled = true; }
         };
-        Closing += (_, e) => { if (_busy) e.Cancel = true; };
+        // A big move takes minutes: closing hides the basket and the move carries on. Hiding
+        // a dialog ends its modal loop, so the main window is usable again meanwhile.
+        Closing += (_, e) =>
+        {
+            if (!_busy) return;
+            e.Cancel = true;
+            Hide();
+            Model.Toast("Still moving to the Recycle Bin — open the basket to watch, you'll get a note when it's done");
+        };
         Model.RefreshStaged();
         Rebuild();
     }
@@ -68,17 +77,49 @@ public sealed class BasketWindow : Window
     {
         if (_open is not { } window) return;
         window.Background = Ui.Brush("RdPage");
+        window._rows = [];   // kept rows hold the old brushes
         window.Rebuild();
         window.Dispatcher.InvokeAsync(() => { if (window.IsActive && !window.IsKeyboardFocusWithin) window.Focus(); },
             System.Windows.Threading.DispatcherPriority.Loaded);
     }
 
-    private void OnStaged(object? sender, EventArgs e) => Dispatcher.InvokeAsync(Rebuild);
+    private void OnStaged(object? sender, EventArgs e) => RequestRebuild();
+
+    private bool _rebuildQueued;
+
+    /// <summary>
+    /// Measurements and progress land in bursts, and a rebuild re-creates every row (half a
+    /// second with 200 items): one rebuild per burst, after input and rendering, so Esc, Hide
+    /// and the close button always answer.
+    /// </summary>
+    private void RequestRebuild()
+    {
+        if (_rebuildQueued) return;
+        _rebuildQueued = true;
+        Dispatcher.InvokeAsync(() => { _rebuildQueued = false; Rebuild(); },
+            System.Windows.Threading.DispatcherPriority.Background);
+    }
+
+    private TextBlock? _progressCount;
+    private ProgressBar? _progressBar;
+
+    /// <summary>A commit tick: the same phase only moves its bar, in place — no rebuild per item.</summary>
+    private void ShowProgress(string label, int done, int total)
+    {
+        bool samePhase = _progress?.Label == label;
+        _progress = (label, done, total);
+        if (!samePhase || _progressBar is null || _progressCount is null) { RequestRebuild(); return; }
+        _progressBar.Maximum = Math.Max(1, total);
+        _progressBar.Value = done;
+        _progressCount.Text = $"{done} of {total}";
+    }
 
     private List<CleanupQueue.StagedItem> Items => Model.Cleanup.AllItems().ToList();
 
     private void Rebuild()
     {
+        _progressCount = null;
+        _progressBar = null;
         _root.Children.Clear();
         _root.ColumnDefinitions.Clear();
         var items = Items;
@@ -104,10 +145,10 @@ public sealed class BasketWindow : Window
     private FrameworkElement ItemsColumn(List<CleanupQueue.StagedItem> items)
     {
         var dock = new DockPanel();
-        var estimate = Model.Cleanup.Estimate();
+        var estimate = Model.ReclaimEstimate;
 
         var header = new DockPanel { Margin = new Thickness(24, 22, 24, 16) };
-        var done = Rd.SecondaryButton("Done", () => { if (!_busy) Close(); });
+        var done = Rd.SecondaryButton(_busy ? "Hide" : "Done", Close);
         done.VerticalAlignment = VerticalAlignment.Center;
         DockPanel.SetDock(done, Dock.Right);
         header.Children.Add(done);
@@ -130,12 +171,12 @@ public sealed class BasketWindow : Window
         {
             var bar = new StackPanel { Margin = new Thickness(24, 0, 24, 12) };
             var line = new DockPanel();
-            var count = Rd.Figure($"{p.Done} of {p.Total}", 11, null, "RdInk3");
+            var count = _progressCount = Rd.Figure($"{p.Done} of {p.Total}", 11, null, "RdInk3");
             DockPanel.SetDock(count, Dock.Right);
             line.Children.Add(count);
             line.Children.Add(Rd.Text(p.Label, 12, null, "RdInk2"));
             bar.Children.Add(line);
-            bar.Children.Add(new ProgressBar { Height = 4, Margin = new Thickness(0, 6, 0, 0), Maximum = Math.Max(1, p.Total), Value = p.Done });
+            bar.Children.Add(_progressBar = new ProgressBar { Height = 4, Margin = new Thickness(0, 6, 0, 0), Maximum = Math.Max(1, p.Total), Value = p.Done });
             System.Windows.Automation.AutomationProperties.SetAutomationId(bar, "cleanup-commit-progress");
             DockPanel.SetDock(bar, Dock.Top);
             dock.Children.Add(bar);
@@ -178,6 +219,12 @@ public sealed class BasketWindow : Window
         }
 
         var list = new StackPanel { Margin = new Thickness(24, 0, 24, 24) };
+        var folders = items.Select(i => i.Path.TrimEnd('\\') + "\\").ToArray();
+        var covered = items.Where((_, k) => folders.Where((_, j) => j != k)
+            .Any(f => folders[k].StartsWith(f, StringComparison.OrdinalIgnoreCase))).Select(i => i.Id).ToHashSet();
+        // Sizes land one by one: keep each row whose caption didn't change instead of
+        // re-creating hundreds of rows per landing (that rebuild is what froze the window).
+        var rows = new Dictionary<Guid, (string Key, FrameworkElement Row)>();
         foreach (var group in items.GroupBy(i => Source(i.Reason)).OrderBy(g => g.Key, StringComparer.Ordinal))
         {
             var card = new StackPanel();
@@ -192,17 +239,28 @@ public sealed class BasketWindow : Window
             n.Margin = new Thickness(8, 0, 0, 0);
             head.Children.Add(n);
             card.Children.Add(new Border { Child = head, BorderBrush = Ui.Brush("RdLine"), BorderThickness = new Thickness(0, 0, 0, 1) });
-            foreach (var item in group) card.Children.Add(Row(item, items, estimate));
+            foreach (var item in group)
+            {
+                string caption = Caption(item, covered, estimate);
+                string key = caption + "\n" + _whyStayed.GetValueOrDefault(item.Id);
+                if (!_rows.TryGetValue(item.Id, out var cached) || cached.Key != key) cached = (key, Row(item, caption));
+                (cached.Row.Parent as Panel)?.Children.Remove(cached.Row);
+                card.Children.Add(cached.Row);
+                rows[item.Id] = cached;
+            }
             var surface = Rd.Surface(card, "RdCard", 12);
             surface.Margin = new Thickness(0, list.Children.Count > 0 ? 14 : 0, 0, 0);
             list.Children.Add(surface);
         }
+        _rows = rows;
         list.IsEnabled = !_busy;
         dock.Children.Add(new ScrollViewer { Content = list, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false });
         return dock;
     }
 
-    private FrameworkElement Row(CleanupQueue.StagedItem item, List<CleanupQueue.StagedItem> all, CleanupQueue.ReclaimEstimate estimate)
+    private Dictionary<Guid, (string Key, FrameworkElement Row)> _rows = [];
+
+    private FrameworkElement Row(CleanupQueue.StagedItem item, string captionText)
     {
         bool isFolder = Directory.Exists(item.Path) && System.IO.Path.GetExtension(item.Path).Length == 0;
         var row = new DockPanel { Margin = new Thickness(16, 8, 16, 8) };
@@ -220,7 +278,7 @@ public sealed class BasketWindow : Window
         DockPanel.SetDock(icon, Dock.Left);
         row.Children.Add(icon);
 
-        var caption = Rd.Figure(Caption(item, all, estimate), 11, null, "RdInk2");
+        var caption = Rd.Figure(captionText, 11, null, "RdInk2");
         caption.TextAlignment = TextAlignment.Right;
         caption.TextWrapping = TextWrapping.Wrap;
         caption.MaxWidth = 220;
@@ -294,7 +352,7 @@ public sealed class BasketWindow : Window
 
     private FrameworkElement ReceiptColumn(List<CleanupQueue.StagedItem> items)
     {
-        var estimate = Model.Cleanup.Estimate();
+        var estimate = Model.ReclaimEstimate;
         var vol = Model.Volume ?? Model.Snapshot?.Volume;
         var lines = items.GroupBy(i => Source(i.Reason)).OrderBy(g => g.Key, StringComparer.Ordinal)
             .Select(g => (g.Count() == 1 ? System.IO.Path.GetFileName(g.First().Path.TrimEnd('\\')) : $"{g.Key} · {g.Count()}",
@@ -309,7 +367,7 @@ public sealed class BasketWindow : Window
             held.Margin = new Thickness(0, 18, 0, 0);
             stack.Children.Add(held);
         }
-        stack.Children.Add(MoveButton(items.Count));
+        stack.Children.Add(MoveButton(items.Count, estimate.IsCalculating));
         if (LastCleanup() is { } last)
         {
             last.Margin = new Thickness(0, 24, 0, 0);
@@ -321,14 +379,21 @@ public sealed class BasketWindow : Window
         return host;
     }
 
-    private FrameworkElement MoveButton(int count)
+    private FrameworkElement MoveButton(int count, bool measuring)
     {
-        bool disabled = count == 0 || _busy;
+        // Still measuring: greyed, and it says why and how far along — not a purple button that waits.
+        bool waiting = measuring && !_busy && count > 0;
+        bool disabled = count == 0 || _busy || waiting;
+        var (measured, total) = waiting ? Model.Cleanup.MeasurementProgress() : (0, 0);
+        string ink = waiting ? "RdInk2" : "RdOnAccent";
         var content = new StackPanel { Margin = new Thickness(20, 16, 20, 16) };
-        var eyebrow = Rd.Figure("YOU’LL CONFIRM ONCE MORE", 10.5, FontWeights.Medium, "RdOnAccent");
+        var eyebrow = Rd.Figure(_busy ? "WORKING — YOU CAN CLOSE THIS WINDOW"
+            : waiting ? $"MEASURING SIZES · {measured:N0} OF {total:N0} READY"
+            : "YOU’LL CONFIRM ONCE MORE", 10.5, FontWeights.Medium, ink);
         eyebrow.Opacity = 0.85;
         content.Children.Add(eyebrow);
-        var title = Rd.TightText(count == 0 ? "Nothing to move" : $"Move {Count(count, "item")} to Recycle Bin…", 21, -0.3, "RdOnAccent");
+        var title = Rd.TightText(_busy ? _progress?.Label ?? "Moving…" : count == 0 ? "Nothing to move"
+            : waiting ? "Available once sizes are measured" : $"Move {Count(count, "item")} to Recycle Bin…", 21, -0.3, ink);
         content.Children.Add(new Viewbox
         {
             Child = title, Stretch = Stretch.Uniform, StretchDirection = StretchDirection.DownOnly,
@@ -337,11 +402,18 @@ public sealed class BasketWindow : Window
         var face = new Border
         {
             CornerRadius = new CornerRadius(14),
-            Background = disabled ? Rd.WithOpacity(Ui.Brush("AppAccent"), 0.45) : Ui.Brush("AppAccent"),
+            Background = waiting ? Ui.Brush("RdSoft") : disabled ? Rd.WithOpacity(Ui.Brush("AppAccent"), 0.45) : Ui.Brush("AppAccent"),
             BorderBrush = new SolidColorBrush(Color.FromArgb(217, 0, 0, 0)), BorderThickness = new Thickness(1),
             Child = content,
         };
-        var button = new Grid { Margin = new Thickness(0, 28, 5, 0), Cursor = disabled ? Cursors.Arrow : Cursors.Hand, ToolTip = "Moves everything here to the Recycle Bin, after you confirm" };
+        var button = new Grid
+        {
+            Margin = new Thickness(0, 28, 5, 0), Cursor = disabled ? Cursors.Arrow : Cursors.Hand,
+            ToolTip = waiting ? "Some folders are still being measured, so the figure above may change. The button turns on when they're done."
+                : "Moves everything here to the Recycle Bin, after you confirm",
+        };
+        ToolTipService.SetShowOnDisabled(button, true);
+        button.IsEnabled = !disabled;
         button.Children.Add(new Border { CornerRadius = new CornerRadius(14), Background = new SolidColorBrush(Color.FromArgb(224, 0, 0, 0)), Margin = new Thickness(5, 5, -5, -5) });
         button.Children.Add(face);
         button.MouseLeftButtonUp += (_, _) => { if (!disabled) Commit(); };
@@ -444,11 +516,8 @@ public sealed class BasketWindow : Window
         _busy = true;
         try
         {
-            var progress = new Progress<CleanupQueue.CommitProgress>(p =>
-            {
-                _progress = (p.Phase.StartsWith("Verif", StringComparison.OrdinalIgnoreCase) ? "Verifying sizes…" : "Moving to the Recycle Bin…", p.Done, p.Total);
-                Rebuild();
-            });
+            var progress = new Progress<CleanupQueue.CommitProgress>(p => ShowProgress(
+                p.Phase.StartsWith("Verif", StringComparison.OrdinalIgnoreCase) ? "Verifying sizes…" : "Moving to the Recycle Bin…", p.Done, p.Total));
             _progress = ("Verifying sizes…", 0, items.Count);
             Rebuild();
             // Folders recycle first; their staged children report "moved with the folder".
@@ -493,7 +562,7 @@ public sealed class BasketWindow : Window
                 _busy = true;
                 try
                 {
-                    var progress = new Progress<CleanupQueue.CommitProgress>(p => { _progress = ("Deleting permanently…", p.Done, p.Total); Rebuild(); });
+                    var progress = new Progress<CleanupQueue.CommitProgress>(p => ShowProgress("Deleting permanently…", p.Done, p.Total));
                     var ids = regenerable.Select(e => e.Item.Id).ToList();
                     var deleted = await Task.Run(() => Model.Cleanup.DeletePermanently(ids, progress));
                     deletedCount = deleted.Entries.Count(e => e.Error is null);
@@ -515,6 +584,7 @@ public sealed class BasketWindow : Window
             Model.Toast(refused.Count > 0
                 ? "Nothing moved — the Recycle Bin refused these items; they're still in the basket"
                 : "Nothing could be moved — the items may be in use; they're still in the basket");
+            if (!IsVisible) Close();
             return;
         }
         string freedLine = $"{(report.IsLowerBound ? "At least " : "")}{ByteFormat.Format(report.FreedWhenEmptied)} is freed when you empty the Recycle Bin.";
@@ -526,6 +596,7 @@ public sealed class BasketWindow : Window
         Model.Toast($"Moved {moved.Count} items to the Recycle Bin" +
             (deletedCount > 0 ? $" · deleted {deletedCount} permanently" : "") +
             (left > 0 ? $" · {left} still in the basket" : ""));
+        if (!IsVisible) Close();   // hidden mid-move: the toast is the report
     }
 
     // ---- Remove / undo ----
@@ -578,13 +649,11 @@ public sealed class BasketWindow : Window
     }
 
     /// <summary>What this row contributes, and why it may be less than its size.</summary>
-    private string Caption(CleanupQueue.StagedItem item, List<CleanupQueue.StagedItem> all, CleanupQueue.ReclaimEstimate estimate)
+    private static string Caption(CleanupQueue.StagedItem item, HashSet<Guid> covered, CleanupQueue.ReclaimEstimate estimate)
     {
         if (item.IsMeasuring) return $"{ByteFormat.Format(item.Size)} · measuring…";
         long freed = estimate.PerItem.GetValueOrDefault(item.Id, item.Size);
-        string prefixPath = item.Path.TrimEnd('\\');
-        if (all.Any(o => o.Id != item.Id && prefixPath.StartsWith(o.Path.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase)))
-            return "Included in a queued folder — counted there";
+        if (covered.Contains(item.Id)) return "Included in a queued folder — counted there";
         if (freed == 0 && item.Size > 0) return $"{ByteFormat.Format(item.Size)} · shared — freed only when every copy or link is queued";
         return freed + 4_096 < item.Size
             ? $"Frees {ByteFormat.Format(freed)} of {ByteFormat.Format(item.Size)} — the rest is shared"

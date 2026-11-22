@@ -1,3 +1,4 @@
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -10,13 +11,15 @@ namespace DiskMap.App;
 /// First launch (and Settings → Your setup): "what do you use this PC
 /// for", then "what do you use". The answers tailor Developer —
 /// profiles.json maps each tool to the ecosystems that page shows. Tools
-/// found on this PC (a path exists — nothing is read) start ticked. Skip
-/// keeps everything visible.
+/// found on this PC (a path exists — nothing is read) start ticked. Coders
+/// then say where their code lives (or "I don't remember" — Developer guesses
+/// from the scan). Skip, on every step, keeps everything visible.
 /// </summary>
 public sealed class OnboardingWindow : Window
 {
     private readonly HashSet<string> _roles;
     private readonly HashSet<string> _tools;
+    private readonly List<string> _codeFolders;
     private readonly HashSet<string> _detected = UserProfiles.Detected();
     private readonly bool _firstTime;
     /// <summary>Roles whose found-on-this-PC tools were already ticked once — unticking sticks.</summary>
@@ -30,6 +33,7 @@ public sealed class OnboardingWindow : Window
         var settings = AppSettings.Load();
         _roles = settings.Roles.ToHashSet(StringComparer.Ordinal);
         _tools = settings.Tools.ToHashSet(StringComparer.Ordinal);
+        _codeFolders = settings.CodeFolders.ToList();
         _firstTime = !settings.Onboarded;
         _pretickedRoles = settings.Roles.ToHashSet(StringComparer.Ordinal);
         // First launch: closing the window counts as Skip — ask once, not every start.
@@ -50,7 +54,7 @@ public sealed class OnboardingWindow : Window
 
     private void ShowRoles()
     {
-        var body = Frame("1 of 2", "What do you use this PC for?",
+        var body = Frame(Step(1), "What do you use this PC for?",
             "Pick everything that fits. freedisk.space looks for what your tools leave behind — and stays away from what they need. You can change this any time in Settings.");
         var grid = new UniformGrid { Columns = 3, Margin = new Thickness(0, 4, 0, 0) };
         foreach (var role in UserProfiles.Roles)
@@ -95,7 +99,7 @@ public sealed class OnboardingWindow : Window
                 _tools.Add(tool.Id);
 
         int found = offered.Count(t => _detected.Contains(t.Id));
-        var body = Frame("2 of 2", "What do you use?",
+        var body = Frame(Step(2), "What do you use?",
             found > 0
                 ? $"We ticked the {found} we found on this PC. Untick anything you don't use, tick what we missed."
                 : "Tick the tools you use — Developer will show what they keep on disk.");
@@ -118,7 +122,107 @@ public sealed class OnboardingWindow : Window
                 "Nothing to pick — freedisk.space will focus on Downloads, photos and videos, caches and duplicates.",
                 13, null, "RdInk2", wrap: true));
         body.Back.Content = Rd.SecondaryButton("Back", ShowRoles);
-        body.Next.Content = Rd.AccentButton("Done", Finish);
+        body.Next.Content = WithSkip(Codes ? Rd.AccentButton("Next", ShowCodeFolders) : Rd.AccentButton("Done", Finish));
+    }
+
+    // ---- Step 3 (coders): where the code lives ----
+
+    /// <summary>Roles that write code: their projects' dependencies and build output are what Developer cleans.</summary>
+    private static readonly string[] CodingRoles = ["software", "windows", "cloud", "hardware", "data"];
+
+    private bool Codes => _roles.Overlaps(CodingRoles);
+
+    private string Step(int n) => $"{n} of {(Codes ? 3 : 2)}";
+
+    /// <summary>Usual homes for code that exist on this PC — offered with one click (only checked, never read).</summary>
+    private static IEnumerable<string> LikelyCodeFolders()
+    {
+        string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        string[] names = [@"source\repos", "Projects", "projects", "code", "Code", "dev", "repos", @"Documents\GitHub", @"Documents\Projects"];
+        var candidates = names.Select(n => System.IO.Path.Combine(home, n))
+            .Concat(DriveInfo.GetDrives().Where(d => d.DriveType == DriveType.Fixed)
+                .SelectMany(d => new[] { "code", "dev", "src", "Projects", "repos" }.Select(n => System.IO.Path.Combine(d.RootDirectory.FullName, n))));
+        return candidates.Where(Directory.Exists).Distinct(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private void ShowCodeFolders()
+    {
+        var body = Frame(Step(3), "Where do you keep your code?",
+            "Projects there are listed first every time you scan, with what you're working on now kept apart from what you can clear. Don't remember? We'll work it out from the scan.");
+        foreach (var folder in _codeFolders.ToList())
+        {
+            var row = new DockPanel();
+            var remove = Rd.IconButton(Icons.Cancel, $"Remove {folder}", () => { _codeFolders.Remove(folder); ShowCodeFolders(); }, 24);
+            DockPanel.SetDock(remove, Dock.Right);
+            row.Children.Add(remove);
+            var icon = Ui.Glyph(Icons.Folder, 14, Ui.Brush("AppAccent"));
+            icon.Margin = new Thickness(0, 0, 10, 0);
+            icon.VerticalAlignment = VerticalAlignment.Center;
+            DockPanel.SetDock(icon, Dock.Left);
+            row.Children.Add(icon);
+            var name = Rd.Text(CanonicalPath.DisplayPath(folder), 13, FontWeights.Medium);
+            name.VerticalAlignment = VerticalAlignment.Center;
+            name.TextTrimming = TextTrimming.CharacterEllipsis;
+            row.Children.Add(name);
+            body.Content.Children.Add(new Border
+            {
+                Child = row, Padding = new Thickness(12, 8, 8, 8), Margin = new Thickness(0, 0, 0, 8),
+                CornerRadius = new CornerRadius(10), BorderThickness = new Thickness(1.5),
+                BorderBrush = Ui.Brush("AppAccent"), Background = Ui.Brush("RdAccentWash"),
+            });
+        }
+        var add = Rd.SecondaryButton(_codeFolders.Count == 0 ? "Choose a folder…" : "Add another folder…", () =>
+        {
+            if (FolderPicker.Pick(new System.Windows.Interop.WindowInteropHelper(this).Handle) is { } picked
+                && !_codeFolders.Contains(picked, StringComparer.OrdinalIgnoreCase))
+                _codeFolders.Add(picked);
+            ShowCodeFolders();
+        });
+        add.HorizontalAlignment = HorizontalAlignment.Left;
+        add.Margin = new Thickness(0, 4, 0, 0);
+        body.Content.Children.Add(add);
+
+        var likely = LikelyCodeFolders().Where(f => !_codeFolders.Contains(f, StringComparer.OrdinalIgnoreCase)).ToList();
+        if (likely.Count > 0)
+        {
+            var label = Rd.MonoLabel("Found on this PC");
+            label.Margin = new Thickness(0, 22, 0, 8);
+            body.Content.Children.Add(label);
+            var wrap = new WrapPanel();
+            foreach (var folder in likely)
+            {
+                var chip = Toggle(Rd.Text("+ " + CanonicalPath.DisplayPath(folder), 13), false,
+                    () => { _codeFolders.Add(folder); ShowCodeFolders(); }, $"Add {folder}");
+                chip.Padding = new Thickness(10, 6, 10, 6);
+                chip.Margin = new Thickness(0, 0, 8, 8);
+                chip.MinHeight = 0;
+                chip.CornerRadius = new CornerRadius(8);
+                wrap.Children.Add(chip);
+            }
+            body.Content.Children.Add(wrap);
+        }
+        body.Back.Content = Rd.SecondaryButton("Back", ShowTools);
+        var forgot = Rd.SecondaryButton("I don't remember", () => { _codeFolders.Clear(); Finish(); });
+        forgot.ToolTip = "Developer guesses from where your projects cluster in each scan";
+        forgot.Margin = new Thickness(0, 0, 8, 0);
+        var done = Rd.AccentButton("Done", Finish);
+        done.IsEnabled = _codeFolders.Count > 0;
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal };
+        buttons.Children.Add(forgot);
+        buttons.Children.Add(done);
+        body.Next.Content = WithSkip(buttons);
+    }
+
+    /// <summary>"Skip for now" beside a step's main button: straight to the app, everything visible.</summary>
+    private FrameworkElement WithSkip(FrameworkElement next)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal };
+        var skip = Rd.Link("Skip for now", Skip, 13);
+        skip.VerticalAlignment = VerticalAlignment.Center;
+        skip.Margin = new Thickness(0, 0, 14, 0);
+        row.Children.Add(skip);
+        row.Children.Add(next);
+        return row;
     }
 
     private FrameworkElement ToolChip(ProfileTool tool)
@@ -240,6 +344,7 @@ public sealed class OnboardingWindow : Window
         var offered = UserProfiles.ToolsFor(settings.Roles).Select(t => t.Id).ToHashSet();
         settings.Tools = UserProfiles.Tools.Select(t => t.Id)
             .Where(id => _tools.Contains(id) && offered.Contains(id)).ToList();
+        settings.CodeFolders = Codes ? _codeFolders.ToList() : [];
         settings.Onboarded = true;
         settings.Save();
         Saved = true;

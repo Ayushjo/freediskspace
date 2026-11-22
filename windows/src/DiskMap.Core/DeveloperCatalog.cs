@@ -176,6 +176,18 @@ public sealed record DeveloperProject(
     /// (TASK-056). 0 = unknown.
     /// </summary>
     public int LastSourceDay { get; set; }
+    /// <summary>Last thing done with its repository on this PC (clone, commit, checkout…), days since epoch. 0 = none.</summary>
+    public int LastGitDay { get; set; }
+    /// <summary>What that was, as a verb: "cloned", "committed", "checked out", "used".</summary>
+    public string LastGitWhat { get; set; } = "";
+    /// <summary>
+    /// When someone last worked with it: the newer of its last git activity and its newest
+    /// source file. Neither alone is right — an old repository cloned yesterday has five-year-old
+    /// commits but was used yesterday; uncommitted edits show only in file dates.
+    /// </summary>
+    public int LastUsedDay => Math.Max(LastGitDay, LastSourceDay);
+    /// <summary>How <see cref="LastUsedDay"/> was last used: the git verb, else "changed".</summary>
+    public string LastUsedWhat => LastGitDay > 0 && LastGitDay >= LastSourceDay && LastGitWhat.Length > 0 ? LastGitWhat : "changed";
     public string? RepositoryPath { get; set; }
     /// <summary>(TASK-053)</summary>
     public GitState Git { get; set; } = new GitState.NotARepository();
@@ -686,7 +698,7 @@ public static partial class DeveloperCatalog
             .Take(12).ToList();
         var summary = Summarize(items, projects);
         var stale = projects.Where(p =>
-            p.LastSourceDay > 0 && today - p.LastSourceDay >= DeveloperSummary.StaleAfterDays).ToList();
+            p.LastUsedDay > 0 && today - p.LastUsedDay >= DeveloperSummary.StaleAfterDays).ToList();
         summary.StaleProjectCount = stale.Count;
         summary.StaleReclaimableBytes = stale.Sum(p => p.ReclaimableBytes);
         summary.UnpinnedBytes = items
@@ -895,7 +907,7 @@ public static partial class DeveloperCatalog
         var itemsByProject = items.Where(i => i.ProjectKey is not null)
             .GroupBy(i => i.ProjectKey!).ToDictionary(g => g.Key, g => g.ToList());
         Func<string, bool> generated = name => RulesLazy.Value.For(name) is not null;
-        var gitCache = new Dictionary<int, (string Path, GitState State, long Ignored)>();
+        var gitCache = new Dictionary<int, (string Path, GitState State, long Ignored, (int Day, string What) Activity)>();
 
         foreach (var project in projects)
         {
@@ -914,15 +926,16 @@ public static partial class DeveloperCatalog
                 {
                     string path = tree.PathOf(repoId, rootPath);
                     long ignored = GitIgnoreRules.IgnoredBytes(tree, repoId, path, totals).IgnoredBytes;
-                    repo = (path, GitInspector.Inspect(path), ignored);
+                    repo = (path, GitInspector.Inspect(path), ignored, GitInspector.LastActivity(path));
                     gitCache[repoId] = repo;
                 }
                 project.RepositoryPath = repo.Path;
                 project.Git = repo.State;
                 project.IgnoredBytes = repo.Ignored;
+                (project.LastGitDay, project.LastGitWhat) = repo.Activity;
             }
-            int age = project.LastSourceDay > 0 ? today - project.LastSourceDay : 0;
-            if (project.LastSourceDay > 0 && age >= DeveloperSummary.StaleAfterDays)
+            int age = project.LastUsedDay > 0 ? today - project.LastUsedDay : 0;
+            if (project.LastUsedDay > 0 && age >= DeveloperSummary.StaleAfterDays)
                 project.Status = $"Untouched {age / 30} months";
         }
     }

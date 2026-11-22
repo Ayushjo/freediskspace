@@ -359,4 +359,79 @@ public class DeveloperBoardTests
             sections.Select(s => s.Title).ToArray());
         Assert.Equal("", sections[2].Note);
     }
+
+    // ---- Last used, active projects, code folders ----
+
+    [Fact]
+    public void LastUsedFilterNeedsAKnownDateOldEnough()
+    {
+        Assert.True(DeveloperBoard.LastUsedBefore(0, 1000, 0));      // any time passes everything
+        Assert.False(DeveloperBoard.LastUsedBefore(0, 1000, 30));    // unknown never counts as old
+        Assert.True(DeveloperBoard.LastUsedBefore(900, 1000, 90));
+        Assert.False(DeveloperBoard.LastUsedBefore(950, 1000, 90));
+        Assert.True(DeveloperBoard.IsActive(995, 1000));
+        Assert.False(DeveloperBoard.IsActive(900, 1000));
+        Assert.False(DeveloperBoard.IsActive(0, 1000));
+    }
+
+    [Fact]
+    public void CodeFoldersAreMatchedAndGuessed()
+    {
+        Assert.True(DeveloperBoard.IsUnder(@"D:\code\web", [@"D:\code\"]));
+        Assert.True(DeveloperBoard.IsUnder(@"d:\CODE", [@"D:\code"]));
+        Assert.False(DeveloperBoard.IsUnder(@"D:\codex\web", [@"D:\code"]));
+        var guessed = DeveloperBoard.GuessCodeFolders(
+        [
+            @"C:\Users\me\source\repos\a", @"C:\Users\me\source\repos\b", @"C:\Users\me\source\repos\c",
+            @"D:\code\x", @"D:\code\y", @"D:\code\x\one", @"D:\code\x\two", @"C:\lonely\one",
+        ]);
+        // D:\code\x holds two projects too, but it's inside D:\code; C:\lonely holds only one.
+        Assert.Equal([@"C:\Users\me\source\repos", @"D:\code"], guessed);
+    }
+
+    [Fact]
+    public void LastActivityIsTheNewestReflogEntryInLocalTime()
+    {
+        string repo = Path.Combine(Path.GetTempPath(), "fds-reflog-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(repo, ".git", "logs"));
+        string head = Path.Combine(repo, ".git", "logs", "HEAD");
+        try
+        {
+            Assert.Equal((0, ""), GitInspector.LastActivity(repo));   // no reflog, no index
+            const string zero = "0000000000000000000000000000000000000000";
+            // An old project cloned on day 30: the clone is the activity, not its old commits.
+            File.WriteAllText(head, $"{zero} aaaa Me <me@x> 2592000 +0000\tclone: from https://example/old.git\n");
+            Assert.Equal((30, "cloned"), GitInspector.LastActivity(repo));
+            File.AppendAllText(head, $"aaaa bbbb Me <me@x> 3456000 +0530\tcommit (amend): work\n");
+            Assert.Equal((40, "committed"), GitInspector.LastActivity(repo));
+            File.AppendAllText(head, $"bbbb cccc Me <me@x> 4320000 +0000\tcheckout: moving from main to old\n");
+            Assert.Equal((50, "checked out"), GitInspector.LastActivity(repo));
+        }
+        finally { Directory.Delete(repo, recursive: true); }
+    }
+
+    [Fact]
+    public void LastUsedIsTheNewerOfGitAndEdits()
+    {
+        var p = new DeveloperProject("k", "p", @"C:\p", DeveloperEcosystem.Node, 0, 0, 0, 0, []);
+        p.LastSourceDay = 100;
+        Assert.Equal((100, "changed"), (p.LastUsedDay, p.LastUsedWhat));
+        (p.LastGitDay, p.LastGitWhat) = (120, "cloned");
+        Assert.Equal((120, "cloned"), (p.LastUsedDay, p.LastUsedWhat));
+        p.LastSourceDay = 130;   // edited after, not committed yet
+        Assert.Equal((130, "changed"), (p.LastUsedDay, p.LastUsedWhat));
+    }
+
+    [Fact]
+    public void NewestDayLooksThroughTheWholeFolder()
+    {
+        var tree = new FileTree();
+        int root = tree.AddNode("cache", -1, true, 0, 0, 5);
+        int deep = tree.AddNode("deep", root, true, 0, 0, 5);
+        tree.AddNode("a.bin", root, false, 1, 1, 100);
+        int b = tree.AddNode("b.bin", deep, false, 1, 1, 300);
+        Assert.Equal(300, AgeMap.NewestDay(tree, root));
+        Assert.Equal(300, AgeMap.NewestDay(tree, b));
+        Assert.Equal(0, AgeMap.NewestDay(tree, 99));
+    }
 }

@@ -316,6 +316,43 @@ public class CleanupQueueTests
     }
 
     [Fact]
+    public async Task BigStagedFolderCountsEveryFileAndItsHardLinks()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), $"DiskMap-cq-{Guid.NewGuid()}");
+        string folder = Path.Combine(dir, "node_modules");
+        try
+        {
+            // Enough folders that the measuring walk spreads over several threads.
+            for (int d = 0; d < 40; d++)
+            {
+                string lib = Path.Combine(folder, $"pkg{d}", "lib");
+                Directory.CreateDirectory(lib);
+                for (int f = 0; f < 25; f++) File.WriteAllBytes(Path.Combine(lib, $"f{f}.js"), new byte[10]);
+            }
+            string pairA = Path.Combine(folder, "pkg0", "a.bin"), pairB = Path.Combine(folder, "pkg39", "b.bin");
+            File.WriteAllBytes(pairA, new byte[50_000]);
+            Assert.True(CreateHardLinkW(pairB, pairA, IntPtr.Zero));     // both names inside: frees once
+            string held = Path.Combine(folder, "pkg7", "held.bin");
+            File.WriteAllBytes(held, new byte[30_000]);
+            Assert.True(CreateHardLinkW(Path.Combine(dir, "outside.bin"), held, IntPtr.Zero));   // a name outside: stays
+
+            var profile = StorageSharing.ProfileAt(folder)!;
+            Assert.True(profile.IsComplete);
+            Assert.Equal(40 * 25 + 3, profile.FileCount);
+
+            var queue = new CleanupQueue();
+            Assert.True(queue.Stage(folder, 0, "developer storage"));
+            await queue.WaitForMeasurements();
+            var estimate = queue.Estimate();
+            long pairBytes = StorageSharing.ProfileAt(pairA)!.AllocatedBytes;
+            long heldBytes = StorageSharing.ProfileAt(held)!.AllocatedBytes;
+            Assert.Equal(heldBytes, estimate.HeldByUnqueuedCopies);
+            Assert.Equal(profile.AllocatedBytes - pairBytes - heldBytes, estimate.Bytes);
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    [Fact]
     public async Task StagedFolderCoversStagedChildren()
     {
         string dir = Path.Combine(Path.GetTempPath(), $"DiskMap-cq-{Guid.NewGuid()}");

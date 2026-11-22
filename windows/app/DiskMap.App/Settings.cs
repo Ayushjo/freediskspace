@@ -28,6 +28,12 @@ public sealed class AppSettings
     [JsonPropertyName("roles")] public List<string> Roles { get; set; } = [];
     /// <summary>Onboarding: the tools they picked (profiles.json tool ids).</summary>
     [JsonPropertyName("tools")] public List<string> Tools { get; set; } = [];
+    /// <summary>Onboarding: the folders they keep code in — Developer lists these first. Empty = guess.</summary>
+    [JsonPropertyName("codeFolders")] public List<string> CodeFolders { get; set; } = [];
+    /// <summary>Developer: a project committed to or changed this recently counts as being worked on.</summary>
+    [JsonPropertyName("activeDays")] public int ActiveDays { get; set; } = 14;
+    /// <summary>Developer: what "Clean old ones" picks when the Last used filter is off.</summary>
+    [JsonPropertyName("oldAfterDays")] public int OldAfterDays { get; set; } = 180;
     /// <summary>True once onboarding was finished or skipped — it shows on first launch only.</summary>
     [JsonPropertyName("onboarded")] public bool Onboarded { get; set; }
 

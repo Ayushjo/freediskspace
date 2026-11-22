@@ -122,4 +122,55 @@ public static class DeveloperBoard
 
     /// <summary>A project or folder is stale after <see cref="DeveloperSummary.StaleAfterDays"/> without a change (strictly more, as the Mac's panel).</summary>
     public static bool IsStale(int day, int today) => day > 0 && today - day > DeveloperSummary.StaleAfterDays;
+
+    /// <summary>The "Last used" filter's choices, in days; 0 = any time.</summary>
+    public static readonly int[] LastUsedChoices = [0, 30, 90, 180, 365];
+
+    public static string LastUsedTitle(int days) => days switch
+    {
+        0 => "Any time",
+        30 => "Over a month ago",
+        90 => "Over 3 months ago",
+        180 => "Over 6 months ago",
+        _ => "Over a year ago",
+    };
+
+    /// <summary>Passes the "Last used" filter. An unknown date (0) only passes "Any time".</summary>
+    public static bool LastUsedBefore(int day, int today, int days) => days <= 0 || (day > 0 && today - day >= days);
+
+    /// <summary>Source changed this recently: someone is working on it, so bulk cleans leave it alone.</summary>
+    public const int ActiveWithinDays = 14;
+
+    public static bool IsActive(int day, int today, int within = ActiveWithinDays) => day > 0 && today - day < within;
+
+    /// <summary>True when <paramref name="path"/> is one of <paramref name="folders"/> or inside one.</summary>
+    public static bool IsUnder(string path, IEnumerable<string> folders)
+    {
+        string p = path.Replace('/', '\\').TrimEnd('\\');
+        return folders.Select(f => f.Replace('/', '\\').TrimEnd('\\')).Any(f => f.Length > 0
+            && (p.Equals(f, StringComparison.OrdinalIgnoreCase) || p.StartsWith(f + "\\", StringComparison.OrdinalIgnoreCase)));
+    }
+
+    /// <summary>
+    /// "I don't remember": the folders that hold two or more projects, most projects first —
+    /// where code usually lives (~\source\repos, D:\code). A folder inside a chosen one is dropped.
+    /// </summary>
+    public static List<string> GuessCodeFolders(IEnumerable<string> projectPaths, int limit = 3)
+    {
+        var parents = projectPaths
+            .Select(p => p.Replace('/', '\\').TrimEnd('\\'))
+            .Where(p => p.LastIndexOf('\\') > 0)
+            .Select(p => p[..p.LastIndexOf('\\')])
+            .GroupBy(p => p, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() >= 2)
+            .OrderByDescending(g => g.Count()).ThenBy(g => g.Key.Length).ThenBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.Key);
+        var chosen = new List<string>();
+        foreach (var folder in parents)
+        {
+            if (chosen.Count >= limit) break;
+            if (!IsUnder(folder, chosen)) chosen.Add(folder);
+        }
+        return chosen;
+    }
 }

@@ -34,7 +34,8 @@ public sealed class DuplicatesBoardPage : UserControl
     private readonly Dictionary<DuplicateGroup, int?> _keeperCache = new(ReferenceEqualityComparer.Instance);
     private HashSet<int> _checked = [];
     private DuplicateKeepPolicy _policy = DuplicateReview.ParsePolicy(AppSettings.Load().DuplicatesKeep);
-    private DuplicateKind _kindFilter = DuplicateKind.All;
+    /// <summary>The kinds shown (Photos + Videos, say); empty = all. Ticks, the receipt and Add follow it.</summary>
+    private readonly HashSet<DuplicateKind> _kinds = [];
     private object? _tickedFor;
     private List<DuplicateGroup> _shown = [];
     private Rd.WidthClass _class = Rd.WidthClass.Regular;
@@ -159,9 +160,7 @@ public sealed class DuplicatesBoardPage : UserControl
 
     private List<DuplicateGroup> ShownGroups(FileTree tree)
     {
-        var groups = _kindFilter == DuplicateKind.All
-            ? RealGroups
-            : RealGroups.Where(g => DuplicateReview.KindOf(NodeName(tree, FirstId(g) ?? 0)) == _kindFilter).ToList();
+        var groups = _kinds.Count == 0 ? RealGroups : RealGroups.Where(g => _kinds.Contains(KindOf(tree, g))).ToList();
         return groups
             .Select(g => (Group: g, Bytes: Reclaim(tree, g, Extras(tree, g))))
             .OrderByDescending(x => x.Bytes)
@@ -196,7 +195,7 @@ public sealed class DuplicatesBoardPage : UserControl
         if (!ReferenceEquals(_tickedFor, Model.Duplicates))
         {
             _tickedFor = Model.Duplicates;
-            _kindFilter = DuplicateKind.All;   // the switch may not even show for the new groups
+            _kinds.Clear();   // the chips may not even show for the new groups
             _keeperOverride.Clear();
             _keeperCache.Clear();
             SelectOtherCopies();
@@ -244,7 +243,7 @@ public sealed class DuplicatesBoardPage : UserControl
             _list.ItemsSource = null;
             var none = Rd.Text(RealGroups.Count == 0
                     ? "Every duplicate here is a hard link or ReFS block clone, so there is nothing to free."
-                    : $"No duplicate {_kindFilter.Title().ToLowerInvariant()} here.", 13, null, "RdInk3", wrap: true);
+                    : $"No duplicate {KindsLabel().ToLowerInvariant()} here.", 13, null, "RdInk3", wrap: true);
             none.HorizontalAlignment = HorizontalAlignment.Center;
             none.VerticalAlignment = VerticalAlignment.Top;
             none.TextAlignment = TextAlignment.Center;
@@ -367,8 +366,8 @@ public sealed class DuplicatesBoardPage : UserControl
 
     private FrameworkElement FilterRow(FileTree tree)
     {
-        var present = RealGroups.Select(g => DuplicateReview.KindOf(NodeName(tree, FirstId(g) ?? 0))).ToHashSet();
-        var kinds = Enum.GetValues<DuplicateKind>().Where(k => k == DuplicateKind.All || present.Contains(k)).ToList();
+        var counts = RealGroups.GroupBy(g => KindOf(tree, g)).ToDictionary(g => g.Key, g => g.Count());
+        var kinds = Enum.GetValues<DuplicateKind>().Where(k => k == DuplicateKind.All || counts.ContainsKey(k)).ToList();
         var dock = new DockPanel { LastChildFill = false };
         var policies = Rd.SegmentSwitch(Enum.GetValues<DuplicateKeepPolicy>().Select(p =>
             new Rd.Segment(p.Title(), _policy == p, () => SetPolicy(p))));
@@ -381,11 +380,23 @@ public sealed class DuplicatesBoardPage : UserControl
         dock.Children.Add(keep);
         if (kinds.Count > 2)
         {
-            var switcher = Rd.SegmentSwitch(kinds.Select(k =>
-                new Rd.Segment(k.Title(), _kindFilter == k, () => { _kindFilter = k; Rebuild(); })));
-            System.Windows.Automation.AutomationProperties.SetName(switcher, $"Show: {_kindFilter.Title()}");
-            DockPanel.SetDock(switcher, Dock.Left);
-            dock.Children.Add(switcher);
+            // Chips, several at once: Photos + Videos clears just those and leaves documents alone.
+            var chips = new WrapPanel { VerticalAlignment = VerticalAlignment.Center };
+            foreach (var k in kinds)
+            {
+                bool on = k == DuplicateKind.All ? _kinds.Count == 0 : _kinds.Contains(k);
+                var chip = ListKit.Chip(k.Title(), k == DuplicateKind.All ? RealGroups.Count : counts[k], on, () =>
+                {
+                    if (k == DuplicateKind.All) _kinds.Clear();
+                    else if (!_kinds.Remove(k)) _kinds.Add(k);
+                    Rebuild();
+                });
+                chip.Margin = new Thickness(0, 0, 6, 0);
+                chips.Children.Add(chip);
+            }
+            System.Windows.Automation.AutomationProperties.SetName(chips, $"Show: {KindsLabel()}");
+            DockPanel.SetDock(chips, Dock.Left);
+            dock.Children.Add(chips);
         }
         return dock;
     }
@@ -608,7 +619,6 @@ public sealed class DuplicatesBoardPage : UserControl
         grid.Children.Add(date);
 
         FrameworkElement trailing = isKeeper ? Rd.Tag("Kept", Rd.TagTone.Ink)
-            : staged ? Rd.Tag("In basket", Rd.TagTone.Accent)
             : Rd.Figure(ShellFormat.HeroBytes(Allocated(tree, id)), 12);
         trailing.HorizontalAlignment = HorizontalAlignment.Right;
         trailing.VerticalAlignment = VerticalAlignment.Center;
@@ -617,8 +627,8 @@ public sealed class DuplicatesBoardPage : UserControl
 
         var host = new Border
         {
-            Height = 44, Child = grid,
-            Background = selected ? Rd.WithOpacity(Ui.Brush("RdAccentWash"), 0.6) : Brushes.Transparent,
+            Height = 44, Child = staged ? new Grid { Children = { grid, Rd.InBasketEdge() } } : grid,
+            Background = staged ? Rd.InBasketFill : selected ? Rd.WithOpacity(Ui.Brush("RdAccentWash"), 0.6) : Brushes.Transparent,
             BorderBrush = Rd.WithOpacity(Ui.Brush("RdLine"), 0.7), BorderThickness = new Thickness(0, 0, 0, 1),
             Cursor = Cursors.Hand,
         };
@@ -664,10 +674,21 @@ public sealed class DuplicatesBoardPage : UserControl
 
     // ---- Summary column ----
 
+    private static DuplicateKind KindOf(FileTree tree, DuplicateGroup g) => DuplicateReview.KindOf(NodeName(tree, FirstId(g) ?? 0));
+
+    /// <summary>"Photos & Videos", "All".</summary>
+    private string KindsLabel() => _kinds.Count == 0 ? "All"
+        : string.Join(" & ", Enum.GetValues<DuplicateKind>().Where(_kinds.Contains).Select(k => k.Title()));
+
+    /// <summary>The ticks in the groups the kind chips show — the only ones Add puts in the basket.</summary>
+    private HashSet<int> ShownTicks(FileTree tree) =>
+        ShownGroups(tree).SelectMany(g => g.FileIDs).Where(_checked.Contains).ToHashSet();
+
     private void BuildSummary(FileTree tree)
     {
-        var groups = RealGroups;
-        int ticked = groups.Sum(g => g.FileIDs.Count(_checked.Contains));
+        var groups = ShownGroups(tree);
+        var shownTicks = ShownTicks(tree);
+        int ticked = shownTicks.Count;
         int kept = groups.Count(g => g.FileIDs.Any(id => !_checked.Contains(id)));
         int clones = CloneGroups.Count;
         _summary.Children.Clear();
@@ -682,7 +703,7 @@ public sealed class DuplicatesBoardPage : UserControl
         rootLabel.Margin = new Thickness(8, 0, 0, 0);
         DockPanel.SetDock(rootLabel, Dock.Right);
         head.Children.Add(rootLabel);
-        head.Children.Add(Rd.Text("Duplicates", 16, FontWeights.SemiBold));
+        head.Children.Add(Rd.Text(_kinds.Count == 0 ? "Duplicates" : $"Duplicate {KindsLabel().ToLowerInvariant()}", 16, FontWeights.SemiBold));
         receipt.Children.Add(head);
         void add(FrameworkElement element, double top = 12)
         {
@@ -695,7 +716,7 @@ public sealed class DuplicatesBoardPage : UserControl
         if (clones > 0) add(Rd.LeaderRow("Clones skipped", $"{clones:N0} · 0 B", faint: true));
         var rule = new Border { Height = 1, Background = Ui.Brush("RdLine") };
         add(rule, 16);
-        add(Rd.LeaderRow("You get back", ShellFormat.HeroBytes(Reclaimable(tree)), emphasis: true, accentValue: true), 16);
+        add(Rd.LeaderRow("You get back", ShellFormat.HeroBytes(groups.Sum(g => Reclaim(tree, g, shownTicks))), emphasis: true, accentValue: true), 16);
         add(Rd.LeaderRow("Where it goes", "The Recycle Bin"));
         add(Rd.LeaderRow("Undo", "Put Back, any time"));
         stack.Children.Add(Rd.Card(receipt, 18));
@@ -727,14 +748,19 @@ public sealed class DuplicatesBoardPage : UserControl
         _summary.Children.Add(scroll);
 
         var actions = new StackPanel { Margin = new Thickness(20) };
-        var toggleAll = Rd.SecondaryButton(_checked.Count == 0 ? "Tick the copies to keep" : "Untick all", () =>
+        // Both act on what the chips show; ticks in hidden kinds are kept for later.
+        var toggleAll = Rd.SecondaryButton(shownTicks.Count == 0 ? "Tick the extra copies" : "Untick all", () =>
         {
-            if (_checked.Count == 0) SelectOtherCopies(); else _checked.Clear();
+            var shownIds = groups.SelectMany(g => g.FileIDs).ToHashSet();
+            if (shownTicks.Count == 0)
+                _checked.UnionWith(DuplicateReview.PreTicked(groups, g => Keeper(tree, g), Model.PathOf, Model.IsStaged));
+            else _checked.ExceptWith(shownIds);
             Rebuild();
         }, fullWidth: true);
         actions.Children.Add(toggleAll);
-        int count = _checked.Count;
-        var add2 = Rd.AccentButton($"Add {count:N0} {(count == 1 ? "copy" : "copies")} to basket", StageSelected,
+        int count = ticked;
+        string what = _kinds.Count == 0 ? "" : KindsLabel().ToLowerInvariant() + " ";
+        var add2 = Rd.AccentButton($"Add {count:N0} {what}{(count == 1 ? "copy" : "copies")} to basket", StageSelected,
             large: true, fullWidth: true, hard: count > 0);
         add2.IsEnabled = count > 0;
         add2.Margin = new Thickness(0, 10, count > 0 ? 3 : 0, 0);
@@ -764,7 +790,11 @@ public sealed class DuplicatesBoardPage : UserControl
             var requests = new List<(int Id, string Reason, string? Group, int Count)>();
             int keptWhole = 0;
             var heldBack = new HashSet<int>();
-            foreach (var group in AllGroups)
+            // Only what the kind chips show: Photos + Videos never adds a ticked document.
+            var shown = _kinds.Count == 0 ? AllGroups : ShownGroups(tree);
+            var hidden = AllGroups.Except(shown).SelectMany(g => g.FileIDs).Where(_checked.Contains);
+            heldBack.UnionWith(hidden);
+            foreach (var group in shown)
             {
                 // Never every copy: what's ticked plus what's already in the basket must leave one.
                 if (group.FileIDs.Any(_checked.Contains) && group.FileIDs.All(id => _checked.Contains(id) || IsStaged(id)))

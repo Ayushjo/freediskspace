@@ -315,8 +315,10 @@ public sealed class ForgottenExplorePage : UserControl
 
     private FrameworkElement Footer()
     {
-        var likely = _visible.Where(c => c.Confidence == ForgottenConfidence.LikelyForgotten && c.IsReviewable
-            && c.Safety.Level != SafetyLevel.Protected).ToList();
+        // What the filters show and can go, minus what's already in the basket.
+        var staged = Model.StagedItems.Select(s => System.IO.Path.GetFullPath(s.Path)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var shown = _visible.Where(c => c.IsReviewable && c.Safety.Level != SafetyLevel.Protected && !staged.Contains(c.AbsolutePath)).ToList();
+        var likely = shown.Where(c => c.Confidence == ForgottenConfidence.LikelyForgotten).ToList();
         long likelyBytes = likely.Sum(c => c.Bytes);
         var text = ListKit.FooterText(($"{_visible.Count:N0} shown · {ShellFormat.HeroBytes(_visible.Sum(c => c.Bytes))}", "RdInk2"));
         var trailing = new List<FrameworkElement>();
@@ -325,6 +327,9 @@ public sealed class ForgottenExplorePage : UserControl
         if (likely.Count > 0)
             trailing.Add(Rd.SecondaryButton($"Add {likely.Count} likely forgotten · {ShellFormat.HeroBytes(likelyBytes)}", () =>
                 Model.ConfirmStageMany(likely.Select(c => c.Id), "Forgotten: " + ForgottenConfidence.LikelyForgotten.Title(), "Forgotten files")));
+        if (shown.Count > likely.Count)
+            trailing.Add(Rd.SecondaryButton(CleanDetail.ShownBulkTitle(shown.Count, shown.Sum(c => c.Bytes)), () =>
+                Model.ConfirmStageRequests(shown.Select(c => (c.Id, "Forgotten: " + c.Confidence.Title())).ToList(), "Forgotten files")));
         return ListKit.FooterBar(text, [.. trailing]);
     }
 

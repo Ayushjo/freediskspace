@@ -117,6 +117,32 @@ public class SeededStagingTests : IDisposable
     }
 
     [Fact]
+    public async Task VerifyingReportsProgressOnlyWhenItMoves()
+    {
+        var tree = Scan();
+        var queue = new CleanupQueue();
+        queue.SetScanContext(tree, _dir, new UsnJournal.Marker(1, 1), []);
+        using var release = new ManualResetEventSlim(false);
+        queue.JournalChangesForTest = _ => { release.Wait(); return []; };   // holds the measurement
+        Assert.True(queue.Stage(Path.Combine(_dir, "sub"), 0, "test"));
+        int verifying = 0;
+        var progress = new SyncProgress(p => { if (p.Phase.StartsWith("Verif")) Interlocked.Increment(ref verifying); });
+
+        var commit = Task.Run(() => queue.Commit(progress));
+        await Task.Delay(1000);   // the loop polls every 150 ms meanwhile
+        release.Set();
+        await commit;
+
+        // Each report rebuilds the basket on the UI thread: one per change, not one per poll.
+        Assert.InRange(verifying, 0, 1);
+    }
+
+    private sealed class SyncProgress(Action<CleanupQueue.CommitProgress> report) : IProgress<CleanupQueue.CommitProgress>
+    {
+        public void Report(CleanupQueue.CommitProgress value) => report(value);
+    }
+
+    [Fact]
     public async Task NoContextStillStagesViaTheWalk()
     {
         var queue = new CleanupQueue();

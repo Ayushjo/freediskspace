@@ -21,11 +21,30 @@ public sealed class ScanModel : ViewModelBase
 
     private ScanModel()
     {
-        // A landed measurement changes the staged figures; refresh the
-        // badge + any open page on the UI thread.
+        // A landed measurement changes the staged figures. With hundreds staged they land in a
+        // stream for minutes, and every refresh rebuilds the open pages: refresh at most once a
+        // second, with the reclaim math (hard links of a whole cache) done here, off the UI thread.
         Cleanup.Measured += (_, _) =>
-            System.Windows.Application.Current?.Dispatcher.Invoke(RefreshStaged);
+        {
+            if (Interlocked.Exchange(ref _measuredRefreshQueued, 1) == 1) return;
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(1000).ConfigureAwait(false);
+                Volatile.Write(ref _measuredRefreshQueued, 0);
+                int version = Volatile.Read(ref _stagedVersion);
+                var items = Cleanup.AllItems();
+                var estimate = Cleanup.Estimate();
+                System.Windows.Application.Current?.Dispatcher.InvokeAsync(() =>
+                {
+                    // A staging change on the UI thread meanwhile already showed newer figures.
+                    if (version == _stagedVersion) ApplyStaged(items, estimate);
+                }, System.Windows.Threading.DispatcherPriority.Background);
+            });
+        };
     }
+
+    private int _measuredRefreshQueued;
+    private int _stagedVersion;
 
     private FileTree? _tree;
     public FileTree? Tree { get => _tree; private set { if (Set(ref _tree, value)) Changed(); } }
@@ -797,6 +816,14 @@ public sealed class ScanModel : ViewModelBase
         RefreshStaged();
     }
 
+    /// <summary>Takes these paths out of the basket; the files stay where they are.</summary>
+    public void UnstagePaths(IEnumerable<string> paths)
+    {
+        var set = paths.Select(p => p.TrimEnd('\\')).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in StagedItems.Where(s => set.Contains(s.Path.TrimEnd('\\'))).ToList()) Cleanup.Unstage(item.Id);
+        RefreshStaged();
+    }
+
     /// <summary>Fired when the staged set changes — chrome badges listen on this.</summary>
     public event EventHandler? StagedChanged;
 
@@ -805,11 +832,14 @@ public sealed class ScanModel : ViewModelBase
     /// StateChanged — that used to rebuild every page on every Stage click.
     /// Chrome that shows the staged count subscribes to StagedChanged.
     /// </summary>
-    public void RefreshStaged()
+    public void RefreshStaged() => ApplyStaged(Cleanup.AllItems(), Cleanup.Estimate());
+
+    private void ApplyStaged(IReadOnlyList<CleanupQueue.StagedItem> items, CleanupQueue.ReclaimEstimate estimate)
     {
+        _stagedVersion++;
         StagedItems.Clear();
-        foreach (var item in Cleanup.AllItems()) StagedItems.Add(item);
-        ReclaimEstimate = Cleanup.Estimate();
+        foreach (var item in items) StagedItems.Add(item);
+        ReclaimEstimate = estimate;
         StagedChanged?.Invoke(this, EventArgs.Empty);
     }
 

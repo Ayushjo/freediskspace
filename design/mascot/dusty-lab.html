@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dusty Lab</title>
+<meta name="description" content="Pose, animate, photograph and export Dusty, the freedisk.space mascot.">
+<style>
+:root {
+  --canvas:#F8F7F4; --raised:#FFFFFF; --line:#E4E3DF; --ink:#252B31; --ink2:#66717E; --ink3:#9AA0A8;
+  --accent:#7966DA; --accent-soft:rgba(121,102,218,.09); --dusty-ink:#2B2440; --stage:#F1EFEA; --check:#E9E7E1;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --canvas:#0B0B0C; --raised:#141416; --line:#26262A; --ink:#F2F2F3; --ink2:#A3A3A8; --ink3:#76767C;
+    --accent:#9A8BF0; --accent-soft:rgba(154,139,240,.16); --dusty-ink:#E9E6F5; --stage:#111113; --check:#1B1B1E; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --canvas:#0B0B0C; --raised:#141416; --line:#26262A; --ink:#F2F2F3; --ink2:#A3A3A8; --ink3:#76767C;
+  --accent:#9A8BF0; --accent-soft:rgba(154,139,240,.16); --dusty-ink:#E9E6F5; --stage:#111113; --check:#1B1B1E; color-scheme: dark;
+}
+* { box-sizing:border-box; }
+body { margin:0; background:var(--canvas); color:var(--ink); font:14px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", sans-serif; -webkit-font-smoothing:antialiased; }
+.top { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 24px; border-bottom:1px solid var(--line); }
+.brand { font-weight:700; letter-spacing:-.02em; font-size:16px; }
+.brand span { color:var(--accent); }
+.top nav { display:flex; gap:8px; align-items:center; }
+.top a { color:var(--ink2); text-decoration:none; font-size:13px; }
+.top a:hover { color:var(--ink); }
+button, select, input { font:inherit; color:inherit; }
+.btn, .toggle { border:1px solid var(--line); background:var(--raised); border-radius:999px; padding:7px 13px; cursor:pointer; font-size:13px; }
+.btn:hover, .toggle:hover { background:var(--accent-soft); }
+.btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+.btn.primary:hover { filter:brightness(1.08); }
+.btn.ghost { border-color:transparent; background:transparent; }
+:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+
+.lab { display:grid; grid-template-columns:minmax(0,1fr) 380px; min-height:calc(100vh - 61px); }
+.left { padding:24px; display:flex; flex-direction:column; gap:16px; min-width:0; }
+.stage { position:relative; flex:1; min-height:340px; border-radius:24px; border:1px solid var(--line); overflow:hidden; display:grid; place-items:center;
+  background:var(--stage); }
+.stage.transparent { background-color:var(--canvas); background-image:conic-gradient(var(--check) 25%, transparent 0 50%, var(--check) 0 75%, transparent 0); background-size:24px 24px; }
+.stage #frame { width:min(100%, 62vh); aspect-ratio:1; box-shadow:0 0 0 1px var(--line); overflow:hidden; }  /* the frame is the photo: clip like the export does */
+.stage #frame.bare { box-shadow:none; }
+.playing { position:absolute; left:16px; top:14px; font-family:var(--mono); font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--ink2);
+  background:var(--raised); border:1px solid var(--line); border-radius:999px; padding:5px 10px; }
+.playing b { color:var(--accent); font-weight:600; }
+.poses { display:flex; gap:8px; overflow-x:auto; padding-bottom:4px; }
+.pose { flex:0 0 auto; width:76px; border:1px solid var(--line); border-radius:14px; background:var(--raised); padding:4px 4px 6px; cursor:pointer; text-align:center; }
+.pose svg { width:100%; aspect-ratio:1; display:block; }
+.pose span { font-family:var(--mono); font-size:10.5px; color:var(--ink2); }
+.pose[aria-pressed="true"] { border-color:var(--accent); background:var(--accent-soft); }
+
+aside { border-left:1px solid var(--line); background:var(--raised); display:flex; flex-direction:column; min-width:0; }
+[role=tablist] { display:flex; border-bottom:1px solid var(--line); padding:0 12px; }
+[role=tab] { border:0; background:none; padding:14px 12px 12px; cursor:pointer; color:var(--ink2); border-bottom:2px solid transparent; font-weight:500; }
+[role=tab][aria-selected="true"] { color:var(--ink); border-bottom-color:var(--accent); }
+[role=tabpanel] { padding:18px 20px 28px; overflow:auto; flex:1; }
+h3 { font-size:11px; font-family:var(--mono); text-transform:uppercase; letter-spacing:.12em; color:var(--ink3); font-weight:500; margin:20px 0 10px; }
+h3:first-child { margin-top:0; }
+.row { display:flex; align-items:center; gap:10px; margin:8px 0; }
+.row > label:first-child { flex:0 0 96px; color:var(--ink2); font-size:13px; }
+.row input[type=range] { flex:1; accent-color:var(--accent); min-width:0; }
+.row output { font-family:var(--mono); font-size:11px; color:var(--ink3); width:42px; text-align:right; }
+input[type=number], input[type=text], select { border:1px solid var(--line); border-radius:8px; background:var(--canvas); padding:5px 8px; min-width:0; }
+input[type=color] { width:38px; height:28px; border:1px solid var(--line); border-radius:8px; padding:2px; background:var(--canvas); }
+.list { display:flex; flex-wrap:wrap; gap:6px; }
+.list button { border:1px solid var(--line); background:var(--canvas); border-radius:999px; padding:5px 11px; cursor:pointer; font-size:13px; }
+.list button[aria-pressed="true"] { border-color:var(--accent); background:var(--accent-soft); color:var(--accent); }
+.steps { display:flex; flex-direction:column; gap:8px; }
+.step { border:1px solid var(--line); border-radius:12px; padding:8px 10px; display:grid; grid-template-columns:auto 1fr auto; gap:6px 8px; align-items:center; }
+.step.on { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+.step .n { font-family:var(--mono); font-size:11px; color:var(--ink3); }
+.step .f { grid-column:1 / -1; display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
+.step .f label { font-size:11px; color:var(--ink3); display:flex; flex-direction:column; gap:2px; }
+.step .f input, .step .f select { width:100%; }
+.icon { border:0; background:none; cursor:pointer; color:var(--ink3); padding:2px 5px; border-radius:6px; font-size:14px; }
+.icon:hover { color:var(--ink); background:var(--accent-soft); }
+.actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
+.note { color:var(--ink3); font-size:12px; margin:8px 0 0; }
+pre { font-family:var(--mono); font-size:11.5px; background:var(--canvas); border:1px solid var(--line); border-radius:10px; padding:10px 12px; overflow:auto; white-space:pre; }
+.err { color:#C2410C; font-size:12px; min-height:1em; }
+.hidden { display:none !important; }
+
+@media (max-width: 860px) {
+  .lab { grid-template-columns:1fr; }
+  aside { border-left:0; border-top:1px solid var(--line); }
+  .left, .top { padding-left:16px; padding-right:16px; }
+  .stage { min-height:0; }
+  .stage #frame { width:100%; }
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">Dusty <span>Lab</span></div>
+  <nav><a href="index.html">Meet Dusty</a><button class="toggle" id="theme" type="button">Dark</button></nav>
+</header>
+
+<main class="lab">
+  <div class="left">
+    <div class="stage" id="stage">
+      <div class="playing" id="playing" aria-live="polite">Pose · <b>hello</b></div>
+      <div id="frame"></div>
+    </div>
+    <div class="poses" id="poses" aria-label="Poses"></div>
+  </div>
+
+  <aside>
+    <div role="tablist" aria-label="Lab tools">
+      <button role="tab" id="t-animate" aria-controls="p-animate" aria-selected="true">Animate</button>
+      <button role="tab" id="t-photo" aria-controls="p-photo" aria-selected="false" tabindex="-1">Photo</button>
+      <button role="tab" id="t-export" aria-controls="p-export" aria-selected="false" tabindex="-1">Export</button>
+    </div>
+
+    <section role="tabpanel" id="p-animate" aria-labelledby="t-animate">
+      <h3>Animations</h3>
+      <div class="list" id="anims"></div>
+      <div class="actions">
+        <button class="btn primary" id="play" type="button">Play</button>
+        <button class="btn" id="stop" type="button">Stop</button>
+        <button class="btn ghost" id="newAnim" type="button">New</button>
+        <button class="btn ghost" id="dupAnim" type="button">Duplicate</button>
+        <button class="btn ghost" id="delAnim" type="button">Delete</button>
+      </div>
+      <h3>Details</h3>
+      <div class="row"><label for="animName">Name</label><input type="text" id="animName" pattern="[a-z][a-zA-Z0-9-]*" style="flex:1"></div>
+      <div class="row"><label for="mode">Playback</label>
+        <select id="mode" style="flex:1"><option value="loop">Loop</option><option value="once">Play once</option><option value="pingPong">Ping-pong</option></select></div>
+      <h3>Steps</h3>
+      <div class="steps" id="steps"></div>
+      <div class="actions"><button class="btn" id="addStep" type="button">Add step</button></div>
+      <h3>Blink</h3>
+      <div class="row"><label for="blinkOn">Blinking</label><input type="checkbox" id="blinkOn"></div>
+      <div class="row"><label for="bFirst">First blink</label><input type="range" id="bFirst" min="0" max="6000" step="100"><output for="bFirst"></output></div>
+      <div class="row"><label for="bMin">Every, from</label><input type="range" id="bMin" min="600" max="8000" step="100"><output for="bMin"></output></div>
+      <div class="row"><label for="bMax">Every, to</label><input type="range" id="bMax" min="600" max="10000" step="100"><output for="bMax"></output></div>
+      <div class="row"><label for="bDur">Blink length</label><input type="range" id="bDur" min="60" max="400" step="10"><output for="bDur"></output></div>
+      <p class="note">Edits save in this browser. Export → dusty.avatar.json to keep them.</p>
+    </section>
+
+    <section role="tabpanel" id="p-photo" aria-labelledby="t-photo" class="hidden">
+      <h3>Dusty</h3>
+      <div class="row"><label for="gx">Look left / right</label><input type="range" id="gx" min="-4" max="4" step=".1"><output for="gx"></output></div>
+      <div class="row"><label for="gy">Look up / down</label><input type="range" id="gy" min="-3.5" max="3.5" step=".1"><output for="gy"></output></div>
+      <div class="row"><label for="color">Body colour</label><input type="color" id="color"><button class="btn ghost" id="colorReset" type="button">Lavender</button></div>
+      <div class="row"><label for="breathe">Breathing</label><input type="checkbox" id="breathe"></div>
+      <h3>Framing</h3>
+      <div class="row"><label for="zoom">Zoom</label><input type="range" id="zoom" min=".4" max="2.4" step=".02"><output for="zoom"></output></div>
+      <div class="row"><label for="ox">Move sideways</label><input type="range" id="ox" min="-100" max="100" step="1"><output for="ox"></output></div>
+      <div class="row"><label for="oy">Move up / down</label><input type="range" id="oy" min="-100" max="100" step="1"><output for="oy"></output></div>
+      <div class="row"><label for="rot">Rotate</label><input type="range" id="rot" min="-45" max="45" step="1"><output for="rot"></output></div>
+      <div class="row"><label for="flip">Mirror</label><input type="checkbox" id="flip"></div>
+      <h3>Background</h3>
+      <div class="row"><label for="bg">Fill</label>
+        <select id="bg" style="flex:1"><option value="transparent">Transparent</option><option value="solid">Solid</option><option value="linear">Linear gradient</option><option value="radial">Radial gradient</option></select></div>
+      <div class="row" id="bgColors"><label for="bgFrom">Colours</label><input type="color" id="bgFrom"><input type="color" id="bgTo"></div>
+      <div class="row" id="bgAngleRow"><label for="bgAngle">Angle</label><input type="range" id="bgAngle" min="0" max="360" step="5"><output for="bgAngle"></output></div>
+      <div class="row"><label for="inkC">Sparkle ink</label><input type="color" id="inkC"><span class="note" style="margin:0">shadow, zzz, ?</span></div>
+      <h3>Snapshot</h3>
+      <div class="row"><label for="size">Size</label>
+        <select id="size" style="flex:1"><option>512</option><option selected>1024</option><option>2048</option><option>4096</option></select></div>
+      <div class="actions">
+        <button class="btn primary" id="png" type="button">Download PNG</button>
+        <button class="btn" id="svgDl" type="button">Download SVG</button>
+        <button class="btn ghost" id="photoReset" type="button">Reset</button>
+      </div>
+      <p class="note">Snapshots the pose on screen; pause the animation on the frame you want.</p>
+    </section>
+
+    <section role="tabpanel" id="p-export" aria-labelledby="t-export" class="hidden">
+      <h3>Avatar definition</h3>
+      <p class="note" style="margin-top:0">One portable file: every pose, both palettes and your animations.</p>
+      <div class="actions">
+        <button class="btn primary" id="dlJson" type="button">Download dusty.avatar.json</button>
+        <label class="btn" for="importJson">Import…</label><input type="file" id="importJson" accept=".json,application/json" class="hidden">
+        <button class="btn ghost" id="resetAll" type="button">Reset to bundled</button>
+      </div>
+      <p class="err" id="err" role="alert"></p>
+      <h3>Use it</h3>
+<pre>&lt;div id="dusty" style="width:160px"&gt;&lt;/div&gt;
+&lt;script type="module"&gt;
+import { mountDusty } from './dusty-avatar.js'
+const def = await fetch('./dusty.avatar.json')
+  .then(r =&gt; r.json())
+const dusty = mountDusty(
+  document.getElementById('dusty'), def)
+dusty.play('proud')      // or 'idle', 'cleanup'…
+dusty.pose('sleepy', 400) // one pose, 400 ms fade
+dusty.set({ gaze: [2, 0], color: '#9FD8C9' })
+&lt;/script&gt;</pre>
+      <p class="note">Regenerate poses with <code>python3 dusty.py</code>; it rewrites the bundled animations, so download yours first.</p>
+    </section>
+  </aside>
+</main>
+
+<script type="module">
+import { mountDusty, validate } from './dusty-avatar.js';
+
+const $ = id => document.getElementById(id);
+const KEY = 'dusty-lab-v1';
+const store = { get() { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } },
+                set(v) { try { localStorage.setItem(KEY, JSON.stringify(v)); } catch {} } };
+const PHOTO = { gaze: [0, 0], color: null, breathe: true, zoom: 1, x: 0, y: 0, rotate: 0, flip: false,
+                bg: 'transparent', bgFrom: '#EDE8FD', bgTo: '#CEC4F7', bgAngle: 90, ink: '#2B2440', size: '1024' };
+
+// theme (same toggle as index.html)
+const root = document.documentElement, tbtn = $('theme');
+const isDark = () => root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+try { const t = localStorage.getItem('dusty-theme'); if (t) root.dataset.theme = t; } catch {}
+const label = () => tbtn.textContent = isDark() ? 'Light' : 'Dark'; label();
+tbtn.onclick = () => { root.dataset.theme = isDark() ? 'light' : 'dark'; try { localStorage.setItem('dusty-theme', root.dataset.theme); } catch {} label(); };
+
+let bundled;
+try { bundled = validate(await fetch('./dusty.avatar.json').then(r => r.json())); }
+catch (e) { document.querySelector('.stage').innerHTML = '<p style="padding:24px;color:var(--ink2)">Couldn’t load dusty.avatar.json. Serve this folder over http (e.g. <code>python -m http.server</code>) and open dusty-lab.html.</p>'; throw e; }
+
+const saved = store.get();
+let def = saved.def ? (() => { try { return validate(saved.def); } catch { return bundled; } })() : bundled;
+const photo = { ...PHOTO, ...saved.photo };
+let sel = def.animationOrder[0], playingName = null, dusty;
+
+const save = () => store.set({ def: def === bundled ? undefined : def, photo });
+const own = () => { if (def === bundled) def = structuredClone(bundled); };   // copy on first edit
+
+function mount() {
+  dusty?.destroy();
+  dusty = mountDusty($('frame'), def, { ...photo, pose: def.poseOrder[0] });
+  status();
+}
+
+// pose strip
+function poses() {
+  $('poses').innerHTML = '';
+  for (const name of def.poseOrder) {
+    const b = document.createElement('button');
+    b.className = 'pose'; b.type = 'button'; b.dataset.pose = name; b.setAttribute('aria-pressed', 'false');
+    b.innerHTML = `<svg viewBox="${def.viewBox}" aria-hidden="true">${def.poses[name].svg.replaceAll('id="', `id="t-`).replaceAll('url(#', 'url(#t-')}</svg><span>${name}</span>`;
+    b.onclick = () => { stopAnim(); dusty.pose(name, 260); status(); };
+    $('poses').append(b);
+  }
+}
+function status(step) {
+  const p = dusty.current;
+  $('playing').innerHTML = playingName ? `Playing · <b>${playingName}</b> · ${p}` : `Pose · <b>${p}</b>`;
+  document.querySelectorAll('.pose').forEach(b => b.setAttribute('aria-pressed', b.dataset.pose === p));
+  document.querySelectorAll('.step').forEach((s, i) => s.classList.toggle('on', i === step));
+}
+
+// animations
+const A = () => def.animations[sel];
+function anims() {
+  $('anims').innerHTML = '';
+  for (const name of def.animationOrder) {
+    const b = document.createElement('button'); b.type = 'button'; b.textContent = name;
+    b.setAttribute('aria-pressed', name === sel);
+    b.onclick = () => { sel = name; anims(); detail(); playAnim(); };
+    $('anims').append(b);
+  }
+}
+const opts = (sel, list) => list.map(v => `<option${v === sel ? ' selected' : ''}>${v}</option>`).join('');
+function detail() {
+  const a = A();
+  $('animName').value = sel; $('mode').value = a.playbackMode;
+  $('steps').innerHTML = '';
+  a.steps.forEach((s, i) => {
+    const el = document.createElement('div'); el.className = 'step';
+    el.innerHTML = `<span class="n">${String(i + 1).padStart(2, '0')}</span>
+      <select aria-label="Step ${i + 1} pose" data-k="pose">${opts(s.pose, def.poseOrder)}</select>
+      <span><button class="icon" type="button" data-m="-1" aria-label="Move step ${i + 1} up">↑</button><button class="icon" type="button" data-m="1" aria-label="Move step ${i + 1} down">↓</button><button class="icon" type="button" data-x aria-label="Remove step ${i + 1}">✕</button></span>
+      <div class="f"><label>Hold ms<input type="number" min="100" step="100" data-k="holdMs" value="${s.holdMs}"></label>
+      <label>Fade ms<input type="number" min="0" step="20" data-k="transitionMs" value="${s.transitionMs}"></label>
+      <label>Style<select data-k="transition">${opts(s.transition, ['smooth', 'snappy', 'spring'])}</select></label></div>`;
+    el.querySelectorAll('[data-k]').forEach(inp => inp.onchange = () => {
+      own(); const st = A().steps[i], k = inp.dataset.k;
+      st[k] = inp.type === 'number' ? Math.max(+inp.min, +inp.value || 0) : inp.value; edited();
+    });
+    el.querySelectorAll('[data-m]').forEach(btn => btn.onclick = () => {
+      const j = i + +btn.dataset.m; if (j < 0 || j >= a.steps.length) return;
+      own(); const st = A().steps; [st[i], st[j]] = [st[j], st[i]]; edited(true);
+    });
+    el.querySelector('[data-x]').onclick = () => { if (a.steps.length < 2) return; own(); A().steps.splice(i, 1); edited(true); };
+    $('steps').append(el);
+  });
+  const b = a.blink;
+  $('blinkOn').checked = b.enabled;
+  for (const [id, k] of [['bFirst', 'initialDelayMs'], ['bMin', 'minIntervalMs'], ['bMax', 'maxIntervalMs'], ['bDur', 'durationMs']]) { $(id).value = b[k]; out(id, b[k] + ' ms'); }
+}
+function edited(redraw) { save(); if (redraw) detail(); if (playingName === sel) playAnim(); }
+const out = (id, v) => { const o = document.querySelector(`output[for="${id}"]`); if (o) o.textContent = v; };
+
+function playAnim() {
+  playingName = sel;
+  dusty.play(A(), { onStep: i => status(i), onEnd: () => { playingName = null; status(); } });
+}
+function stopAnim() { dusty.stop(); playingName = null; status(); }
+$('play').onclick = playAnim; $('stop').onclick = stopAnim;
+$('mode').onchange = () => { own(); A().playbackMode = $('mode').value; edited(); };
+$('animName').onchange = () => {
+  const n = $('animName').value.trim();
+  if (!/^[a-z][a-zA-Z0-9-]*$/.test(n) || def.animations[n]) { $('animName').value = sel; return; }
+  own(); def.animations[n] = def.animations[sel]; delete def.animations[sel];
+  def.animationOrder[def.animationOrder.indexOf(sel)] = n; sel = n; save(); anims();
+};
+$('addStep').onclick = () => { own(); const st = A().steps; st.push({ ...st[st.length - 1] }); edited(true); };
+function addAnim(name, a) {
+  own(); let n = name, k = 2; while (def.animations[n]) n = `${name}-${k++}`;
+  def.animations[n] = a; def.animationOrder.push(n); sel = n; save(); anims(); detail();
+}
+$('newAnim').onclick = () => addAnim('custom', { playbackMode: 'loop', steps: [{ pose: def.poseOrder[0], holdMs: 2000, transitionMs: 300, transition: 'smooth' }], blink: structuredClone(A().blink) });
+$('dupAnim').onclick = () => addAnim(sel, structuredClone(A()));
+$('delAnim').onclick = () => {
+  if (def.animationOrder.length < 2 || !confirm(`Delete the “${sel}” animation?`)) return;
+  own(); delete def.animations[sel]; def.animationOrder = def.animationOrder.filter(n => n !== sel);
+  sel = def.animationOrder[0]; stopAnim(); save(); anims(); detail();
+};
+$('blinkOn').onchange = () => { own(); A().blink.enabled = $('blinkOn').checked; edited(); };
+for (const [id, k] of [['bFirst', 'initialDelayMs'], ['bMin', 'minIntervalMs'], ['bMax', 'maxIntervalMs'], ['bDur', 'durationMs']]) {
+  $(id).oninput = () => out(id, $(id).value + ' ms');
+  $(id).onchange = () => {
+    own(); const b = A().blink; b[k] = +$(id).value;
+    if (b.maxIntervalMs < b.minIntervalMs) { b.maxIntervalMs = b.minIntervalMs; $('bMax').value = b.minIntervalMs; out('bMax', b.minIntervalMs + ' ms'); }
+    edited();
+  };
+}
+
+// photo mode
+const fmt = { gx: v => v, gy: v => v, zoom: v => (+v).toFixed(2) + '×', ox: v => v, oy: v => v, rot: v => v + '°', bgAngle: v => v + '°' };
+function photoUI() {
+  $('gx').value = photo.gaze[0]; $('gy').value = photo.gaze[1]; $('color').value = photo.color || def.palettes.clean.fill;
+  $('breathe').checked = photo.breathe; $('zoom').value = photo.zoom; $('ox').value = photo.x; $('oy').value = photo.y;
+  $('rot').value = photo.rotate; $('flip').checked = photo.flip; $('bg').value = photo.bg; $('bgFrom').value = photo.bgFrom;
+  $('bgTo').value = photo.bgTo; $('bgAngle').value = photo.bgAngle; $('inkC').value = photo.ink; $('size').value = photo.size;
+  for (const id in fmt) out(id, fmt[id]($(id).value));
+  stageBg();
+}
+function stageBg() {
+  const s = $('stage'), f = $('frame'), p = photo;
+  $('bgColors').classList.toggle('hidden', p.bg === 'transparent');
+  $('bgTo').classList.toggle('hidden', p.bg === 'solid');
+  $('bgAngleRow').classList.toggle('hidden', p.bg !== 'linear');
+  s.classList.toggle('transparent', p.bg === 'transparent');
+  f.classList.toggle('bare', p.bg === 'transparent');
+  f.style.background = p.bg === 'solid' ? p.bgFrom : p.bg === 'linear' ? `linear-gradient(${p.bgAngle}deg, ${p.bgFrom}, ${p.bgTo})`
+    : p.bg === 'radial' ? `radial-gradient(70% 70% at 50% 55%, ${p.bgFrom}, ${p.bgTo})` : 'none';
+}
+const view = () => ({ gaze: photo.gaze, color: photo.color, breathe: photo.breathe, zoom: photo.zoom, x: photo.x, y: photo.y, rotate: photo.rotate, flip: photo.flip });
+function photoChange() {
+  Object.assign(photo, { gaze: [+$('gx').value, +$('gy').value], breathe: $('breathe').checked, zoom: +$('zoom').value, x: +$('ox').value,
+    y: +$('oy').value, rotate: +$('rot').value, flip: $('flip').checked, bg: $('bg').value, bgFrom: $('bgFrom').value, bgTo: $('bgTo').value,
+    bgAngle: +$('bgAngle').value, ink: $('inkC').value, size: $('size').value });
+  for (const id in fmt) out(id, fmt[id]($(id).value));
+  dusty.set(view()); stageBg(); save();
+}
+document.querySelectorAll('#p-photo input, #p-photo select').forEach(i => { if (i.id !== 'color') i.addEventListener('input', photoChange); });
+$('color').oninput = () => { photo.color = $('color').value; dusty.set({ color: photo.color }); save(); };
+$('colorReset').onclick = () => { photo.color = null; dusty.set({ color: null }); photoUI(); save(); };
+$('photoReset').onclick = () => { Object.assign(photo, structuredClone(PHOTO)); photoUI(); dusty.set(view()); save(); };
+
+const snap = () => dusty.snapshot({ size: +photo.size, ink: photo.ink,
+  background: { type: photo.bg, from: photo.bgFrom, to: photo.bgTo, angle: photo.bgAngle - 90 } });   // CSS 90deg = left→right = SVG 0
+function download(blob, name) { const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: name }); a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); }
+$('svgDl').onclick = () => download(new Blob([snap()], { type: 'image/svg+xml' }), `dusty-${dusty.current}.svg`);
+$('png').onclick = () => {
+  const size = +photo.size, img = new Image(), url = URL.createObjectURL(new Blob([snap()], { type: 'image/svg+xml' }));
+  img.onload = () => {
+    const c = Object.assign(document.createElement('canvas'), { width: size, height: size });
+    c.getContext('2d').drawImage(img, 0, 0, size, size); URL.revokeObjectURL(url);
+    c.toBlob(b => download(b, `dusty-${dusty.current}-${size}.png`), 'image/png');
+  };
+  img.src = url;
+};
+
+// export / import
+$('dlJson').onclick = () => download(new Blob([JSON.stringify(def)], { type: 'application/json' }), 'dusty.avatar.json');
+$('importJson').onchange = async e => {
+  const file = e.target.files[0]; e.target.value = ''; $('err').textContent = '';
+  if (!file) return;
+  try {
+    const next = validate(JSON.parse(await file.text()));
+    if (!confirm('Replace the poses and animations in this lab with the imported file?')) return;
+    def = next; sel = def.animationOrder[0]; playingName = null; save(); render();
+  } catch (err) { $('err').textContent = err.message; }
+};
+$('resetAll').onclick = () => {
+  if (!confirm('Discard your animation edits and go back to the bundled dusty.avatar.json?')) return;
+  def = bundled; sel = def.animationOrder[0]; playingName = null; save(); render();
+};
+
+// tabs
+const tabs = [...document.querySelectorAll('[role=tab]')];
+function pick(t) {
+  tabs.forEach(x => { const on = x === t; x.setAttribute('aria-selected', on); x.tabIndex = on ? 0 : -1; $(x.getAttribute('aria-controls')).classList.toggle('hidden', !on); });
+  t.focus();
+}
+tabs.forEach((t, i) => { t.onclick = () => pick(t); t.onkeydown = e => {
+  const d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0; if (d) pick(tabs[(i + d + tabs.length) % tabs.length]); }; });
+
+function render() { mount(); poses(); anims(); detail(); photoUI(); playAnim(); }
+render();
+</script>
+</body>
+</html>

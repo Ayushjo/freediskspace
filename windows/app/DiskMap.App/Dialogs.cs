@@ -74,7 +74,8 @@ public static class Dialogs
             SizeToContent = SizeToContent.Height,
             Width = width + 32,
             Content = card,
-            Owner = owner,
+            // A hidden owner (the basket, closed mid-move) would hide the sheet with it.
+            Owner = owner is { IsVisible: false } ? Application.Current?.MainWindow : owner,
             WindowStartupLocation = owner is null ? WindowStartupLocation.CenterScreen : WindowStartupLocation.CenterOwner,
         };
         // A borderless, layered window isn't always made the active one when it opens, and then

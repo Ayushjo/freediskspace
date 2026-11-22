@@ -558,7 +558,7 @@ public sealed class AppsBoardPage : UserControl
 
         FrameworkElement? action = null;
         if (!app.CanStageForCleanup) { }
-        else if (staged) action = Rd.Tag("In basket", Rd.TagTone.Accent);
+        else if (staged) { }   // the violet row says it
         else
         {
             var button = selected ? Rd.AccentButton("Clean up", () => CleanUp(app)) : Rd.SecondaryButton("Clean up", () => CleanUp(app));
@@ -568,10 +568,13 @@ public sealed class AppsBoardPage : UserControl
         }
         if (action is not null) Put(grid, action, c, right: true);
 
+        var layers = new Grid();
+        layers.Children.Add(grid);
+        if (staged) layers.Children.Add(Rd.InBasketEdge());
         var host = new Border
         {
-            Height = 50, Child = grid, Cursor = Cursors.Hand,
-            Background = selected ? Ui.Brush("RdAccentWash") : Brushes.Transparent,
+            Height = 50, Child = layers, Cursor = Cursors.Hand,
+            Background = staged ? Rd.InBasketFill : selected ? Ui.Brush("RdAccentWash") : Brushes.Transparent,
             BorderBrush = Ui.Brush("RdLine"), BorderThickness = new Thickness(0, 0, 0, 1),
         };
         host.MouseLeftButtonDown += (_, e) =>

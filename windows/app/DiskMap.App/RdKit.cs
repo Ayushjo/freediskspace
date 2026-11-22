@@ -16,6 +16,14 @@ namespace DiskMap.App;
 public static class Rd
 {
     private static Brush B(string key) => Ui.Brush(key);
+
+    /// <summary>
+    /// A row whose item is in the basket: violet across its full width, with a 3 pt violet edge —
+    /// the one cue every page uses, so nothing needs an "In basket" label or a second Clean.
+    /// </summary>
+    public static Brush InBasketFill => WithOpacity(B("AppAccent"), 0.16);
+    public static Brush InBasketHover => WithOpacity(B("AppAccent"), 0.24);
+    public static Border InBasketEdge() => new() { Width = 3, HorizontalAlignment = HorizontalAlignment.Left, Background = B("AppAccent") };
     private static readonly FontFamily Mono = new("Cascadia Mono, Consolas");
 
     // ---- Type (DiskMapType + Redesign.swift) ----

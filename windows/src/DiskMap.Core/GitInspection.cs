@@ -91,6 +91,58 @@ public static class GitInspector
             : new GitState.Differs(differing.OrderBy(b => b).ToList());
     }
 
+    /// <summary>
+    /// When someone last did something with this repository on this PC, and what: the newest
+    /// line of its HEAD reflog ("&lt;name&gt; &lt;email&gt; &lt;unix time&gt; &lt;zone&gt;", a tab, "clone: …",
+    /// "commit: …", "checkout: …"). The reflog records local time, never a commit's author date,
+    /// so a five-year-old project cloned yesterday reads "cloned yesterday". Without a reflog,
+    /// the index's date (git rewrites it on add, commit, checkout and status) with "used".
+    /// Day 0 = unknown.
+    /// </summary>
+    public static (int Day, string What) LastActivity(string repositoryPath)
+    {
+        string git = Path.Combine(repositoryPath, ".git");
+        long newest = 0;
+        string what = "";
+        if (Read(Path.Combine(git, "logs", "HEAD")) is { } log)
+        {
+            foreach (var line in log.Split('\n'))
+            {
+                int tab = line.IndexOf('\t');
+                var head = (tab >= 0 ? line[..tab] : line).TrimEnd().Split(' ');
+                if (head.Length < 2 || !long.TryParse(head[^2], out long seconds) || seconds < newest) continue;
+                newest = seconds;
+                string message = tab >= 0 ? line[(tab + 1)..] : "";
+                int colon = message.IndexOfAny([':', ' ', '(']);
+                what = ActivityVerb(colon > 0 ? message[..colon] : message);
+            }
+        }
+        if (newest > 0) return ((int)(newest / 86400), what);
+        try
+        {
+            var index = new FileInfo(Path.Combine(git, "index"));
+            if (index.Exists) return ((int)(new DateTimeOffset(index.LastWriteTimeUtc).ToUnixTimeSeconds() / 86400), "used");
+        }
+        catch { /* unreadable: unknown */ }
+        return (0, "");
+    }
+
+    /// <summary>A reflog action as a past-tense verb: "commit" → "committed", "pull" → "pulled".</summary>
+    internal static string ActivityVerb(string action) => action.Trim().ToLowerInvariant() switch
+    {
+        "commit" => "committed",
+        "clone" => "cloned",
+        "checkout" => "checked out",
+        "pull" => "pulled",
+        "merge" => "merged",
+        "rebase" => "rebased",
+        "reset" => "reset",
+        "cherry-pick" => "cherry-picked",
+        "revert" => "reverted",
+        "branch" => "branched",
+        _ => "used",
+    };
+
     /// <summary><c>[remote "name"]</c> section headers.</summary>
     internal static List<string> RemoteNames(string config) =>
         config.Split('\n')

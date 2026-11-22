@@ -126,8 +126,11 @@ public static class CleanDetail
     /// <summary>"Add 5 that rebuild · 22.9 GB" (Caches).</summary>
     public static string CachesBulkTitle(int count, long bytes) => $"Add {count:N0} that rebuild · {ShellFormat.HeroBytes(bytes)}";
 
-    /// <summary>"Add 4 shown · 21.5 GB" (Old downloads).</summary>
-    public static string DownloadsBulkTitle(int count, long bytes) => $"Add {count:N0} shown · {ShellFormat.HeroBytes(bytes)}";
+    /// <summary>"Add 4 shown · 21.5 GB": everything the current filters show (Old downloads' only bulk add).</summary>
+    public static string DownloadsBulkTitle(int count, long bytes) => ShownBulkTitle(count, bytes);
+
+    /// <summary>"Add 4 shown · 21.5 GB" — every page's add for exactly what its filters show.</summary>
+    public static string ShownBulkTitle(int count, long bytes) => $"Add {count:N0} shown · {ShellFormat.HeroBytes(bytes)}";
 
     /// <summary>"Add 2 likely done with · 4.1 GB" (Large media).</summary>
     public static string MediaBulkTitle(int count, long bytes) => $"Add {count:N0} likely done with · {ShellFormat.HeroBytes(bytes)}";

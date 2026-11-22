@@ -623,10 +623,14 @@ public sealed class CleanupQueue
         // item can no longer be measured — so finish measuring first,
         // reporting how far along that is.
         var measured = WaitForMeasurements();
+        var reported = (Measured: -1, Total: -1);
         while (!measured.Wait(150))
         {
-            var (done, total) = MeasurementProgress();
-            progress?.Report(new CommitProgress("Verifying sizes", done, total));
+            // Each report redraws the basket on the UI thread: only when it moved.
+            var now = MeasurementProgress();
+            if (now == reported) continue;
+            reported = now;
+            progress?.Report(new CommitProgress("Verifying sizes", now.Measured, now.Total));
         }
         // Clock slack: $I creation times are what ResolveAll filters on.
         var startedUtc = DateTime.UtcNow.AddSeconds(-5);

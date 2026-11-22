@@ -161,8 +161,8 @@ switch (command)
         if (olderThan is { } days)
         {
             int today = AgeMap.Today();
-            var stale = projects.Where(p => p.LastSourceDay > 0
-                && today - p.LastSourceDay >= days).Select(p => p.Key).ToHashSet();
+            var stale = projects.Where(p => p.LastUsedDay > 0
+                && today - p.LastUsedDay >= days).Select(p => p.Key).ToHashSet();
             projects = projects.Where(p => stale.Contains(p.Key)).ToList();
             items = items.Where(i => i.ProjectKey is { } k && stale.Contains(k)).ToList();
         }
