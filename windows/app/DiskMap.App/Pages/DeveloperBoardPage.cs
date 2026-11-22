@@ -3,6 +3,7 @@ using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using DiskMap.Core;
 
 namespace DiskMap.App.Pages;
@@ -14,8 +15,8 @@ namespace DiskMap.App.Pages;
 /// lives · Projects · By tool · WSL &amp; SDKs, with Every item and Biggest wins under More), the
 /// list, and the inspector on the right. Same metrics and words as the Mac; Xcode's tab shows
 /// the Windows tools (WSL, Docker, Android, .NET SDKs) from developer-storage.json. Nothing is
-/// deleted here: every Clean stages into the basket, risky items (WSL and Docker disks) keep
-/// their warning, and a tool's own command is only ever copied.
+/// deleted here: every "Add … to basket" only stages, bulk adds take only what rebuilds by itself,
+/// risky items (WSL and Docker disks) keep their warning, and a tool's own command is only ever copied.
 /// </summary>
 public sealed class DeveloperBoardPage : UserControl
 {
@@ -64,6 +65,10 @@ public sealed class DeveloperBoardPage : UserControl
     private HashSet<string> _staged = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>Each project's last source change, for its items' "Last used".</summary>
     private Dictionary<string, int> _projectDay = [];
+    /// <summary>Each item's newest file, walked once per scan (as CleanUpPage._lastDay).</summary>
+    private readonly Dictionary<int, int> _itemDay = [];
+    /// <summary>The filter re-renders once typing pauses, not on every key.</summary>
+    private readonly DispatcherTimer _filterDelay = new() { Interval = TimeSpan.FromMilliseconds(200) };
     private object? _scanFor;
     private double _listOffset;
     private Tab _offsetTab;
@@ -89,7 +94,8 @@ public sealed class DeveloperBoardPage : UserControl
         Content = _layout;
         ModelEvents.WhileLoaded(this, Rebuild);
         Loaded += (_, _) => Model.StagedChanged += OnStaged;
-        Unloaded += (_, _) => Model.StagedChanged -= OnStaged;
+        Unloaded += (_, _) => { Model.StagedChanged -= OnStaged; _filterDelay.Stop(); };
+        _filterDelay.Tick += (_, _) => { _filterDelay.Stop(); Refilter(); };
         SizeChanged += (_, _) => { if (Rd.ClassFor(WindowWidth) != _class) Rebuild(); };
     }
 
@@ -110,13 +116,24 @@ public sealed class DeveloperBoardPage : UserControl
     /// <summary>Items whose recipe says the Recycle Bin would damage the tool, and protected ones, are never staged.</summary>
     internal static bool CanStage(DeveloperItem item) => !item.IsProtected && item.Recipe?.TrashIsUnsafe != true;
 
-    internal enum RowAction { None, Review, Clean }
+    /// <summary>
+    /// What a bulk add (a folder's or project's add, "Add all", "Add old ones", "Add what rebuilds") may take:
+    /// only what rebuilds by itself. Review-first items — backups, history, dependencies — go one at a time.
+    /// </summary>
+    internal static bool StagesInBulk(DeveloperItem item) =>
+        CanStage(item) && item.Reclaimability == DeveloperReclaimability.Reclaimable;
 
-    /// <summary>An item row's button: Clean what rebuilds, Review the rest, nothing for protected.</summary>
+    internal enum RowAction { None, Review, Add }
+
+    /// <summary>An item row's button: Add what rebuilds, Review the rest, nothing for protected.</summary>
     internal static RowAction ActionFor(DeveloperItem item) =>
         item.Recipe?.TrashIsUnsafe == true || item.Reclaimability != DeveloperReclaimability.Reclaimable || item.IsProtected
             ? (item.IsProtected ? RowAction.None : RowAction.Review)
-            : RowAction.Clean;
+            : RowAction.Add;
+
+    /// <summary>By tool's section button: it adds exactly the rows the section lists.</summary>
+    internal static string AddListedTitle(int listed, int total) =>
+        listed == total ? "Add all to basket" : $"Add these {listed} to basket";
 
     /// <summary>The tag chip: the category with its size when it rebuilds, else "Keep" or "Review".</summary>
     internal static (string Text, long? Bytes, bool Accent) ItemTag(DeveloperItem item) =>
@@ -181,7 +198,7 @@ public sealed class DeveloperBoardPage : UserControl
     private static DeveloperFolders Folders(DeveloperCatalogResult catalog, FileTree tree)
     {
         if (_folders is { } f && ReferenceEquals(f.Result, catalog)) return f.Folders;
-        var folders = DeveloperCatalog.FolderRollup(catalog, tree, i => CanStage(i) && i.Reclaimability != DeveloperReclaimability.Keep);
+        var folders = DeveloperCatalog.FolderRollup(catalog, tree, StagesInBulk);
         _folders = (catalog, folders);
         return folders;
     }
@@ -238,6 +255,7 @@ public sealed class DeveloperBoardPage : UserControl
             _scanFor = tree;
             _whereFolder = null;
             _selection = null;
+            _itemDay.Clear();
         }
         var totals = Model.Totals;
         if (Catalog(tree, totals, () => { if (IsLoaded) Rebuild(); }) is not { } full)
@@ -594,7 +612,8 @@ public sealed class DeveloperBoardPage : UserControl
             hint.Visibility = box.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
             clear.Visibility = box.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
             _query = box.Text;
-            Refilter();
+            _filterDelay.Stop();
+            _filterDelay.Start();
         };
         box.KeyDown += (_, e) => { if (e.Key == Key.Escape) { box.Text = ""; e.Handled = true; } };
         var field = new Grid();
@@ -681,8 +700,8 @@ public sealed class DeveloperBoardPage : UserControl
         FrameworkElement? cleanAll = null;
         if (current.RemovableBytes > 0)
         {
-            var button = Rd.SecondaryButton($"Clean all {ShellFormat.HeroBytes(current.RemovableBytes)}", () => StageFolder(current, catalog));
-            button.ToolTip = "Add every removable folder under here to the basket — you'll see the list first";
+            var button = Rd.SecondaryButton($"Add all {ShellFormat.HeroBytes(current.RemovableBytes)} to basket", () => StageFolder(current, catalog));
+            button.ToolTip = "Add every folder under here that rebuilds by itself to the basket — you'll see the list first";
             cleanAll = button;
         }
         inCard.Children.Add(SectionHeader("In " + DisplayName(tree, root, currentId),
@@ -724,7 +743,7 @@ public sealed class DeveloperBoardPage : UserControl
             DeveloperBoard.CountLabel(folder.ItemCount, "place"),
             ShellFormat.HeroBytes(canGo ? folder.RemovableBytes : folder.Bytes), canGo,
             "changed " + ExploreInspector.LastUsed(day, AgeMap.Today()).ToLowerInvariant(),
-            canGo ? ("Clean", () => StageFolder(folder, catalog)) : null,
+            canGo ? ("Add to basket", () => StageFolder(folder, catalog)) : null,
             _selection == new Selection.Folder(folder.Id),
             () => Select(new Selection.Folder(folder.Id)),
             () => { _whereFolder = folder.Id; _selection = null; Rebuild(); },
@@ -757,11 +776,11 @@ public sealed class DeveloperBoardPage : UserControl
         return catalog.Items.Where(i => nodes.Contains(i.NodeID)).OrderByDescending(i => i.Bytes).ToList();
     }
 
-    /// <summary>What a project's Clean adds: everything in it that can go.</summary>
+    /// <summary>What a project's add takes: everything in it that rebuilds by itself.</summary>
     private static List<DeveloperItem> ProjectStageable(DeveloperProject project, DeveloperCatalogResult catalog) =>
-        ProjectItems(project, catalog).Where(i => CanStage(i) && i.Reclaimability != DeveloperReclaimability.Keep).ToList();
+        ProjectItems(project, catalog).Where(StagesInBulk).ToList();
 
-    /// <summary>Everything in a project that can go, in one confirmed add.</summary>
+    /// <summary>Everything in a project that rebuilds by itself, in one confirmed add.</summary>
     private void StageProject(DeveloperProject project, DeveloperCatalogResult catalog) =>
         Stage(ProjectStageable(project, catalog), confirm: true);
 
@@ -805,8 +824,8 @@ public sealed class DeveloperBoardPage : UserControl
     }
 
     /// <summary>
-    /// One card of projects. "Clean old ones" adds every project in it that passes the Last used
-    /// filter (untouched 6+ months when it's off) — never one changed in the last two weeks.
+    /// One card of projects. "Add old ones to basket" adds what rebuilds in every project in it that
+    /// passes the Last used filter (untouched 6+ months when it's off) — never one changed in the last two weeks.
     /// </summary>
     private FrameworkElement ProjectsCard(string title, string detail, List<DeveloperProject> projects,
         DeveloperCatalogResult catalog, int today)
@@ -819,7 +838,7 @@ public sealed class DeveloperBoardPage : UserControl
         FrameworkElement? actions = null;
         if (old.Count > 0)
         {
-            var button = Rd.SecondaryButton($"Clean old ones · {ShellFormat.HeroBytes(old.Sum(i => i.Bytes))}", () => Stage(old, confirm: true));
+            var button = Rd.SecondaryButton($"Add old ones to basket · {ShellFormat.HeroBytes(old.Sum(i => i.Bytes))}", () => Stage(old, confirm: true));
             button.ToolTip = $"Projects last changed {DeveloperBoard.LastUsedTitle(olderThan).ToLowerInvariant()} — you'll see the list first. Active projects are left alone.";
             actions = button;
         }
@@ -838,7 +857,7 @@ public sealed class DeveloperBoardPage : UserControl
                 DeveloperBoard.CountLabel(project.ItemCount, "place"),
                 ShellFormat.HeroBytes(canGo ? project.ReclaimableBytes : project.Bytes), canGo && !active,
                 project.LastUsedWhat + " " + DeveloperBoard.LastChange(project.LastUsedDay, today).ToLowerInvariant(),
-                canGo ? ("Clean", () => StageProject(p, catalog)) : null,
+                canGo ? ("Add to basket", () => StageProject(p, catalog)) : null,
                 _selection == new Selection.Project(project.Id),
                 () => Select(new Selection.Project(p.Id)), null,
                 project.AbsolutePath, canGo ? () => StageProject(p, catalog) : null,
@@ -852,10 +871,14 @@ public sealed class DeveloperBoardPage : UserControl
     // ---- Items ----
 
     /// <summary>When an item was last used: its project's last source change, else the newest file the scan saw.</summary>
-    private int ItemDay(DeveloperItem item) =>
-        item.ProjectKey is { } key && _projectDay.TryGetValue(key, out int day) && day > 0
-            ? day
-            : Model.Tree is { } tree && item.NodeID < tree.Count ? AgeMap.NewestDay(tree, item.NodeID) : item.ModifiedDay;
+    private int ItemDay(DeveloperItem item)
+    {
+        if (item.ProjectKey is { } key && _projectDay.TryGetValue(key, out int day) && day > 0) return day;
+        if (Model.Tree is not { } tree || item.NodeID >= tree.Count) return item.ModifiedDay;
+        // A whole-subtree walk: once per item and scan, not on every keystroke.
+        if (!_itemDay.TryGetValue(item.NodeID, out day)) _itemDay[item.NodeID] = day = AgeMap.NewestDay(tree, item.NodeID);
+        return day;
+    }
 
     /// <summary>In a project changed in the last two weeks — bulk cleans leave it alone.</summary>
     private bool IsActiveItem(DeveloperItem item) =>
@@ -886,11 +909,10 @@ public sealed class DeveloperBoardPage : UserControl
         var shown = items.Take(120).ToList();
         if (shown.Count == 0) return EmptyState("shippingbox", "Nothing here", "No matching developer items.");
         // Every item the filters match, not just the 120 drawn.
-        var removable = items.Where(i => CanStage(i) && i.Reclaimability == DeveloperReclaimability.Reclaimable
-            && !IsActiveItem(i) && !InBasket(i.AbsolutePath)).ToList();
+        var removable = items.Where(i => StagesInBulk(i) && !IsActiveItem(i) && !InBasket(i.AbsolutePath)).ToList();
         var actions = new StackPanel { Orientation = Orientation.Horizontal };
         if (removable.Count > 0)
-            actions.Children.Add(Rd.SecondaryButton($"Clean what rebuilds · {ShellFormat.HeroBytes(removable.Sum(i => i.Bytes))}",
+            actions.Children.Add(Rd.SecondaryButton($"Add what rebuilds to basket · {ShellFormat.HeroBytes(removable.Sum(i => i.Bytes))}",
                 () => Stage(removable, confirm: true)));
         if (_ecosystemFilter is not null && _tab == Tab.AllItems)
         {
@@ -913,7 +935,7 @@ public sealed class DeveloperBoardPage : UserControl
         bool rebuilds = item.Reclaimability == DeveloperReclaimability.Reclaimable;
         (string, Action)? action = ActionFor(item) switch
         {
-            RowAction.Clean => ("Clean", () => Stage([item], confirm: false)),
+            RowAction.Add => ("Add to basket", () => Stage([item], confirm: false)),
             RowAction.Review => ("Review", () => Select(new Selection.Item(item.Id))),
             _ => null,
         };
@@ -937,17 +959,22 @@ public sealed class DeveloperBoardPage : UserControl
         if (hits.Count == 0)
             return EmptyState("leaf", "Nothing regenerable found", "No dependency folders, build output or tool caches in this scan.");
         var patterns = QuickWins.BundledPatterns();
+        // "rebuilds" is the developer catalog's word for Reclaimable; anything else here says "review".
+        var rebuilds = (_built is { } b && ReferenceEquals(b.Tree, tree) ? b.Result.Items : [])
+            .Where(i => i.Reclaimability == DeveloperReclaimability.Reclaimable).Select(i => i.NodeID).ToHashSet();
         var stack = new StackPanel();
         bool first = true;
         foreach (var section in QuickWins.Sections(patterns, hits))
         {
             var group = hits.Where(h => h.Category == section.Title).OrderByDescending(h => ToolSize(h.Id)).ToList();
             if (group.Count == 0) continue;
+            var listed = group.Take(30).ToList();
             var card = new StackPanel();
             string category = section.Title;
             card.Children.Add(SectionHeader(section.Title,
                 $"{DeveloperBoard.CountLabel(group.Count, "place")} · {ShellFormat.HeroBytes(group.Sum(h => ToolSize(h.Id)))}", "",
-                Rd.SecondaryButton("Clean all", () => StageTools(group.Select(h => h.Id).ToList(), category, confirm: true))));
+                Rd.SecondaryButton(AddListedTitle(listed.Count, group.Count),
+                    () => StageTools(listed.Select(h => h.Id).ToList(), category, confirm: true))));
             if (section.Note.Length > 0)
             {
                 var note = Rd.Text(section.Note, 12, null, "RdInk2", wrap: true);
@@ -957,13 +984,14 @@ public sealed class DeveloperBoardPage : UserControl
                     BorderBrush = Ui.Brush("RdLine"), BorderThickness = new Thickness(0, 0, 0, 1),
                 });
             }
-            foreach (var hit in group.Take(30))
+            foreach (var hit in listed)
             {
                 int id = hit.Id;
                 string path = id < tree.Count ? tree.PathOf(id, root) : hit.Name;
+                bool rebuildsItself = rebuilds.Contains(id);
                 card.Children.Add(DevRow(Icons.Folder, hit.Name, CanonicalPath.DisplayPath(path), [], null, "",
-                    ShellFormat.HeroBytes(ToolSize(id)), true, "rebuilds",
-                    ("Clean", () => StageTools([id], category, confirm: false)),
+                    ShellFormat.HeroBytes(ToolSize(id)), rebuildsItself, rebuildsItself ? "rebuilds" : "review",
+                    ("Add to basket", () => StageTools([id], category, confirm: false)),
                     _selection == new Selection.Tool(id), () => Select(new Selection.Tool(id)), null,
                     path, () => StageTools([id], category, confirm: false), [path]));
             }
@@ -1193,7 +1221,7 @@ public sealed class DeveloperBoardPage : UserControl
 
     private FrameworkElement ProjectPanel(DeveloperProject project, DeveloperCatalogResult catalog)
     {
-        var removable = ProjectItems(project, catalog).Where(i => i.Reclaimability != DeveloperReclaimability.Keep && CanStage(i)).ToList();
+        var removable = ProjectStageable(project, catalog);
         bool canGo = project.ReclaimableBytes > 0;
         return Panel("Selected project", project.Name, project.DisplayPath,
             canGo ? project.ReclaimableBytes : project.Bytes, canGo ? project.Bytes : null,
@@ -1596,7 +1624,8 @@ public sealed class DeveloperBoardPage : UserControl
         figures.Children.Add(small);
         Grid.SetColumn(figures, 3);
         grid.Children.Add(figures);
-        var actionBox = new Border { Width = 96, Margin = new Thickness(14, 0, 0, 0) };
+        // Wide enough for "Add to basket".
+        var actionBox = new Border { Width = 120, Margin = new Thickness(14, 0, 0, 0) };
         if (action is { } a && !inBasket)
         {
             var button = Rd.SecondaryButton(a.Title, a.Run);

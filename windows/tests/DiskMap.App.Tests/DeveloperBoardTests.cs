@@ -28,9 +28,9 @@ public class DeveloperBoardTests
     }
 
     [Fact]
-    public void OnlyWhatRebuildsGetsCleanAndProtectedGetsNothing()
+    public void OnlyWhatRebuildsGetsAddAndProtectedGetsNothing()
     {
-        Assert.Equal(RowAction.Clean, ActionFor(Item(DeveloperReclaimability.Reclaimable)));
+        Assert.Equal(RowAction.Add, ActionFor(Item(DeveloperReclaimability.Reclaimable)));
         Assert.Equal(RowAction.Review, ActionFor(Item(DeveloperReclaimability.ReviewFirst)));
         Assert.Equal(RowAction.Review, ActionFor(Item(DeveloperReclaimability.Reclaimable, recipe: Docker)));
         Assert.Equal(RowAction.None, ActionFor(Item(DeveloperReclaimability.Keep, isProtected: true)));

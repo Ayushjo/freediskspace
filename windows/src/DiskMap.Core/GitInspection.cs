@@ -15,10 +15,16 @@ public abstract record GitState
     public sealed record NotARepository : GitState;
     /// <summary>A repository with no remote: this folder may be the only copy.</summary>
     public sealed record NoRemote : GitState;
-    /// <summary>Every local branch matches its remote-tracking branch.</summary>
+    /// <summary>Every local branch matches its remote-tracking branch; no stash; HEAD on a branch or a remote tip.</summary>
     public sealed record InSync : GitState;
-    /// <summary>These local branches are missing from, or differ from, the remote.</summary>
-    public sealed record Differs(List<string> Branches) : GitState;
+    /// <summary>These local branches are missing from, or differ from, the remote — or there is local-only work besides.</summary>
+    public sealed record Differs(List<string> Branches) : GitState
+    {
+        /// <summary>refs/stash exists: stashes are never pushed.</summary>
+        public bool HasStash { get; init; }
+        /// <summary>HEAD is detached at a commit no branch or remote-tracking branch points to.</summary>
+        public bool DetachedHead { get; init; }
+    }
     /// <summary><c>.git</c> is a file (worktree or submodule), or could not be read.</summary>
     public sealed record Unknown(string Reason) : GitState;
 
@@ -27,6 +33,8 @@ public abstract record GitState
         NotARepository => "Not a git repository",
         NoRemote => "No remote — may be the only copy",
         InSync => "Committed work is on the remote",
+        Differs { Branches.Count: 0, HasStash: true } => "Stashed changes aren’t on the remote",
+        Differs { Branches.Count: 0 } => "Commits on a detached HEAD may not be on the remote",
         Differs { Branches: { Count: 1 } b } => $"Branch “{b[0]}” isn’t on the remote",
         Differs d => $"{d.Branches.Count} branches aren’t on the remote",
         Unknown => "Git status unknown",
@@ -41,8 +49,13 @@ public abstract record GitState
             "The repository has no remote to push to. Deleting the folder deletes its history.",
         InSync =>
             "Every local branch matches the remote as of the last fetch. Uncommitted changes are not checked.",
-        Differs =>
-            "These branches have commits that differ from the remote — unpushed work, or changes not yet pulled. Uncommitted changes are not checked.",
+        Differs d => string.Join(" ", new[]
+        {
+            d.Branches.Count > 0 ? "These branches have commits that differ from the remote — unpushed work, or changes not yet pulled." : null,
+            d.HasStash ? "Stashed changes are never pushed, so they exist only here." : null,
+            d.DetachedHead ? "HEAD is detached at a commit no remote branch points to; commits made there may exist only here." : null,
+            "Uncommitted changes are not checked.",
+        }.OfType<string>()),
         Unknown u => u.Reason,
         _ => "",
     };
@@ -67,15 +80,24 @@ public static class GitInspector
         if (remotes.Count == 0) return new GitState.NoRemote();
         string remote = remotes.Contains("origin") ? "origin" : remotes.OrderBy(r => r).First();
 
-        var packed = PackedRefs(Path.Combine(git, "packed-refs"));
+        // Unreadable refs are never "pushed": what can't be read may be the only copy.
+        if (PackedRefs(Path.Combine(git, "packed-refs")) is not { } packed)
+            return new GitState.Unknown("The repository’s packed refs could not be read, so its branches can’t be compared.");
+        if (LooseRefs(git, "refs/heads") is not { } looseLocal || LooseRefs(git, $"refs/remotes/{remote}") is not { } looseTracking)
+            return new GitState.Unknown("Some of the repository’s branch files are links or online-only cloud files, so they weren’t read.");
+        if (Read(Path.Combine(git, "HEAD"))?.Trim() is not { } head)
+            return new GitState.Unknown("The repository’s HEAD could not be read.");
         var local = packed.Where(kv => kv.Key.StartsWith("refs/heads/"))
             .ToDictionary(kv => kv.Key, kv => kv.Value);
         var tracking = packed.Where(kv => kv.Key.StartsWith($"refs/remotes/{remote}/"))
             .ToDictionary(kv => kv.Key, kv => kv.Value);
-        foreach (var (refName, sha) in LooseRefs(git, "refs/heads")) local[refName] = sha;
-        foreach (var (refName, sha) in LooseRefs(git, $"refs/remotes/{remote}")) tracking[refName] = sha;
+        foreach (var (refName, sha) in looseLocal) local[refName] = sha;
+        foreach (var (refName, sha) in looseTracking) tracking[refName] = sha;
+        bool hasStash = packed.ContainsKey("refs/stash") || File.Exists(Path.Combine(git, "refs", "stash"));
+        // A detached HEAD on a branch or a remote tip is covered by those; anywhere else its commits may be only here.
+        bool detached = !head.StartsWith("ref:") && !local.ContainsValue(head) && !tracking.ContainsValue(head);
 
-        if (local.Count == 0)
+        if (local.Count == 0 && !hasStash && !detached)
             return new GitState.Unknown("The repository has no branches yet.");
         var differing = new List<string>();
         foreach (var (refName, sha) in local)
@@ -87,8 +109,8 @@ public static class GitInspector
                 differing.Add(branch);
             }
         }
-        return differing.Count == 0 ? new GitState.InSync()
-            : new GitState.Differs(differing.OrderBy(b => b).ToList());
+        return differing.Count == 0 && !hasStash && !detached ? new GitState.InSync()
+            : new GitState.Differs(differing.OrderBy(b => b).ToList()) { HasStash = hasStash, DetachedHead = detached };
     }
 
     /// <summary>
@@ -143,18 +165,21 @@ public static class GitInspector
         _ => "used",
     };
 
-    /// <summary><c>[remote "name"]</c> section headers.</summary>
+    /// <summary><c>[remote "name"]</c> section headers (section names are case-insensitive in git).</summary>
     internal static List<string> RemoteNames(string config) =>
         config.Split('\n')
             .Select(l => l.Trim())
-            .Where(l => l.StartsWith("[remote \"") && l.EndsWith("\"]"))
+            // Longer than `[remote ""]`: a bare `[remote "]` once threw here and emptied the Developer page.
+            .Where(l => l.Length > 11 && l.StartsWith("[remote \"", StringComparison.OrdinalIgnoreCase) && l.EndsWith("\"]"))
             .Select(l => l[9..^2])
             .ToList();
 
-    internal static Dictionary<string, string> PackedRefs(string path)
+    /// <summary>packed-refs as ref → sha; empty when there is none, null when it exists but can't be read.</summary>
+    internal static Dictionary<string, string>? PackedRefs(string path)
     {
         var refs = new Dictionary<string, string>();
-        if (Read(path) is not { } text) return refs;
+        if (!File.Exists(path)) return refs;
+        if (Read(path) is not { } text) return null;
         foreach (var rawLine in text.Split('\n'))
         {
             string line = rawLine.Trim();
@@ -166,35 +191,56 @@ public static class GitInspector
         return refs;
     }
 
-    /// <summary>Loose ref files under <c>.git/{prefix}</c>, recursively (branch names may contain slashes).</summary>
-    internal static Dictionary<string, string> LooseRefs(string git, string prefix)
+    /// <summary>
+    /// Loose ref files under <c>.git/{prefix}</c>, recursively (branch names may contain slashes).
+    /// Null when one can't be read — a link, an online-only cloud file, an unreadable file — so a
+    /// branch is never silently missing. Links are not followed and cloud files never downloaded.
+    /// </summary>
+    internal static Dictionary<string, string>? LooseRefs(string git, string prefix)
     {
         string baseDir = Path.Combine(git, prefix.Replace('/', Path.DirectorySeparatorChar));
         var refs = new Dictionary<string, string>();
-        if (!Directory.Exists(baseDir)) return refs;
-        IEnumerable<string> files;
-        try { files = Directory.EnumerateFiles(baseDir, "*", SearchOption.AllDirectories); }
-        catch { return refs; }
-        foreach (var file in files)
+        var top = new DirectoryInfo(baseDir);
+        if (!top.Exists) return refs;
+        // Nothing skipped by attribute: a link or cloud file has to be seen to be reported.
+        var options = new EnumerationOptions { AttributesToSkip = 0, IgnoreInaccessible = true };
+        try
         {
-            string relative = Path.GetRelativePath(baseDir, file).Replace(Path.DirectorySeparatorChar, '/');
-            string? sha = Read(file)?.Trim();
-            if (sha is null || sha.Length < 40 || sha.StartsWith("ref:")) continue;
-            refs[$"{prefix}/{relative}"] = sha;
+            if (IsLinkOrCloud(top.Attributes, fromListing: false)) return null;
+            var folders = new Stack<DirectoryInfo>([top]);
+            while (folders.TryPop(out var folder))
+                foreach (var entry in folder.EnumerateFileSystemInfos("*", options))
+                {
+                    if (IsLinkOrCloud(entry.Attributes, fromListing: true)) return null;
+                    if (entry is DirectoryInfo sub) { folders.Push(sub); continue; }
+                    if (Read(entry.FullName)?.Trim() is not { } sha) return null;
+                    if (sha.Length < 40 || sha.StartsWith("ref:")) continue;
+                    string relative = Path.GetRelativePath(baseDir, entry.FullName).Replace(Path.DirectorySeparatorChar, '/');
+                    refs[$"{prefix}/{relative}"] = sha;
+                }
         }
+        catch { return null; }
         return refs;
     }
 
+    /// <summary>
+    /// A small file's text, or null: missing, 16 MB or more, unreadable, a link (not followed), or an
+    /// online-only cloud file (reading it would download it — the app stays offline).
+    /// </summary>
     internal static string? Read(string path)
     {
         try
         {
             var info = new FileInfo(path);
-            if (!info.Exists || info.Length >= 16 * 1024 * 1024) return null;
+            if (!info.Exists || IsLinkOrCloud(info.Attributes, fromListing: false) || info.Length >= 16 * 1024 * 1024) return null;
             return File.ReadAllText(path);
         }
         catch { return null; }
     }
+
+    /// <summary>A reparse point (symlink, junction, cloud placeholder) or a file whose data isn't on this PC.</summary>
+    internal static bool IsLinkOrCloud(FileAttributes attributes, bool fromListing) =>
+        (attributes & FileAttributes.ReparsePoint) != 0 || ScanEngine.IsCloudPlaceholder((uint)attributes, fromListing);
 }
 
 /// <summary>
@@ -329,8 +375,10 @@ public sealed class GitIgnoreRules
             return new Matcher.NameSuffix(pattern[1..]);
         try
         {
+            // NonBacktracking: linear in the path. Each **/ is an optional group, and ten of them
+            // took the backtracking engine 1.7 s per deep path — inside the scan, where Cancel isn't seen.
             return new Matcher.RegexMatch(new Regex(
-                "^" + RegexBody(pattern) + "$", RegexOptions.CultureInvariant));
+                "^" + RegexBody(pattern) + "$", RegexOptions.CultureInvariant | RegexOptions.NonBacktracking));
         }
         catch { return null; }
     }
@@ -464,10 +512,11 @@ public sealed class GitIgnoreRules
     /// down from the root and loading each folder's .gitignore on the way,
     /// as git does. Untracked-but-not-ignored counts as not ignored: that
     /// is the safe answer for "is this generated output?".
-    /// <paramref name="fileCache"/> keeps .gitignore reads to one per file.
+    /// <paramref name="cache"/> keeps each ignore file to one read and one
+    /// parse (its regexes included), keyed by path — share it across calls.
     /// </summary>
     public static bool IsIgnored(FileTree tree, int repositoryId, string repositoryPath, int id,
-        Dictionary<string, string?>? fileCache = null)
+        Dictionary<string, GitIgnoreRules?>? cache = null)
     {
         var chain = new List<int>();
         for (int n = id; n != repositoryId; n = tree.Parent[n])
@@ -476,15 +525,22 @@ public sealed class GitIgnoreRules
             chain.Add(n);
         }
         chain.Reverse();
-        string? Read(string path)
+        GitIgnoreRules? Load(string path, string baseFolder)
         {
-            if (fileCache is null) return GitInspector.Read(path);
-            if (!fileCache.TryGetValue(path, out var text)) fileCache[path] = text = GitInspector.Read(path);
-            return text;
+            if (cache is not null && cache.TryGetValue(path, out var known)) return known;
+            GitIgnoreRules? parsed = null;
+            if (GitInspector.Read(path) is { } text)
+            {
+                parsed = new GitIgnoreRules();
+                parsed.AddParsed(text, baseFolder);
+            }
+            if (cache is not null) cache[path] = parsed;
+            return parsed;
         }
         var active = new GitIgnoreRules();
-        if (Read(Path.Combine(repositoryPath, ".git", "info", "exclude")) is { } exclude)
-            active.AddParsed(exclude, "");
+        if (Load(Path.Combine(repositoryPath, ".git", "info", "exclude"), "") is { } exclude)
+            active._rules.AddRange(exclude._rules);
+        Index? index = null;
         string relative = "";
         int folder = repositoryId;
         foreach (int n in chain)
@@ -494,12 +550,17 @@ public sealed class GitIgnoreRules
                 if (tree.IsDirectory[c] || tree.NameOf(c) != ".gitignore") continue;
                 string folderPath = relative.Length == 0
                     ? repositoryPath : repositoryPath + "\\" + relative.Replace('/', '\\');
-                if (Read(folderPath + "\\.gitignore") is { } text) active.AddParsed(text, relative);
+                if (Load(folderPath + "\\.gitignore", relative) is { } rules)
+                {
+                    active._rules.AddRange(rules._rules);
+                    index = null;
+                }
                 break;
             }
             string name = tree.NameOf(n);
             relative = relative.Length == 0 ? name : relative + "/" + name;
-            if (active.Verdict(relative, name, tree.IsDirectory[n]) == true) return true;
+            index ??= new Index(active._rules);
+            if (active.Verdict(relative, name, tree.IsDirectory[n], index, active._rules.Count) == true) return true;
             folder = n;
         }
         return false;

@@ -17,6 +17,8 @@ public enum RebuildCost
     Networked,
     /// <summary>Re-downloaded, and the project has no lockfile: reinstalling may not reproduce what is there now.</summary>
     NetworkedUnpinned,
+    /// <summary>Nothing recreates it — backups and history. Last: the worst cost.</summary>
+    Never,
 }
 
 public static class RebuildCostExtensions
@@ -27,6 +29,7 @@ public static class RebuildCostExtensions
         RebuildCost.Cheap => "Rebuilds offline",
         RebuildCost.Networked => "Re-downloads",
         RebuildCost.NetworkedUnpinned => "Re-downloads · no lockfile",
+        RebuildCost.Never => "Doesn’t rebuild",
         _ => "Unknown",
     };
 
@@ -37,6 +40,7 @@ public static class RebuildCostExtensions
         RebuildCost.Networked => "Downloaded again from a package registry on the next install.",
         RebuildCost.NetworkedUnpinned =>
             "Downloaded again on the next install — and this project has no lockfile, so the versions you get may not match what is installed now.",
+        RebuildCost.Never => "Nothing recreates this — once removed, it is gone.",
         _ => "",
     };
 }
@@ -249,6 +253,9 @@ internal sealed class ProjectLocator
     private readonly string[] _manifestSuffixes;
     private readonly Dictionary<int, HashSet<string>> _childNamesCache = [];
 
+    /// <summary>Each ignore file read so far, parsed once (null = unreadable): see <see cref="GitIgnoreRules.IsIgnored"/>.</summary>
+    public Dictionary<string, GitIgnoreRules?> IgnoreFiles { get; } = new(StringComparer.OrdinalIgnoreCase);
+
     public ProjectLocator(FileTree tree, HashSet<string> manifestNames, string[] manifestSuffixes)
     {
         _tree = tree;
@@ -350,8 +357,10 @@ public static partial class DeveloperCatalog
         // Evidence — see the rules file's comment. Empty = no requirement.
         public Glob[] RequiresSibling { get; init; } = [];
         public Glob[] RequiresChild { get; init; } = [];
-        public Glob[] RequiresParent { get; init; } = [];
+        /// <summary>Each alternative is a folder chain ending at the parent: ".gradle\wrapper" = [.gradle, wrapper].</summary>
+        public Glob[][] RequiresParent { get; init; } = [];
         public Glob[] ForbidSibling { get; init; } = [];
+        public Glob[] ForbidChild { get; init; } = [];
         public bool SkipIfTracked { get; init; }
     }
 
@@ -371,6 +380,7 @@ public static partial class DeveloperCatalog
         [JsonPropertyName("requiresChild")] public List<string> RequiresChild { get; set; } = [];
         [JsonPropertyName("requiresParent")] public List<string> RequiresParent { get; set; } = [];
         [JsonPropertyName("forbidSibling")] public List<string> ForbidSibling { get; set; } = [];
+        [JsonPropertyName("forbidChild")] public List<string> ForbidChild { get; set; } = [];
         [JsonPropertyName("skipIfTracked")] public bool SkipIfTracked { get; set; }
     }
 
@@ -490,8 +500,9 @@ public static partial class DeveloperCatalog
                 LockEcosystem = entry.LockEcosystem,
                 RequiresSibling = entry.RequiresSibling.Select(Glob.Parse).ToArray(),
                 RequiresChild = entry.RequiresChild.Select(Glob.Parse).ToArray(),
-                RequiresParent = entry.RequiresParent.Select(Glob.Parse).ToArray(),
+                RequiresParent = entry.RequiresParent.Select(p => p.Split('\\').Select(Glob.Parse).ToArray()).ToArray(),
                 ForbidSibling = entry.ForbidSibling.Select(Glob.Parse).ToArray(),
+                ForbidChild = entry.ForbidChild.Select(Glob.Parse).ToArray(),
                 SkipIfTracked = entry.SkipIfTracked,
             };
         }).Where(r => r is not null).Cast<Rule>().ToList();
@@ -551,12 +562,17 @@ public static partial class DeveloperCatalog
         if (today == 0) today = AgeMap.Today();
         var rules = RulesLazy.Value;
         var locator = new ProjectLocator(tree, ManifestNames, ManifestSuffixes);
-        var gitignores = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
 
-        var hits = new List<(int Id, Rule Rule, long Bytes, string Path, string Name, string? Evidence)>();
+        var hits = new List<(int Id, Rule Rule, long Bytes, string Path, string Name, string? Evidence, bool Unproven)>();
+        // Outer hits win, so nothing inside one (a node_modules' own build and
+        // dist folders, by the hundred thousand) is even looked at. Parents
+        // always come before their children in a FileTree.
+        var covered = new bool[tree.Count];
         for (int i = 0; i < tree.Count; i++)
         {
             if (!tree.IsDirectory[i]) continue;
+            int up = tree.Parent[i];
+            if (up >= 0 && covered[up]) { covered[i] = true; continue; }
             string name = tree.NameOf(i);
             if (rules.For(name) is not { } candidates) continue;
             long bytes = totals[i];
@@ -571,33 +587,17 @@ public static partial class DeveloperCatalog
             foreach (var rule in candidates)
             {
                 if (!IsPlausibleHit(name, path, rule)) continue;
-                if (Evidence(tree, i, path, rule, locator, rootPath, gitignores) is not { } evidence) continue;
-                hits.Add((i, rule, bytes, path, name, evidence.Length > 0 ? evidence : null));
+                if (Evidence(tree, i, path, rule, locator, rootPath) is not { } evidence) continue;
+                hits.Add((i, rule, bytes, path, name, evidence.Proof.Length > 0 ? evidence.Proof : null, evidence.Unproven));
+                covered[i] = true;
                 break;
             }
         }
-        // Biggest first; on a tie the outer folder first — a parent holding
-        // only its matched child (Android -> Android\Sdk) has the same bytes,
-        // and keeping the child first would count those bytes twice.
+        // Biggest first; on a tie the shorter path, so the order is the same every time.
         hits.Sort((a, b) => b.Bytes != a.Bytes
             ? b.Bytes.CompareTo(a.Bytes)
             : a.Path.Length.CompareTo(b.Path.Length));
-
-        // Prefer outer directories: skip a hit whose ancestor is already kept.
-        var kept = new List<(int Id, Rule Rule, long Bytes, string Path, string Name, string? Evidence)>();
-        var keptIds = new List<int>();
-        foreach (var hit in hits)
-        {
-            bool inside = false;
-            for (int ancestor = tree.Parent[hit.Id]; ancestor >= 0; ancestor = tree.Parent[ancestor])
-            {
-                if (keptIds.Contains(ancestor)) { inside = true; break; }
-            }
-            if (inside) continue;
-            kept.Add(hit);
-            keptIds.Add(hit.Id);
-            if (kept.Count >= limit) break;
-        }
+        var kept = hits.Take(limit).ToList();
 
         var items = new List<DeveloperItem>(kept.Count);
         var lockfiles = LockfilesByEcosystem;
@@ -610,6 +610,7 @@ public static partial class DeveloperCatalog
             var safety = SafetyClassifier.Assess(hit.Path, hit.Name, isDirectory: true);
             bool isProtected = CleanupQueue.IsExcludedPath(hit.Path) || safety.Level == SafetyLevel.Protected;
             var reclaim = hit.Rule.Reclaimability;
+            if (hit.Unproven && reclaim == DeveloperReclaimability.Reclaimable) reclaim = DeveloperReclaimability.ReviewFirst;
             if (isProtected) reclaim = DeveloperReclaimability.Keep;
             var ecosystem = RefineEcosystem(hit.Rule, hit.Path, hit.Name, hit.Evidence);
             var category = RefineCategory(hit.Rule, hit.Path, hit.Name);
@@ -662,7 +663,7 @@ public static partial class DeveloperCatalog
                 Ecosystem: ecosystem,
                 IsProtected: isProtected,
                 Reclaimability: reclaim,
-                WhyLarge: hit.Rule.WhyLarge,
+                WhyLarge: hit.Unproven ? hit.Rule.WhyLarge + " " + NotInGit : hit.Rule.WhyLarge,
                 ProjectKey: projectKey,
                 ProjectName: projectName,
                 ModifiedDay: tree.ModifiedDay[hit.Id],
@@ -714,9 +715,15 @@ public static partial class DeveloperCatalog
             "sdk" => lower.Contains("android"),
             "android" => lower.Contains("android") || lower.Contains("\\appdata\\"),
             "nvm" => lower.Contains("\\appdata\\") || lower.Contains("program"),
+            // Smart Previews stand in for originals that may be offline: nothing rebuilds them.
+            var n when n.EndsWith(" smart previews.lrdata", StringComparison.Ordinal) => false,
             _ => true,
         };
     }
+
+    /// <summary>Said of a project folder git can't vouch for (<see cref="Evidence"/>'s Unproven).</summary>
+    internal const string NotInGit =
+        "It isn’t in a git repository, so nothing confirms it is generated output — check it before removing.";
 
     /// <summary>
     /// Storage classes that hold installed software, not a person's
@@ -738,7 +745,8 @@ public static partial class DeveloperCatalog
     /// developer rule for that name holds here with its evidence and is
     /// not a keep — so a "build" that is really a tool's or a tracked
     /// source folder is never called regenerable. Names no rule knows only
-    /// need to be outside installed tools.
+    /// need to be outside installed tools. <paramref name="gitignores"/> is
+    /// unused: parsed ignore files are cached on <paramref name="locator"/>.
     /// </summary>
     internal static bool IsVerifiedOutput(FileTree tree, int id, string rootPath,
         ProjectLocator locator, Dictionary<string, string?> gitignores)
@@ -749,7 +757,7 @@ public static partial class DeveloperCatalog
         if (RulesLazy.Value.For(name) is not { } candidates) return !IsInsideToolInstall(path);
         foreach (var rule in candidates)
             if (IsPlausibleHit(name, path, rule)
-                && Evidence(tree, id, path, rule, locator, rootPath, gitignores) is not null)
+                && Evidence(tree, id, path, rule, locator, rootPath) is not null)
                 return rule.Reclaimability != DeveloperReclaimability.Keep;
         return false;
     }
@@ -771,11 +779,16 @@ public static partial class DeveloperCatalog
 
     /// <summary>
     /// The rule's evidence for folder <paramref name="id"/>: null when it
-    /// fails, else the sibling that proved it ("" when the rule needs none).
+    /// fails, else the sibling that proved it ("" when the rule needs none),
+    /// and Unproven when the rule wants git's word (skipIfTracked) but the
+    /// project is in no repository — a manifest beside a generic name is
+    /// all that is left then, too little for anything but review.
     /// </summary>
-    private static string? Evidence(FileTree tree, int id, string path, Rule rule,
-        ProjectLocator locator, string rootPath, Dictionary<string, string?> gitignores)
+    private static (string Proof, bool Unproven)? Evidence(FileTree tree, int id, string path, Rule rule,
+        ProjectLocator locator, string rootPath)
     {
+        // A folder holding its own repository (a deploy clone in an ignored dist) is no one's output.
+        if (locator.ChildNames(id).Contains(".git")) return null;
         if (rule.ProjectFromParent && IsInsideToolInstall(path)) return null;
         // A tool cache found inside an SDK or app install (a .gradle in the
         // Flutter SDK's tests) is part of it — unless the rule names that
@@ -786,8 +799,7 @@ public static partial class DeveloperCatalog
             && (c == StorageClassifier.DevTools || c == StorageClassifier.Apps || c == StorageClassifier.System))
             return null;
         int parent = tree.Parent[id];
-        if (rule.RequiresParent.Length > 0
-            && (parent < 0 || !Glob.Any(rule.RequiresParent, tree.NameOf(parent))))
+        if (rule.RequiresParent.Length > 0 && !rule.RequiresParent.Any(chain => AncestorsAre(tree, parent, chain)))
             return null;
         string proof = "";
         if (rule.RequiresSibling.Length > 0 || rule.ForbidSibling.Length > 0)
@@ -804,12 +816,25 @@ public static partial class DeveloperCatalog
         if (rule.RequiresChild.Length > 0
             && !locator.ChildNames(id).Any(c => Glob.Any(rule.RequiresChild, c)))
             return null;
+        if (rule.ForbidChild.Length > 0 && locator.ChildNames(id).Any(c => Glob.Any(rule.ForbidChild, c)))
+            return null;
+        if (!rule.SkipIfTracked) return (proof, false);
         // Inside a git working tree, a generic-named folder is output only
         // when git ignores it — a tracked bin/ or packages/ is source.
-        if (rule.SkipIfTracked && parent >= 0 && locator.RepositoryRoot(parent) is { } repo
-            && !GitIgnoreRules.IsIgnored(tree, repo, tree.PathOf(repo, rootPath), id, gitignores))
+        int? repo = parent >= 0 ? locator.RepositoryRoot(parent) : null;
+        if (repo is { } r && !GitIgnoreRules.IsIgnored(tree, r, tree.PathOf(r, rootPath), id, locator.IgnoreFiles))
             return null;
-        return proof;
+        // Outside one, a project folder is unproven (Unreal's Build\ beside MyGame.sln is source). A tool's
+        // own cache (the global .yarn) is never in a repository and has its own evidence.
+        return (proof, repo is null && rule.ProjectFromParent);
+    }
+
+    /// <summary>True when <paramref name="node"/> and the folders above it are named <paramref name="chain"/>, last first.</summary>
+    private static bool AncestorsAre(FileTree tree, int node, Glob[] chain)
+    {
+        for (int i = chain.Length - 1; i >= 0; i--, node = tree.Parent[node])
+            if (node < 0 || !chain[i].IsMatch(tree.NameOf(node))) return false;
+        return true;
     }
 
     private static DeveloperEcosystem RefineEcosystem(Rule rule, string path, string name, string? evidence)
@@ -857,7 +882,12 @@ public static partial class DeveloperCatalog
         ".nuget" => "NuGet cache",
         ".vs" => "Visual Studio cache",
         ".docker" or "dockerdesktop" => "Docker data",
-        "windows.old" => "Windows.old",
+        // Tool-home cache folders: their rules only match them under the tool's home.
+        "registry" => "Cargo registry",
+        "git" => "Cargo git checkouts",
+        "caches" => "Gradle caches",
+        "dists" => "Gradle wrapper downloads",
+        "repository" => "Maven repository",
         _ => name,
     };
 
@@ -871,7 +901,7 @@ public static partial class DeveloperCatalog
             if (item.ProjectKey is not { } key || item.ProjectName is not { } name) continue;
             if (!groups.TryGetValue(key, out var g)) g = (name, item.Ecosystem, 0, 0, 0, 0, []);
             g.Bytes += item.Bytes;
-            if (item.Reclaimability != DeveloperReclaimability.Keep) g.Reclaim += item.Bytes;
+            if (item.Reclaimability == DeveloperReclaimability.Reclaimable) g.Reclaim += item.Bytes;
             g.Count += 1;
             g.Day = Math.Max(g.Day, item.ModifiedDay);
             g.Nodes.Add(item.NodeID);
@@ -906,8 +936,9 @@ public static partial class DeveloperCatalog
     {
         var itemsByProject = items.Where(i => i.ProjectKey is not null)
             .GroupBy(i => i.ProjectKey!).ToDictionary(g => g.Key, g => g.ToList());
-        Func<string, bool> generated = name => RulesLazy.Value.For(name) is not null;
-        var gitCache = new Dictionary<int, (string Path, GitState State, long Ignored, (int Day, string What) Activity)>();
+        // Only names a project rule knows: a tool-home cache name (repository, caches, git) inside a project is source.
+        Func<string, bool> generated = name => RulesLazy.Value.For(name)?.Any(r => r.ProjectFromParent) == true;
+        var gitCache = new Dictionary<int, (string Path, GitState State, long? Ignored, (int Day, string What) Activity)>();
 
         foreach (var project in projects)
         {
@@ -925,8 +956,16 @@ public static partial class DeveloperCatalog
                 if (!gitCache.TryGetValue(repoId, out var repo))
                 {
                     string path = tree.PathOf(repoId, rootPath);
-                    long ignored = GitIgnoreRules.IgnoredBytes(tree, repoId, path, totals).IgnoredBytes;
-                    repo = (path, GitInspector.Inspect(path), ignored, GitInspector.LastActivity(path));
+                    try
+                    {
+                        long ignored = GitIgnoreRules.IgnoredBytes(tree, repoId, path, totals).IgnoredBytes;
+                        repo = (path, GitInspector.Inspect(path), ignored, GitInspector.LastActivity(path));
+                    }
+                    catch
+                    {
+                        // One repository git itself would choke on must not empty the whole page.
+                        repo = (path, new GitState.Unknown("The repository could not be read."), null, (0, ""));
+                    }
                     gitCache[repoId] = repo;
                 }
                 project.RepositoryPath = repo.Path;
@@ -994,9 +1033,10 @@ public static partial class DeveloperCatalog
         foreach (var item in items)
         {
             total += item.Bytes;
+            // "Rebuilds by itself" is what Reclaimable means; review-first bytes are neither side.
             switch (item.Reclaimability)
             {
-                case DeveloperReclaimability.Reclaimable or DeveloperReclaimability.ReviewFirst:
+                case DeveloperReclaimability.Reclaimable:
                     reclaim += item.Bytes; break;
                 case DeveloperReclaimability.Keep:
                     keep += item.Bytes; break;
