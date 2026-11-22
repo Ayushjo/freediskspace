@@ -128,6 +128,7 @@ public class DeveloperCatalogTests
             Directory.CreateDirectory(Path.Combine(git, "refs", "remotes", "origin"));
             File.WriteAllText(Path.Combine(git, "config"),
                 "[core]\n\tbare = false\n[remote \"origin\"]\n\turl = https://x/y.git\n");
+            File.WriteAllText(Path.Combine(git, "HEAD"), "ref: refs/heads/main\n");   // every real repository has one
             string sha = new string('a', 40) + "\n";
             File.WriteAllText(Path.Combine(git, "refs", "heads", "main"), sha);
             File.WriteAllText(Path.Combine(git, "refs", "remotes", "origin", "main"), sha);

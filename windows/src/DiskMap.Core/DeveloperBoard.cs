@@ -39,10 +39,12 @@ public static class DeveloperBoard
 
     /// <summary>
     /// The tick line under "Rebuilds by itself": safe when every dependency is pinned
-    /// (Mac reinstallLine).
+    /// (Mac reinstallLine). Only what rebuilds by itself counts — a backup beside it never comes back.
     /// </summary>
     public static (string Title, string Detail, bool Ok) ReinstallLine(IReadOnlyList<DeveloperItem> items)
     {
+        items = items.Where(i => i.Reclaimability == DeveloperReclaimability.Reclaimable).ToList();
+        if (items.Count == 0) return ("Check before removing.", "Nothing here rebuilds by itself.", false);
         var unpinned = items.Where(i => i.RebuildCost == RebuildCost.NetworkedUnpinned).ToList();
         if (unpinned.Count == 0)
         {
@@ -80,7 +82,9 @@ public static class DeveloperBoard
         RebuildCost.Free => "Free",
         RebuildCost.Cheap => "Offline build",
         RebuildCost.Networked => "Re-download",
-        _ => "No lockfile",
+        RebuildCost.NetworkedUnpinned => "No lockfile",
+        RebuildCost.Never => "Not rebuilt",
+        _ => "Unknown",
     };
 
     /// <summary>"Today", "Yesterday", "12d ago", "3 months ago", "2 years ago", "Very old", "Unknown".</summary>

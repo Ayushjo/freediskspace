@@ -155,7 +155,8 @@ public class SafetyRulesTests
 
         var items = Catalog(t);
         Assert.Contains(items, i => i.DisplayName == "blinky.runs" && i.Ecosystem == DeveloperEcosystem.Fpga);
-        Assert.Contains(items, i => i.DisplayName == "blinky.cache" && i.Reclaimability == DeveloperReclaimability.Reclaimable);
+        // Not in a git repository: nothing vouches for it, so it is review-first (DeveloperAuditTests).
+        Assert.Contains(items, i => i.DisplayName == "blinky.cache" && i.Reclaimability == DeveloperReclaimability.ReviewFirst);
         Assert.Contains(items, i => i.DisplayName == "db" && i.Ecosystem == DeveloperEcosystem.Fpga);
         Assert.Contains(items, i => i.DisplayName == "board-backups" && i.Ecosystem == DeveloperEcosystem.Pcb);
         Assert.Contains(items, i => i.DisplayName == ".pio" && i.Ecosystem == DeveloperEcosystem.Embedded);

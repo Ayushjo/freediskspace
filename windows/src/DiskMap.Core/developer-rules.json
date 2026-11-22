@@ -1,5 +1,5 @@
 {
-  "_comment": "Developer Storage rules (AGENTS.md rule 6: patterns are data). Matched against directory names, case-insensitive; `*` in a name is a wildcard (*.runs, Project Outputs for *). Several rules may share a name: the first whose evidence holds wins. Evidence: requiresSibling = something next to the folder matches one of these globs (a .csproj next to bin); requiresChild = something inside it matches (pyvenv.cfg in a venv); requiresParent = the containing folder's name matches; forbidSibling = none of these may sit next to it; skipIfTracked = inside a git working tree the folder must be git-ignored, or it is source, not output. A name alone is never enough for a generic name like bin or build — that is how a Flutter SDK's bin and packages were once offered as .NET output. Rules with projectFromParent are never matched inside installed tools (AppData, Program Files, home dot-folders, SDK roots).",
+  "_comment": "Developer Storage rules (AGENTS.md rule 6: patterns are data). Matched against directory names, case-insensitive; `*` in a name is a wildcard (*.runs, Project Outputs for *). Several rules may share a name: the first whose evidence holds wins. Evidence: requiresSibling = something next to the folder matches one of these globs (a .csproj next to bin); requiresChild = something inside it matches (pyvenv.cfg in a venv); requiresParent = the containing folder's name matches (`.gradle\\wrapper` = the parent and the one above it); forbidSibling = none of these may sit next to it; forbidChild = none of these may sit inside it; skipIfTracked = inside a git working tree the folder must be git-ignored, or it is source, not output — and outside one nothing vouches for it, so a project rule's hit is review-first. A name alone is never enough for a generic name like bin or build — that is how a Flutter SDK's bin and packages were once offered as .NET output. A tool's home (~\\.cargo, ~\\.gradle, ~\\.m2) is never a rule: it holds the tool itself and your credentials, so only its cache folders are named. A folder holding its own .git is a repository and never matches. Rules with projectFromParent are never matched inside installed tools (AppData, Program Files, home dot-folders, SDK roots).",
   "rules": [
     {
       "names": ["node_modules"],
@@ -95,10 +95,10 @@
       "requiresSibling": ["*.sln", "*.slnx", "*.csproj", "*.vcxproj", "CMakeLists.txt"],
       "category": "buildArtifacts",
       "ecosystem": "dotnet",
-      "reclaimability": "reclaimable",
+      "reclaimability": "reviewFirst",
       "isToolRoot": false,
       "projectFromParent": true,
-      "whyLarge": "Visual Studio's per-solution cache — IntelliSense, browsing DB, design-time builds. Re-created next time the solution opens.",
+      "whyLarge": "Visual Studio's per-solution cache — IntelliSense, browsing DB, design-time builds, re-created next time the solution opens. In Open Folder mode it also holds your launch.vs.json and tasks.vs.json settings, which nothing re-creates.",
       "rebuildCost": "cheap"
     },
     {
@@ -116,6 +116,7 @@
     {
       "names": ["packages"],
       "requiresSibling": ["*.sln", "*.slnx"],
+      "forbidChild": ["manifest.json", "packages-lock.json"],
       "skipIfTracked": true,
       "category": "dependencies",
       "ecosystem": "dotnet",
@@ -242,8 +243,22 @@
       "rebuildCost": "networked"
     },
     {
-      "names": [".build", "build", ".next", ".nuxt", "dist", "out"],
+      "names": [".build", "build", ".next", ".nuxt", "dist"],
       "requiresSibling": ["package.json", "pubspec.yaml", "CMakeLists.txt", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts", "pyproject.toml", "setup.py", "Cargo.toml", "go.mod", "Package.swift", "pom.xml", "*.csproj", "*.sln", "Makefile", "meson.build", "composer.json", "mix.exs", "deno.json", "angular.json", "sdkconfig"],
+      "forbidSibling": ["*.uproject", "*.uplugin"],
+      "skipIfTracked": true,
+      "category": "buildArtifacts",
+      "ecosystem": "other",
+      "reclaimability": "reclaimable",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "Compiled or bundled output that tools recreate.",
+      "rebuildCost": "cheap"
+    },
+    {
+      "_comment": "out beside only a Makefile or a Python manifest is a results folder as often as a build: those are not evidence here.",
+      "names": ["out"],
+      "requiresSibling": ["package.json", "pubspec.yaml", "CMakeLists.txt", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts", "Cargo.toml", "go.mod", "Package.swift", "pom.xml", "*.csproj", "*.sln", "meson.build", "composer.json", "mix.exs", "deno.json", "angular.json", "sdkconfig"],
       "skipIfTracked": true,
       "category": "buildArtifacts",
       "ecosystem": "other",
@@ -266,13 +281,14 @@
       "rebuildCost": "cheap"
     },
     {
-      "names": [".cargo"],
+      "names": ["registry", "git"],
+      "requiresParent": [".cargo"],
       "category": "caches",
       "ecosystem": "rust",
       "reclaimability": "reclaimable",
       "isToolRoot": true,
       "projectFromParent": false,
-      "whyLarge": "Cargo registry and git checkouts for Rust crates.",
+      "whyLarge": "Cargo's downloaded crates (registry) and git dependencies (git) — the next build downloads what it needs again. The rest of ~\\.cargo is cargo and rustup themselves, your installed tools and your registry token, so it is never offered.",
       "rebuildCost": "networked"
     },
     {
@@ -373,23 +389,49 @@
       "rebuildCost": "networked"
     },
     {
+      "_comment": "A project's own .gradle, beside its build script. A Gradle home (one holding caches, wrapper, gradle.properties or init scripts) never matches — not even inside a project, where CI keeps one.",
       "names": [".gradle"],
+      "requiresSibling": ["build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"],
+      "forbidChild": ["caches", "wrapper", "gradle.properties", "init.d", "init.gradle", "init.gradle.kts"],
+      "category": "caches",
+      "ecosystem": "jvm",
+      "reclaimability": "reclaimable",
+      "isToolRoot": false,
+      "projectFromParent": true,
+      "whyLarge": "Gradle's per-project cache — file hashes and task history. The next build recreates it, running every task once.",
+      "rebuildCost": "cheap"
+    },
+    {
+      "names": ["caches"],
+      "requiresParent": [".gradle"],
       "category": "caches",
       "ecosystem": "jvm",
       "reclaimability": "reclaimable",
       "isToolRoot": true,
       "projectFromParent": false,
-      "whyLarge": "Gradle dependency and build caches.",
+      "whyLarge": "Gradle's dependency and build caches — the next build downloads or rebuilds what it needs. The rest of ~\\.gradle holds gradle.properties (signing passwords, repository tokens) and init scripts, so it is never offered.",
       "rebuildCost": "networked"
     },
     {
-      "names": [".m2"],
+      "names": ["dists"],
+      "requiresParent": [".gradle\\wrapper"],
       "category": "caches",
       "ecosystem": "jvm",
       "reclaimability": "reclaimable",
       "isToolRoot": true,
       "projectFromParent": false,
-      "whyLarge": "Maven local repository cache.",
+      "whyLarge": "Gradle versions the wrapper (gradlew) downloaded — it downloads the one a project needs on its next build.",
+      "rebuildCost": "networked"
+    },
+    {
+      "names": ["repository"],
+      "requiresParent": [".m2"],
+      "category": "caches",
+      "ecosystem": "jvm",
+      "reclaimability": "reclaimable",
+      "isToolRoot": true,
+      "projectFromParent": false,
+      "whyLarge": "Maven's local repository — every artifact it downloaded (and any you installed with mvn install). The next build downloads what it needs again. ~\\.m2 itself holds settings.xml and settings-security.xml with your repository credentials, so it is never offered.",
       "rebuildCost": "networked"
     },
     {
@@ -427,10 +469,10 @@
       "names": [".terragrunt-cache"],
       "category": "caches",
       "ecosystem": "cloud",
-      "reclaimability": "reclaimable",
+      "reclaimability": "reviewFirst",
       "isToolRoot": false,
       "projectFromParent": true,
-      "whyLarge": "Terragrunt's working copies of modules — rebuilt on the next run.",
+      "whyLarge": "Terragrunt's working copies of modules — rebuilt on the next run. With a local backend the Terraform state lives in here too, so check before removing.",
       "rebuildCost": "networked"
     },
     {
@@ -615,6 +657,7 @@
     {
       "names": ["runs"],
       "requiresSibling": ["config.json", "config.tcl", "config.yaml"],
+      "forbidSibling": ["*.py", "pyproject.toml"],
       "requiresChild": ["RUN_*", "*_run_*"],
       "skipIfTracked": true,
       "category": "buildArtifacts",
@@ -627,15 +670,15 @@
     },
     {
       "names": ["*-backups"],
-      "requiresSibling": ["*.kicad_pro", "*.pro"],
+      "requiresSibling": ["*.kicad_pro"],
       "skipIfTracked": true,
       "category": "other",
       "ecosystem": "pcb",
       "reclaimability": "reviewFirst",
       "isToolRoot": false,
       "projectFromParent": true,
-      "whyLarge": "KiCad's automatic zip backups made on every save — your current design files are separate; old backups are safe to prune.",
-      "rebuildCost": "cheap"
+      "whyLarge": "KiCad's automatic zip backups, made on every save. Your current design files are separate, but a backup you remove is gone — keep the ones you might roll back to.",
+      "rebuildCost": "never"
     },
     {
       "names": [".history"],
@@ -646,8 +689,8 @@
       "reclaimability": "reviewFirst",
       "isToolRoot": false,
       "projectFromParent": true,
-      "whyLarge": "KiCad's local history of this project.",
-      "rebuildCost": "cheap"
+      "whyLarge": "KiCad's local history of this project — earlier versions nothing else keeps.",
+      "rebuildCost": "never"
     },
     {
       "names": ["History"],
@@ -658,8 +701,8 @@
       "reclaimability": "reviewFirst",
       "isToolRoot": false,
       "projectFromParent": true,
-      "whyLarge": "Altium's local file history — older versions of your schematic and PCB documents.",
-      "rebuildCost": "cheap"
+      "whyLarge": "Altium's local file history — older versions of your schematic and PCB documents that nothing else keeps.",
+      "rebuildCost": "never"
     },
     {
       "names": ["__Previews", "Project Logs for *"],
@@ -748,8 +791,8 @@
       "reclaimability": "reviewFirst",
       "isToolRoot": false,
       "projectFromParent": true,
-      "whyLarge": "Revit's backup folder for a central model — older saves; the central model itself is separate.",
-      "rebuildCost": "cheap"
+      "whyLarge": "Revit's backup folder for a central model — older saves; the central model itself is separate, but a backup you remove is gone.",
+      "rebuildCost": "never"
     },
     {
       "names": ["Library", "Temp", "Obj"],
@@ -859,19 +902,9 @@
       "projectFromParent": false,
       "whyLarge": "Lightroom Classic preview cache — rebuilt as you browse the catalog. (Smart Previews are separate and not offered.)",
       "rebuildCost": "free"
-    },
-    {
-      "names": ["Windows.old"],
-      "category": "other",
-      "ecosystem": "other",
-      "reclaimability": "reviewFirst",
-      "isToolRoot": true,
-      "projectFromParent": false,
-      "whyLarge": "Files kept from a previous Windows install — the OS can reclaim it via Disk Cleanup.",
-      "rebuildCost": "cheap"
     }
   ],
-  "_rebuildCost": "free: regenerated automatically and offline the next time the tool runs. cheap: an offline rebuild (CPU time). networked: re-downloaded from a registry or vendor. A dependency folder whose project has no lockfile is reported as networked-unpinned: reinstalling may not reproduce what you have.",
+  "_rebuildCost": "free: regenerated automatically and offline the next time the tool runs. cheap: an offline rebuild (CPU time). networked: re-downloaded from a registry or vendor. never: nothing recreates it (backups, history). A dependency folder whose project has no lockfile is reported as networked-unpinned: reinstalling may not reproduce what you have.",
   "manifests": {
     "_comment": "A folder containing one of these is a project root (TASK-051).",
     "names": [
