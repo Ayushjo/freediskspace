@@ -100,13 +100,39 @@ public static class Dialogs
         return window;
     }
 
+    /// <summary>The line beside the buttons: <paramref name="hint"/>, else what the sheet can promise.</summary>
+    public static string ConfirmHint(bool danger, string? hint = null) =>
+        hint ?? (danger ? "Put Back returns everything while it's in the Recycle Bin." : "Nothing moves yet.");
+
+    /// <summary>
+    /// A name or path exactly as it is: control characters, bidirectional overrides and other
+    /// invisible format characters show as [U+202E], so a name hiding U+202E (right-to-left
+    /// override) can't pass for photoexe.jpg and two lookalike names never read the same.
+    /// Zero-width joiners stay (emoji and scripts need them).
+    /// </summary>
+    public static string SafeDisplay(string text)
+    {
+        static bool Hidden(char c) => char.GetUnicodeCategory(c) switch
+        {
+            System.Globalization.UnicodeCategory.Control or System.Globalization.UnicodeCategory.LineSeparator
+                or System.Globalization.UnicodeCategory.ParagraphSeparator => true,
+            System.Globalization.UnicodeCategory.Format => c is not ((char)0x200C or (char)0x200D),
+            _ => false,
+        };
+        if (!text.Any(Hidden)) return text;
+        var shown = new System.Text.StringBuilder(text.Length + 16);
+        foreach (char c in text) shown.Append(Hidden(c) ? $"[U+{(int)c:X4}]" : c.ToString());
+        return shown.ToString();
+    }
+
     /// <summary>
     /// PathListConfirmSheet: anything that changes the disk or the basket in bulk. Says what will
     /// happen, lists every item by full path (biggest first, up to 400), totals it, and defaults
     /// to Cancel — Return never adds or moves anything by accident. True = go.
     /// </summary>
     public static bool Confirm(Window? owner, string title, string message,
-        IReadOnlyList<ConfirmItem> items, string confirmLabel, bool danger = false, string? footnote = null)
+        IReadOnlyList<ConfirmItem> items, string confirmLabel, bool danger = false, string? footnote = null,
+        string? hint = null)
     {
         var body = new StackPanel();
         var head = new DockPanel();
@@ -134,9 +160,10 @@ public static class Dialogs
             DockPanel.SetDock(size, Dock.Right);
             row.Children.Add(size);
             var names = new StackPanel();
-            names.Children.Add(Rd.Text(item.Name, 13, FontWeights.Medium));
-            var path = Rd.Figure(CanonicalPath.DisplayPath(item.Path), 11, null, "RdInk3");
-            path.ToolTip = item.Path;
+            names.Children.Add(Rd.Text(SafeDisplay(item.Name), 13, FontWeights.Medium));
+            // Wrapped, never cut: two node_modules rows must show which folder each one is.
+            var path = Rd.Figure(SafeDisplay(CanonicalPath.DisplayPath(item.Path)), 11, null, "RdInk3");
+            path.TextWrapping = TextWrapping.Wrap;
             path.Margin = new Thickness(0, 2, 0, 0);
             names.Children.Add(path);
             row.Children.Add(names);
@@ -191,8 +218,7 @@ public static class Dialogs
         cancel.Margin = new Thickness(0, 0, 10, 0);
         DockPanel.SetDock(cancel, Dock.Right);
         buttons.Children.Add(cancel);
-        var hint = Rd.Text(danger ? "Put Back returns everything while it's in the Recycle Bin." : "Nothing moves yet.", 12, null, "RdInk3");
-        buttons.Children.Add(hint);
+        buttons.Children.Add(Rd.Text(ConfirmHint(danger, hint), 12, null, "RdInk3", wrap: true));
         body.Children.Add(buttons);
 
         window = Sheet(body, 620, owner);
@@ -228,6 +254,7 @@ public static class Dialogs
     /// <summary>The warning window itself; <paramref name="done"/> gets true for "Add anyway".</summary>
     public static Window RiskyWindow(Window? owner, string name, StorageVerdict verdict, Action<bool> done, string? path = null)
     {
+        name = SafeDisplay(name);
         var body = new StackPanel();
         var head = new DockPanel();
         var tile = new Border
@@ -251,7 +278,7 @@ public static class Dialogs
         titles.Children.Add(title);
         if (path is not null)
         {
-            var where = Rd.Figure(CanonicalPath.DisplayPath(path), 11, null, "RdInk3");
+            var where = Rd.Figure(SafeDisplay(CanonicalPath.DisplayPath(path)), 11, null, "RdInk3");
             where.TextWrapping = TextWrapping.Wrap;
             where.Margin = new Thickness(0, 6, 0, 0);
             titles.Children.Add(where);
@@ -548,7 +575,7 @@ public static class Dialogs
         chevron.Margin = new Thickness(10, 0, 0, 0);
         chevron.VerticalAlignment = VerticalAlignment.Center;
 
-        var header = new DockPanel { Background = Brushes.Transparent, Cursor = System.Windows.Input.Cursors.Hand };
+        var header = new DockPanel { Background = Brushes.Transparent };
         leading.VerticalAlignment = VerticalAlignment.Center;
         leading.Margin = new Thickness(0, 0, 10, 0);
         DockPanel.SetDock(leading, Dock.Left);
@@ -566,17 +593,35 @@ public static class Dialogs
 
         detail.Margin = new Thickness(20, 6, 0, 0);
         detail.Visibility = startsOpen ? Visibility.Visible : Visibility.Collapsed;
-        var stack = new StackPanel();
-        stack.Children.Add(header);
-        stack.Children.Add(detail);
-        header.ToolTip = null;
-        header.MouseLeftButtonUp += (_, e) =>
+        // A real toggle button around the row: Tab reaches it, Enter and Space fold it, and a
+        // screen reader hears its name and whether it is open.
+        var toggle = new System.Windows.Controls.Primitives.ToggleButton
         {
-            bool open = detail.Visibility != Visibility.Visible;
+            Content = header, IsChecked = startsOpen, Cursor = System.Windows.Input.Cursors.Hand,
+            Template = BareButton(), MinWidth = 0, MinHeight = 0,
+            HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Top,
+        };
+        System.Windows.Automation.AutomationProperties.SetName(toggle, title);
+        // Checked/Unchecked, not Click: a screen reader's Toggle sets IsChecked without a click.
+        void Fold(object sender, RoutedEventArgs e)
+        {
+            bool open = toggle.IsChecked == true;
             detail.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
             rotate.Angle = open ? 90 : 0;
-            e.Handled = true;
-        };
+        }
+        toggle.Checked += Fold;
+        toggle.Unchecked += Fold;
+        var stack = new StackPanel();
+        stack.Children.Add(toggle);
+        stack.Children.Add(detail);
         return stack;
     }
+
+    private static ControlTemplate? _bareButton;
+
+    /// <summary>A button template that draws only its content (the row is its own look). Made on the UI thread, once.</summary>
+    internal static ControlTemplate BareButton() => _bareButton ??= new ControlTemplate(typeof(System.Windows.Controls.Primitives.ButtonBase))
+    {
+        VisualTree = new FrameworkElementFactory(typeof(ContentPresenter)),
+    };
 }
