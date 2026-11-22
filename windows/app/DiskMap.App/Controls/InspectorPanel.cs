@@ -16,6 +16,9 @@ public sealed class InspectorPanel : UserControl
 {
     private readonly StackPanel _root = new() { Margin = new Thickness(16) };
     private string _tab = "Overview";
+    private bool _stale;
+    /// <summary>Bumped by every refresh: a background read for an older one is dropped.</summary>
+    private int _version;
 
     public InspectorPanel()
     {
@@ -25,13 +28,27 @@ public sealed class InspectorPanel : UserControl
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
         };
-        ModelEvents.WhileLoaded(this, Refresh);
+        // The window keeps this panel loaded but collapsed until Ctrl+I: refresh only while it shows.
+        ModelEvents.WhileLoaded(this, RefreshIfShown);
+        IsVisibleChanged += (_, _) => { if (IsVisible && _stale) Refresh(); };
+        // Staging raises StagedChanged, not StateChanged: "Add to basket" turns into "In basket ✓".
+        EventHandler onStaged = (_, _) => Dispatcher.InvokeAsync(RefreshIfShown);
+        Loaded += (_, _) => Model.StagedChanged += onStaged;
+        Unloaded += (_, _) => Model.StagedChanged -= onStaged;
+    }
+
+    private void RefreshIfShown()
+    {
+        if (IsVisible) Refresh();
+        else _stale = true;
     }
 
     private ScanModel Model => ScanModel.Shared;
 
     private void Refresh()
     {
+        _stale = false;
+        _version++;
         _root.Children.Clear();
         if (Model.Tree is not { } tree || Model.Totals.Length != tree.Count)
         {
@@ -85,15 +102,10 @@ public sealed class InspectorPanel : UserControl
                 Height = 1.5, Margin = new Thickness(0, 4, 0, 0),
                 Background = selected ? Ui.Brush("AppForeground") : Brushes.Transparent,
             });
-            var tab = new Border
-            {
-                Child = tabContent,
-                Margin = new Thickness(0, 0, 18, 0),
-                Cursor = System.Windows.Input.Cursors.Hand,
-                Background = Brushes.Transparent,
-            };
             string captured = label;
-            tab.MouseLeftButtonDown += (_, _) => { _tab = captured; Refresh(); };
+            var tab = Rd.Pressable(tabContent, label, () => { _tab = captured; Refresh(); }, 0);
+            tab.Margin = new Thickness(0, 0, 18, 0);
+            if (selected) System.Windows.Automation.AutomationProperties.SetItemStatus(tab, "Selected");
             tabs.Children.Add(tab);
         }
         _root.Children.Add(tabs);
@@ -163,24 +175,55 @@ public sealed class InspectorPanel : UserControl
             _root.Children.Add(Ui.MetaRow("Items", items));
         }
 
-        var times = Ui.FileTimes(path);
+        // The disk's dates and "What's inside?" (a walk of the whole subtree — the drive when
+        // nothing is selected) are read off the UI thread and filled in when they land.
+        var timesHost = new StackPanel();
+        timesHost.Children.Add(DateRows(tree.ModifiedDay[id], null));
+        _root.Children.Add(timesHost);
+        var insideHost = new StackPanel();
+        if (isDir) _root.Children.Add(insideHost);
+        AddExplanation(tree, totals, id);
+        AddActions(tree, totals, id);
+        LoadSlowParts(tree, totals, id, path, isDir, timesHost, insideHost);
+    }
+
+    private void LoadSlowParts(FileTree tree, long[] totals, int id, string path, bool isDir,
+        StackPanel timesHost, StackPanel insideHost)
+    {
+        int version = _version;
+        Task.Run(() => (Times: Ui.FileTimes(path), Inside: isDir ? WhatsInside(tree, totals, id) : null))
+            .ContinueWith(task =>
+            {
+                if (!task.IsCompletedSuccessfully) return;
+                var (times, inside) = task.Result;
+                Dispatcher.InvokeAsync(() =>
+                {
+                    // A newer selection, scan or size basis landed while this one ran.
+                    if (version != _version || !ReferenceEquals(Model.Tree, tree) || !ReferenceEquals(Model.Totals, totals)) return;
+                    timesHost.Children.Clear();
+                    timesHost.Children.Add(DateRows(tree.ModifiedDay[id], times));
+                    if (inside is { Count: > 0 }) AddWhatsInside(insideHost, inside);
+                });
+            }, TaskScheduler.Default);
+    }
+
+    /// <summary>"Modified" (and "Created" once the disk answered); the scan keeps no date for some folders (the root) — the disk does.</summary>
+    private static StackPanel DateRows(int modifiedDay, (DateTime? Created, DateTime? Modified)? times)
+    {
+        var rows = new StackPanel();
         var modified = new StackPanel { HorizontalAlignment = HorizontalAlignment.Right };
-        // The scan keeps no date for some folders (the root) — the disk does.
-        modified.Children.Add(Ui.T(tree.ModifiedDay[id] <= 0 && times?.Modified is { } m0
-            ? RelativeDate(m0) : Ui.RelativeDay(tree.ModifiedDay[id]), 12, FontWeights.Medium));
-        modified.Children.Add(Ui.Faint(times?.Modified is { } m ? m.ToString("ddd, d MMM yyyy") : Ui.AbsoluteDay(tree.ModifiedDay[id])));
-        _root.Children.Add(Ui.MetaRow("Modified", modified));
+        modified.Children.Add(Ui.T(modifiedDay <= 0 && times?.Modified is { } m0
+            ? RelativeDate(m0) : Ui.RelativeDay(modifiedDay), 12, FontWeights.Medium));
+        modified.Children.Add(Ui.Faint(times?.Modified is { } m ? m.ToString("ddd, d MMM yyyy") : Ui.AbsoluteDay(modifiedDay)));
+        rows.Children.Add(Ui.MetaRow("Modified", modified));
         if (times?.Created is { } created)
         {
             var createdPanel = new StackPanel { HorizontalAlignment = HorizontalAlignment.Right };
             createdPanel.Children.Add(Ui.T(RelativeDate(created), 12, FontWeights.Medium));
             createdPanel.Children.Add(Ui.Faint(created.ToString("ddd, d MMM yyyy")));
-            _root.Children.Add(Ui.MetaRow("Created", createdPanel));
+            rows.Children.Add(Ui.MetaRow("Created", createdPanel));
         }
-
-        if (isDir) AddWhatsInside(tree, totals, id);
-        AddExplanation(tree, totals, id);
-        AddActions(tree, totals, id);
+        return rows;
     }
 
     private static string RelativeDate(DateTime d)
@@ -196,22 +239,24 @@ public sealed class InspectorPanel : UserControl
         };
     }
 
-    /// <summary>"What's inside?" — dominant type shares for a folder.</summary>
-    private void AddWhatsInside(FileTree tree, long[] totals, int id)
-    {
-        var breakdown = FileTypes.TypeBreakdown(tree, totals, id)
+    /// <summary>A folder's bytes per file kind, biggest first — a whole-subtree walk, so never on the UI thread.</summary>
+    internal static List<KeyValuePair<string, long>> WhatsInside(FileTree tree, long[] totals, int id) =>
+        FileTypes.TypeBreakdown(tree, totals, id)
             .Where(kv => kv.Value > 0)
             .OrderByDescending(kv => kv.Value)
             .ToList();
-        if (breakdown.Count == 0) return;
+
+    /// <summary>"What's inside?" — dominant type shares for a folder.</summary>
+    private static void AddWhatsInside(StackPanel host, List<KeyValuePair<string, long>> breakdown)
+    {
         long total = breakdown.Sum(kv => kv.Value);
         var label = Ui.SectionLabel("What's inside?");
         label.Margin = new Thickness(0, 14, 0, 8);
-        _root.Children.Add(label);
+        host.Children.Add(label);
         var parts = breakdown
             .Select(kv => (FileTypes.LabelOf(kv.Key), kv.Value, Ui.Hex(FileTypes.TileColorOf(kv.Key))))
             .ToList();
-        _root.Children.Add(Ui.TypeBarWithLegend(parts, total));
+        host.Children.Add(Ui.TypeBarWithLegend(parts, total));
     }
 
     /// <summary>"Why is it large?" + safety + consequences — the explain layer.</summary>
@@ -225,10 +270,10 @@ public sealed class InspectorPanel : UserControl
         string why;
         if (isDir)
         {
-            var children = tree.ChildrenOf(id, totals).OrderByDescending(c => c.Size).ToList();
+            var children = tree.ChildrenOf(id, totals);
             if (children.Count > 0 && totals[id] > 0)
             {
-                var top = children[0];
+                var top = children.MaxBy(c => c.Size);   // only the biggest is named: no sort of a huge folder
                 double share = 100.0 * top.Size / totals[id];
                 why = share >= 50
                     ? $"Most of the space is {tree.NameOf(top.Id)} — {share:0}% of this folder."
@@ -322,15 +367,16 @@ public sealed class InspectorPanel : UserControl
             string.Equals(item.Path, path.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase));
         var verdict = Model.VerdictOf(id);
         bool canStage = id != 0 && !CleanupQueue.IsExcludedPath(path) && verdict.Advice != CleanupAdvice.Never;
+        // Add to basket everywhere; only the basket's own commit says it moves things to the Recycle Bin.
         var cleanup = inCleanup
-            ? Ui.Button("In Cleanup ✓", Icons.Cleanup, Ui.ButtonStyle.Outline,
+            ? Ui.Button("In basket ✓", Icons.Cleanup, Ui.ButtonStyle.Outline,
                 () => Model.OpenBasket())
-            : Ui.Button(verdict.Advice == CleanupAdvice.Warn ? "Add to Cleanup…" : "Add to Cleanup",
+            : Ui.Button(verdict.Advice == CleanupAdvice.Warn ? "Add to basket…" : "Add to basket",
                 Icons.Cleanup, Ui.ButtonStyle.Primary, () => Model.Stage(id, "from inspector"));
         cleanup.IsEnabled = inCleanup || canStage;
         if (!canStage && !inCleanup)
         {
-            cleanup.ToolTip = verdict.Instead ?? verdict.Note ?? "Protected — can't be added to Cleanup.";
+            cleanup.ToolTip = verdict.Instead ?? verdict.Note ?? "Protected — it can't go in the basket.";
             ToolTipService.SetShowOnDisabled(cleanup, true);
         }
         stack.Children.Add(cleanup);
@@ -338,8 +384,10 @@ public sealed class InspectorPanel : UserControl
         stack.Children.Add(Ui.Button("Reveal in Explorer", Icons.Open, Ui.ButtonStyle.Outline,
             () => Explorer.Reveal(path)));
         stack.Children.Add(new Border { Height = 8 });
-        stack.Children.Add(Ui.Button("Copy Path", Icons.Copy, Ui.ButtonStyle.Outline,
-            () => Clipboard.SetText(path)));
+        stack.Children.Add(Ui.Button("Copy Path", Icons.Copy, Ui.ButtonStyle.Outline, () =>
+        {
+            try { Clipboard.SetText(path); } catch { /* another app holds the clipboard */ }
+        }));
         if (isDir)
         {
             stack.Children.Add(new Border { Height = 8 });

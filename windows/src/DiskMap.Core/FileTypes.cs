@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 
 namespace DiskMap.Core;
@@ -69,8 +70,9 @@ public static class FileTypes
     {
         int dot = name.LastIndexOf('.');
         if (dot < 0 || dot == name.Length - 1) return OtherId;
-        var (_, byExtension) = Ensure();
-        return byExtension.TryGetValue(name[(dot + 1)..], out var cat) ? cat.Id : OtherId;
+        // Span lookup: the whole-tree passes below would otherwise allocate a string per file.
+        var byExtension = Ensure().byExtension.GetAlternateLookup<ReadOnlySpan<char>>();
+        return byExtension.TryGetValue(name.AsSpan(dot + 1), out var cat) ? cat.Id : OtherId;
     }
 
     public static string KindOf(FileTree tree, int id) =>
@@ -127,14 +129,96 @@ public static class FileTypes
 
     /// <summary>
     /// The category holding the most bytes inside a node — what a
-    /// type-colored tile shows. Directories with no classifiable file
-    /// bytes return <see cref="OtherId"/>.
+    /// type-colored tile shows. Directories with no file bytes return
+    /// <see cref="OtherId"/>; a tie goes to the category listed first.
+    /// Charts ask this for every slice on every paint, so the answer for
+    /// every folder comes from one pass over the tree, made the first time
+    /// it is asked for this totals array.
     /// </summary>
     public static string DominantKind(FileTree tree, long[] totals, int nodeId)
     {
         if (!tree.IsDirectory[nodeId]) return KindOfFile(tree.NameOf(nodeId));
-        var breakdown = TypeBreakdown(tree, totals, nodeId);
-        if (breakdown.Count == 0) return OtherId;
-        return breakdown.MaxBy(kv => kv.Value).Key;
+        if (tree.Count == 0 || totals.Length != tree.Count) return OtherId;
+        var cache = DominantKindsOf(tree, totals);
+        return nodeId < cache.Kinds.Length ? cache.Ids[cache.Kinds[nodeId]] : OtherId;
+    }
+
+    /// <summary>Each node's dominant kind as an index into <see cref="Ids"/>.</summary>
+    private sealed record DominantKinds(FileTree Tree, string[] Ids, byte[] Kinds);
+
+    /// <summary>
+    /// Keyed by the totals array — a new one comes with every scan and size basis — and weak,
+    /// so the cache never keeps a finished scan's tree alive.
+    /// </summary>
+    private static readonly ConditionalWeakTable<long[], DominantKinds> DominantByTotals = new();
+
+    private static DominantKinds DominantKindsOf(FileTree tree, long[] totals)
+    {
+        if (DominantByTotals.TryGetValue(totals, out var cached) && Fits(cached)) return cached;
+        lock (DominantByTotals)
+        {
+            if (DominantByTotals.TryGetValue(totals, out cached) && Fits(cached)) return cached;
+            var built = BuildDominantKinds(tree, totals);
+            DominantByTotals.AddOrUpdate(totals, built);
+            return built;
+        }
+
+        bool Fits(DominantKinds c) => ReferenceEquals(c.Tree, tree) && c.Kinds.Length == tree.Count;
+    }
+
+    /// <summary>
+    /// One depth-first pass: running byte totals per kind, snapshotted as each folder is
+    /// entered; when it is left, what the totals gained is that folder's breakdown.
+    /// </summary>
+    private static DominantKinds BuildDominantKinds(FileTree tree, long[] totals)
+    {
+        var categories = Ensure().categories;
+        // The category list is fixed data with a handful of entries, so an index fits a byte.
+        string[] ids = [.. categories.Select(c => c.Id).Append(OtherId).Distinct()];
+        var indexOf = new Dictionary<string, byte>(ids.Length);
+        for (int i = 0; i < ids.Length; i++) indexOf[ids[i]] = (byte)i;
+        byte other = indexOf[OtherId];
+        int k = ids.Length;
+
+        var kinds = new byte[tree.Count];
+        Array.Fill(kinds, other);
+        var running = new long[k];
+        var entered = new List<long>();   // k running totals per open folder
+        var stack = new Stack<int>();
+        for (int root = 0; root < tree.Count; root++)
+        {
+            if (tree.Parent[root] >= 0) continue;
+            stack.Push(root);
+            while (stack.TryPop(out int id))
+            {
+                if (id < 0)
+                {
+                    int at = entered.Count - k;
+                    byte best = other;
+                    long bestBytes = 0;
+                    for (int i = 0; i < k; i++)
+                    {
+                        long bytes = running[i] - entered[at + i];
+                        if (bytes > bestBytes) { bestBytes = bytes; best = (byte)i; }
+                    }
+                    entered.RemoveRange(at, k);
+                    kinds[~id] = best;
+                }
+                else if (tree.IsDirectory[id])
+                {
+                    entered.AddRange(running);
+                    stack.Push(~id);   // leave it after its children
+                    for (int child = tree.FirstChild[id]; child != -1; child = tree.NextSibling[child])
+                        stack.Push(child);
+                }
+                else
+                {
+                    byte kind = indexOf.GetValueOrDefault(KindOfFile(tree.NameOf(id)), other);
+                    kinds[id] = kind;
+                    running[kind] += Math.Max(0, totals[id]);
+                }
+            }
+        }
+        return new DominantKinds(tree, ids, kinds);
     }
 }

@@ -29,14 +29,19 @@ public sealed class ExplorePage : UserControl
     private int _builtZoom = -2;
     private string _builtMode = "";
     private object? _builtTree;
+    private object? _builtTotals;
+    private object? _builtReviewables;
+    private object? _chromeFor;
+    private ScrollViewer? _inspectorView;
+    private LazyRows? _contents;
 
     public ExplorePage()
     {
         Background = Ui.Brush("RdPage");
         Content = _root;
-        ModelEvents.WhileLoaded(this, Rebuild);
-        Loaded += (_, _) => { Model.PropertyChanged += OnModelProperty; Model.StagedChanged += OnStaged; };
-        Unloaded += (_, _) => { Model.PropertyChanged -= OnModelProperty; Model.StagedChanged -= OnStaged; };
+        // One callback per change: a selection used to rebuild the page from here and again from
+        // a SelectedNode property handler. Staging needs nothing here; the inspector follows it.
+        ModelEvents.WhileLoaded(this, OnModelChanged);
         SizeChanged += (_, _) => { if (Rd.ClassFor(WindowWidth) != _class) Rebuild(); };
         PreviewKeyDown += (_, e) =>
         {
@@ -44,13 +49,29 @@ public sealed class ExplorePage : UserControl
         };
     }
 
-    private void OnStaged(object? sender, EventArgs e) => Dispatcher.InvokeAsync(Rebuild);
+    /// <summary>What the page is built from; a change to anything else (a selection) only repaints.</summary>
+    private static object ChromeKey() =>
+        (Model.Tree, Model.Totals, Model.ZoomedNode, Model.VisualizeMode, Model.Reviewables, Model.CanGoBack, Model.CanGoForward);
 
-    /// <summary>Selection changes redraw the map and the inspector without rebuilding the canvas.</summary>
-    private void OnModelProperty(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    private void OnModelChanged()
     {
-        if (e.PropertyName == nameof(ScanModel.SelectedNode)) Dispatcher.InvokeAsync(Rebuild);
+        if (Equals(_chromeFor, ChromeKey())) RefreshSelection();
+        else Rebuild();
     }
+
+    /// <summary>
+    /// A selection (a click, an arrow key on the map) redraws the map, repaints the table's rows
+    /// and shows the new inspector; the map stays where it is, so it keeps the keyboard.
+    /// </summary>
+    private void RefreshSelection()
+    {
+        _map?.InvalidateVisual();
+        _contents?.Refresh();
+        if (_inspectorView is not null) _inspectorView.Content = InspectorContent();
+    }
+
+    private FrameworkElement InspectorContent() =>
+        ExploreInspector.Build(Model.SelectedNode >= 0 ? Model.SelectedNode : CurrentId, _class);
 
     private double WindowWidth =>
         Harness.ContentSize is { } pinned ? pinned.Width
@@ -64,6 +85,11 @@ public sealed class ExplorePage : UserControl
     private void Rebuild()
     {
         _class = Rd.ClassFor(WindowWidth);
+        _chromeFor = ChromeKey();
+        // A new folder or chart replaces the canvas; one that had the keyboard hands it on.
+        bool chartFocused = _canvas?.IsKeyboardFocusWithin == true;
+        _inspectorView = null;
+        _contents = null;
         _root.Children.Clear();
         _root.ColumnDefinitions.Clear();
         if (Model.Tree is not { } tree || Model.Totals.Length != tree.Count)
@@ -72,22 +98,23 @@ public sealed class ExplorePage : UserControl
             return;
         }
         var main = MainColumn(tree);
+        if (chartFocused) Dispatcher.InvokeAsync(FocusChart, System.Windows.Threading.DispatcherPriority.Loaded);
         if (!_showInspector)
         {
             _root.Children.Add(main);
             return;
         }
-        var inspector = new Border
-        {
-            Background = Ui.Brush("RdSidebar"),
-            Child = new ScrollViewer
+        bool wide = WindowWidth >= 1200;
+        // Built only where it shows: a shut drawer used to build (and read a folder for) an unseen one.
+        if (wide || _drawerOpen)
+            _inspectorView = new ScrollViewer
             {
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                Content = ExploreInspector.Build(Model.SelectedNode >= 0 ? Model.SelectedNode : CurrentId, _class),
+                Content = InspectorContent(),
                 Focusable = false,
-            },
-        };
-        if (WindowWidth >= 1200)
+            };
+        var inspector = new Border { Background = Ui.Brush("RdSidebar"), Child = _inspectorView };
+        if (wide)
         {
             // Side by side: main | hairline | inspector (AdaptiveInspectorSplit).
             _root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -154,16 +181,22 @@ public sealed class ExplorePage : UserControl
         Grid.SetRow(canvasHost, 4);
         grid.Children.Add(canvasHost);
 
-        var table = ContentsTable(tree, totals);
+        var (shown, hidden) = Capped(LargestRows(tree, totals));
+        var table = ContentsTable(tree, totals, shown, hidden);
         Grid.SetRow(table, 6);
         grid.Children.Add(table);
         // The table takes up to 36% of the height, at least 150, at most 8 rows + header.
+        int lines = Math.Min(shown.Count + (hidden > 0 ? 1 : 0), 8);
         grid.SizeChanged += (_, e) =>
-        {
-            int rows = Math.Min(LargestRows(tree, totals).Count, 8);
-            table.Height = Math.Max(150, Math.Min(e.NewSize.Height * 0.36, rows * RowHeight + 34));
-        };
+            table.Height = Math.Max(150, Math.Min(e.NewSize.Height * 0.36, lines * RowHeight + 34));
         return grid;
+    }
+
+    /// <summary>The keyboard goes back to the chart that replaced the focused one.</summary>
+    private void FocusChart()
+    {
+        var chart = _canvas is ScrollViewer { Content: UIElement inner } ? inner : _canvas;
+        chart?.Focus();
     }
 
     private double RowHeight => _class == Rd.WidthClass.Compact ? 34 : 38;
@@ -171,8 +204,10 @@ public sealed class ExplorePage : UserControl
     private FrameworkElement Canvas(FileTree tree)
     {
         string mode = Model.VisualizeMode;
-        // Rebuild the chart only when the folder, chart or scan changed; selection just redraws it.
-        if (_canvas is not null && _builtZoom == CurrentId && _builtMode == mode + ColorMode && ReferenceEquals(_builtTree, tree))
+        // Rebuild the chart only when the folder, chart or scan changed (the map's freeable marks
+        // come from the totals and the Clean up targets); selection just redraws it.
+        if (_canvas is not null && _builtZoom == CurrentId && _builtMode == mode + ColorMode && ReferenceEquals(_builtTree, tree)
+            && ReferenceEquals(_builtTotals, Model.Totals) && ReferenceEquals(_builtReviewables, Model.Reviewables))
         {
             if (_canvas.Parent is Panel old) old.Children.Remove(_canvas);
             _map?.Refresh();
@@ -181,6 +216,8 @@ public sealed class ExplorePage : UserControl
         _builtZoom = CurrentId;
         _builtMode = mode + ColorMode;
         _builtTree = tree;
+        _builtTotals = Model.Totals;
+        _builtReviewables = Model.Reviewables;
         _map = null;
         _canvas = mode switch
         {
@@ -222,11 +259,9 @@ public sealed class ExplorePage : UserControl
 
         var left = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         var back = Rd.IconButton("BsChevronLeft", "Back", () => Model.GoBack());
-        back.IsEnabled = Model.CanGoBack;
-        back.Opacity = Model.CanGoBack ? 1 : 0.35;
+        back.IsEnabled = Model.CanGoBack;   // the buttons dim themselves
         var forward = Rd.IconButton("BsChevronRight", "Forward", () => Model.GoForward());
         forward.IsEnabled = Model.CanGoForward;
-        forward.Opacity = Model.CanGoForward ? 1 : 0.35;
         left.Children.Add(back);
         left.Children.Add(forward);
         var crumbs = Breadcrumb(tree);
@@ -252,11 +287,8 @@ public sealed class ExplorePage : UserControl
                 row.Children.Add(slash);
             }
             bool current = id == Model.ZoomedNode;
-            var crumb = Rd.Text(tree.NameOf(id), 13, current ? FontWeights.Medium : FontWeights.Normal, current ? "RdInk" : "RdInk2");
-            crumb.Cursor = Cursors.Hand;
-            crumb.MouseLeftButtonUp += (_, _) => { Model.DrillToAncestor(id); Model.Select(id); };
-            System.Windows.Automation.AutomationProperties.SetName(crumb, tree.NameOf(id));
-            row.Children.Add(crumb);
+            row.Children.Add(Rd.Link(tree.NameOf(id), () => { Model.DrillToAncestor(id); Model.Select(id); }, 13,
+                current ? "RdInk" : "RdInk2", current ? FontWeights.Medium : FontWeights.Normal));
         }
         return new ScrollViewer
         {
@@ -282,28 +314,19 @@ public sealed class ExplorePage : UserControl
             new Rd.Segment("List", onList, () => { if (!onList) Model.ShowPage("Biggest Files"); }),
         ]));
         string moreTitle = MoreModes.Contains(mode) ? mode : "More";
-        var more = new StackPanel { Orientation = Orientation.Horizontal, Cursor = Cursors.Hand, Background = Brushes.Transparent, Margin = new Thickness(8, 0, 0, 0) };
-        more.Children.Add(Rd.Text(moreTitle, 13, FontWeights.Medium));
+        var label = new StackPanel { Orientation = Orientation.Horizontal };
+        label.Children.Add(Rd.Text(moreTitle, 13, FontWeights.Medium));
         var chevron = Ui.Glyph(Icons.ChevronDown, 8, Ui.Brush("RdInk"));
         chevron.Margin = new Thickness(4, 1, 0, 0);
         chevron.VerticalAlignment = VerticalAlignment.Center;
-        more.Children.Add(chevron);
-        more.ToolTip = "Flame, Bubbles, Mind Map and Age Map";
-        more.MouseLeftButtonUp += (_, _) =>
+        label.Children.Add(chevron);
+        Button? more = null;
+        more = Rd.Pressable(label, moreTitle == "More" ? "More charts" : $"{moreTitle}, more charts", () =>
         {
-            var menu = new ContextMenu();
-            foreach (string m in MoreModes)
-            {
-                var item = new MenuItem { Header = (mode == m ? "✓  " : "     ") + m };
-                string captured = m;
-                item.Click += (_, _) => Show(captured);
-                menu.Items.Add(item);
-            }
-            menu.PlacementTarget = more;
-            menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
-            menu.IsOpen = true;
-        };
-        System.Windows.Automation.AutomationProperties.SetName(more, moreTitle);
+            if (more is not null) ListKit.OpenMenu(more, MoreModes.Select(m => (m, mode == m, (Action)(() => Show(m)))));
+        }, 4);
+        more.Margin = new Thickness(8, 0, 0, 0);
+        more.ToolTip = "Flame, Bubbles, Mind Map and Age Map";
         row.Children.Add(more);
         return row;
     }
@@ -325,27 +348,15 @@ public sealed class ExplorePage : UserControl
         var chevrons = Ui.Glyph("BsChevronExpand", 8.5, Ui.Brush("RdInk3"));
         chevrons.VerticalAlignment = VerticalAlignment.Center;
         row.Children.Add(chevrons);
-        var host = new Border
-        {
-            Height = 28, Padding = new Thickness(9, 0, 9, 0), Background = Brushes.Transparent,
-            Cursor = Cursors.Hand, Child = row,
-        };
         var items = options.ToList();
-        host.MouseLeftButtonUp += (_, _) =>
+        Button? host = null;
+        host = Rd.Pressable(row, $"{label}: {title(selection)}", () =>
         {
-            var menu = new ContextMenu();
-            foreach (var option in items)
-            {
-                var item = new MenuItem { Header = (EqualityComparer<T>.Default.Equals(option, selection) ? "✓  " : "     ") + title(option) };
-                var captured = option;
-                item.Click += (_, _) => pick(captured);
-                menu.Items.Add(item);
-            }
-            menu.PlacementTarget = host;
-            menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
-            menu.IsOpen = true;
-        };
-        System.Windows.Automation.AutomationProperties.SetName(host, $"{label}: {title(selection)}");
+            if (host is not null)
+                ListKit.OpenMenu(host, items.Select(o => (title(o), EqualityComparer<T>.Default.Equals(o, selection), (Action)(() => pick(o)))));
+        }, 6);
+        host.Height = 28;
+        host.Padding = new Thickness(9, 0, 9, 0);
         return host;
     }
 
@@ -415,9 +426,17 @@ public sealed class ExplorePage : UserControl
     private List<(int Id, long Size)> LargestRows(FileTree tree, long[] totals) =>
         tree.ChildrenOf(CurrentId, totals).Where(c => c.Size > 0).OrderByDescending(c => c.Size).ToList();
 
-    private FrameworkElement ContentsTable(FileTree tree, long[] totals)
+    /// <summary>The table's row cap: a node_modules or WinSxS folder holds tens of thousands of children.</summary>
+    internal const int ContentsLimit = 200;
+
+    /// <summary>The biggest <see cref="ContentsLimit"/> rows, and how many smaller ones the "+N more" line stands for.</summary>
+    internal static (List<(int Id, long Size)> Shown, int Hidden) Capped(List<(int Id, long Size)> rows) =>
+        (rows.Count > ContentsLimit ? rows.GetRange(0, ContentsLimit) : rows, Math.Max(0, rows.Count - ContentsLimit));
+
+    internal static string MoreLine(int hidden) => $"+{hidden:N0} more — see them all in List";
+
+    private FrameworkElement ContentsTable(FileTree tree, long[] totals, List<(int Id, long Size)> rows, int hidden)
     {
-        var rows = LargestRows(tree, totals);
         long largest = Math.Max(1, rows.FirstOrDefault().Size);
         var freeable = new FreeableIndex(Model.Reviewables ?? [], totals);
         int today = AgeMap.Today();
@@ -440,23 +459,27 @@ public sealed class ExplorePage : UserControl
         };
         grid.Children.Add(headBox);
 
-        var list = new StackPanel();
-        foreach (var (id, size) in rows)
+        var items = new List<object>(rows.Count + 1);
+        items.AddRange(rows.Cast<object>());
+        if (hidden > 0) items.Add(MoreLine(hidden));
+        _contents = new LazyRows(items, item => item is (int id, long) && id == Model.SelectedNode, (item, selected) =>
         {
+            if (item is not (int id, long size))
+            {
+                var more = Rd.Link((string)item, () => Model.ShowPage("Biggest Folders"), 12, "RdInk2", FontWeights.Normal);
+                more.Margin = new Thickness(10, 10, 0, 10);
+                return more;
+            }
             long free = freeable.Bytes(id, tree, totals);
             bool isDir = tree.IsDirectory[id];
             bool rebuilds = freeable.Contains(id, tree);
-            string path = Model.PathOf(id);
-            string what = WhatItIs(rebuilds, StorageClassifier.Classify(path, isDir).Class);
-            bool selected = id == Model.SelectedNode;
-            list.Children.Add(ContentRow(id, tree.NameOf(id), isDir, size, (double)size / largest,
+            string what = WhatItIs(rebuilds, StorageClassifier.Classify(Model.PathOf(id), isDir).Class);
+            return ContentRow(id, tree.NameOf(id), isDir, size, (double)size / largest,
                 size > 0 ? (double)free / size : 0, LastUsed(tree.ModifiedDay[id], today), free, what, rebuilds,
-                selected, showWhat, barWidth));
-        }
-        var scroll = new ScrollViewer { Content = list, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false };
-        Grid.SetRow(scroll, 1);
-        grid.Children.Add(scroll);
-        System.Windows.Automation.AutomationProperties.SetName(grid, $"Contents of {tree.NameOf(CurrentId)}");
+                selected, showWhat, barWidth);
+        }, $"Contents of {tree.NameOf(CurrentId)}");
+        Grid.SetRow(_contents, 1);
+        grid.Children.Add(_contents);
         return grid;
     }
 
@@ -481,7 +504,7 @@ public sealed class ExplorePage : UserControl
     private FrameworkElement ContentRow(int id, string name, bool isDir, long bytes, double fraction, double freeFraction,
         string lastUsed, long freeable, string what, bool whatIsAccent, bool selected, bool showWhat, double barWidth)
     {
-        var nameText = Rd.Text(name, 13, selected ? FontWeights.Medium : FontWeights.Normal);
+        var nameText = Rd.Text(name, 13);
         nameText.TextTrimming = TextTrimming.CharacterEllipsis;
         var bar = new Grid { Height = 5, Width = barWidth };
         bar.Children.Add(new Border { Background = Ui.Brush("RdSoft") });
@@ -493,27 +516,22 @@ public sealed class ExplorePage : UserControl
         var free = Rd.Figure(freeable > 0 ? ByteFormat.Format(freeable) : "—", 12, null, freeable > 0 ? "AppAccent" : "RdInk3");
         var whatText = showWhat ? Rd.Text(what, 13, null, whatIsAccent ? "RdAccentDeep" : "RdInk2") : null;
         var row = TableRow(showWhat, barWidth, nameText, bar, size, used, free, whatText);
-        var host = new Border
+        var host = new ListRow(row,
+            $"{name}, {ByteFormat.Format(bytes)}{(freeable > 0 ? $", {ByteFormat.Format(freeable)} can be freed" : "")}{(isDir ? ", folder — press Enter to open" : "")}",
+            select: () => Model.Select(id),
+            open: isDir ? () => { Model.DrillTo(id); Model.Select(id); } : null)
         {
-            Height = RowHeight, Padding = new Thickness(10, 0, 10, 0), Child = row, Cursor = Cursors.Hand,
-            Background = selected ? Ui.Brush("RdAccentWash") : Brushes.Transparent,
+            Height = RowHeight, Padding = new Thickness(10, 0, 10, 0),
             BorderBrush = Rd.WithOpacity(Ui.Brush("RdLine"), 0.6), BorderThickness = new Thickness(0, 0, 0, 1),
-            ToolTip = isDir ? "Double-click to open" : name,
+            ToolTip = isDir ? "Double-click or press Enter to open" : name,
         };
-        host.MouseEnter += (_, _) => { if (!selected) host.Background = Ui.Brush("RdHover"); };
-        host.MouseLeave += (_, _) => { if (!selected) host.Background = Brushes.Transparent; };
-        host.MouseLeftButtonDown += (_, e) =>
+        host.Paint = on =>
         {
-            if (e.ClickCount == 2)
-            {
-                if (isDir) Model.DrillTo(id);
-                Model.Select(id);
-            }
-            else Model.Select(id);
-            e.Handled = true;
+            nameText.FontWeight = on ? FontWeights.Medium : FontWeights.Normal;
+            host.Rest = on ? Ui.Brush("RdAccentWash") : Brushes.Transparent;
+            host.Hover = on ? host.Rest : Ui.Brush("RdHover");
         };
-        System.Windows.Automation.AutomationProperties.SetName(host,
-            $"{name}, {ByteFormat.Format(bytes)}{(freeable > 0 ? $", {ByteFormat.Format(freeable)} can be freed" : "")}");
+        host.Selected = selected;
         return host;
     }
 

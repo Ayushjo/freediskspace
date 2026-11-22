@@ -278,20 +278,29 @@ internal sealed class ScanningBoard(Rd.WidthClass widthClass, double height)
 {
     private static ScanModel Model => ScanModel.Shared;
 
+    private readonly Grid _grid = new();
+    private readonly TextBlock _title = Rd.PageTitle("");
+    private readonly TextBlock _subtitle = Rd.Text("", 13, null, "RdInk2");
+    private FrameworkElement? _stats;
+    private FrameworkElement? _bottom;
+
+    public Rd.WidthClass WidthClass => widthClass;
+
+    /// <summary>
+    /// The board, made once per scan: the header with Cancel stays while <see cref="Refresh"/>
+    /// redraws the live parts up to four times a second. A Cancel made anew each time could
+    /// be replaced between press and release, and the click was lost.
+    /// </summary>
     public FrameworkElement Build()
     {
         double pad = widthClass.PagePadding();
         double gap = widthClass.Gap();
-        var grid = new Grid
-        {
-            Margin = new Thickness(pad, widthClass == Rd.WidthClass.Compact ? 14 : 20, pad, pad),
-            MinHeight = Math.Max(360, height - (widthClass == Rd.WidthClass.Compact ? 14 : 20) - pad),
-        };
-        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(gap) });
-        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(gap) });
-        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        _grid.Margin = new Thickness(pad, widthClass == Rd.WidthClass.Compact ? 14 : 20, pad, pad);
+        _grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        _grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(gap) });
+        _grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        _grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(gap) });
+        _grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
         var head = new DockPanel();
         var cancel = Rd.SecondaryButton("Cancel", () => Model.CancelScan());
@@ -299,16 +308,37 @@ internal sealed class ScanningBoard(Rd.WidthClass widthClass, double height)
         DockPanel.SetDock(cancel, Dock.Right);
         head.Children.Add(cancel);
         var titles = new StackPanel();
-        titles.Children.Add(Rd.PageTitle(Title(Model.RootPath, Model.ScanPhase)));
-        var sub = Rd.Text(Subtitle(Model.ScanPhase), 13, null, "RdInk2");
-        sub.Margin = new Thickness(0, 6, 0, 0);
-        titles.Children.Add(sub);
+        titles.Children.Add(_title);
+        _subtitle.Margin = new Thickness(0, 6, 0, 0);
+        titles.Children.Add(_subtitle);
         head.Children.Add(titles);
-        grid.Children.Add(head);
+        _grid.Children.Add(head);
 
-        var stats = Stats();
-        Grid.SetRow(stats, 2);
-        grid.Children.Add(stats);
+        // Esc cancels (.keyboardShortcut(.cancelAction)).
+        _grid.Focusable = true;
+        _grid.Loaded += (_, _) => _grid.Focus();
+        _grid.KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Escape) { Model.CancelScan(); e.Handled = true; }
+        };
+        Refresh(height);
+        return _grid;
+    }
+
+    /// <summary>The live parts: the titles' words, the counters, the map and the places.</summary>
+    public void Refresh(double pageHeight)
+    {
+        double pad = widthClass.PagePadding();
+        double gap = widthClass.Gap();
+        _grid.MinHeight = Math.Max(360, pageHeight - (widthClass == Rd.WidthClass.Compact ? 14 : 20) - pad);
+        _title.Text = Title(Model.RootPath, Model.ScanPhase);
+        _subtitle.Text = Subtitle(Model.ScanPhase);
+        if (_stats is not null) _grid.Children.Remove(_stats);
+        if (_bottom is not null) _grid.Children.Remove(_bottom);
+
+        _stats = Stats();
+        Grid.SetRow(_stats, 2);
+        _grid.Children.Add(_stats);
 
         var bottom = new Grid();
         bottom.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -322,16 +352,8 @@ internal sealed class ScanningBoard(Rd.WidthClass widthClass, double height)
             bottom.Children.Add(places);
         }
         Grid.SetRow(bottom, 4);
-        grid.Children.Add(bottom);
-
-        // Esc cancels (.keyboardShortcut(.cancelAction)).
-        grid.Focusable = true;
-        grid.Loaded += (_, _) => grid.Focus();
-        grid.KeyDown += (_, e) =>
-        {
-            if (e.Key == Key.Escape) { Model.CancelScan(); e.Handled = true; }
-        };
-        return grid;
+        _grid.Children.Add(bottom);
+        _bottom = bottom;
     }
 
     public static string Title(string? root, string phase)

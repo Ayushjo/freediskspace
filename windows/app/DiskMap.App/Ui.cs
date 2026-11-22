@@ -872,15 +872,6 @@ public static class Ui
         return stack;
     }
 
-    /// <summary>Accent text link — the `LinkButtonStyle` equivalent (§8).</summary>
-    public static TextBlock LinkText(string text, Action onClick, double size = 12)
-    {
-        var t = T(text, size, FontWeights.Medium, Brush("AppAccent"));
-        t.Cursor = Cursors.Hand;
-        t.MouseLeftButtonDown += (_, _) => onClick();
-        return t;
-    }
-
     /// <summary>A colour at a fixed alpha — e.g. the 16% kind tint behind icons (§3.4).</summary>
     public static Brush Tint(Color color, byte alpha) =>
         new SolidColorBrush(Color.FromArgb(alpha, color.R, color.G, color.B));
@@ -951,26 +942,6 @@ public static class Ui
         grid.Children.Add(track);
         grid.Children.Add(bar);
         return grid;
-    }
-
-    /// <summary>A 36 pt calm row — hover fill, radius 6, hand cursor (§10.1).</summary>
-    public static Border HoverRow(FrameworkElement content, Action? onClick = null)
-    {
-        var row = new Border
-        {
-            CornerRadius = new CornerRadius(6),
-            Padding = new Thickness(10, 0, 10, 0),
-            Child = content,
-            MinHeight = 36,
-        };
-        row.MouseEnter += (_, _) => row.Background = Brush("AppHover");
-        row.MouseLeave += (_, _) => row.Background = Brushes.Transparent;
-        if (onClick is not null)
-        {
-            row.Cursor = Cursors.Hand;
-            row.MouseLeftButtonDown += (_, _) => onClick();
-        }
-        return row;
     }
 
     /// <summary>The segmented composition bar — 6 pt, 2 pt gaps (§14.1).</summary>

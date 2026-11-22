@@ -98,13 +98,16 @@ public sealed class FindExplorePage : UserControl
     private Rd.WidthClass _class = Rd.WidthClass.Regular;
     private readonly Grid _root = new();
     private TextBox? _search;
+    private LazyRows? _list;
+    private FrameworkElement? _toolbar;
+    private object? _chromeFor;
 
     public FindExplorePage()
     {
         Background = Ui.Brush("RdPage");
         Content = _root;
         Focusable = true;
-        ModelEvents.WhileLoaded(this, Rebuild);
+        ModelEvents.WhileLoaded(this, OnModelChanged);
         Loaded += (_, _) =>
         {
             Model.StagedChanged += OnStaged;
@@ -118,6 +121,29 @@ public sealed class FindExplorePage : UserControl
     }
 
     private void OnStaged(object? sender, EventArgs e) => Dispatcher.InvokeAsync(Rebuild);
+
+    /// <summary>What the page around the rows is built from; a change to anything else (a selection) only repaints rows.</summary>
+    private static object ChromeKey() =>
+        (Model.Tree, Model.Totals, Model.Reviewables, Model.SearchQuery, Model.DuplicatesSearched, Model.Duplicates);
+
+    private void OnModelChanged()
+    {
+        if (_list is not null && Equals(_chromeFor, ChromeKey())) RefreshSelection();
+        else Rebuild();
+    }
+
+    private bool IsSelected(int id) => id == _selected || Model.MultiSelection.Contains(id);
+
+    /// <summary>Repaints the rows whose selection changed and the selection toolbar; <paramref name="reveal"/> takes the keyboard.</summary>
+    private void RefreshSelection(Row? reveal = null)
+    {
+        _list?.Refresh(reveal);
+        if (_toolbar is not null) _root.Children.Remove(_toolbar);
+        _toolbar = ListKit.SelectionToolbar("Find", _rows.Select(r => r.Id));
+        if (_toolbar is null) return;
+        Grid.SetRow(_toolbar, 2);
+        _root.Children.Add(_toolbar);
+    }
 
     private double WindowWidth =>
         Harness.ContentSize is { } pinned ? pinned.Width
@@ -247,10 +273,14 @@ public sealed class FindExplorePage : UserControl
         string key = $"{Model.SearchQuery}|{_sort}|{System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(tree)}|"
             + $"{System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(Model.Totals)}|{Model.DuplicatesSearched}|{Model.Duplicates.Count}";
         if (key != _runKey) Run(tree, root, key);
+        _chromeFor = ChromeKey();
         bool searchFocused = _search?.IsKeyboardFocusWithin == true;
+        bool listFocused = _list?.IsKeyboardFocusWithin == true;
         int caret = _search?.CaretIndex ?? 0;
 
         double pad = _class.PagePadding();
+        _list = null;
+        _toolbar = null;
         _root.Children.Clear();
         _root.RowDefinitions.Clear();
         _root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -282,18 +312,14 @@ public sealed class FindExplorePage : UserControl
         else body = Table(tree, root, pad);
         Grid.SetRow(body, 1);
         _root.Children.Add(body);
-
-        if (ListKit.SelectionToolbar("Find") is { } bar)
-        {
-            Grid.SetRow(bar, 2);
-            _root.Children.Add(bar);
-        }
+        RefreshSelection();
 
         if (searchFocused && _search is not null)
         {
             _search.Focus();
             _search.CaretIndex = Math.Min(caret, _search.Text.Length);
         }
+        else if (listFocused) Focus();   // the rebuilt list dropped its rows; the page keeps the keys
     }
 
     private FrameworkElement Header()
@@ -449,7 +475,7 @@ public sealed class FindExplorePage : UserControl
     }
 
     /// <summary>An example query: mono query (230 wide), what it means, an arrow on hover.</summary>
-    private Border ExampleRow(string query, string meaning)
+    private FrameworkElement ExampleRow(string query, string meaning)
     {
         var dock = new DockPanel { Margin = new Thickness(16, 0, 16, 0) };
         var arrow = Ui.Glyph("BsArrowRight", 10, Brushes.Transparent);
@@ -463,12 +489,13 @@ public sealed class FindExplorePage : UserControl
         var m = Rd.Text(meaning, 12, null, "RdInk2");
         m.Margin = new Thickness(16, 0, 0, 0);
         dock.Children.Add(m);
-        var host = new Border { Height = 46, Background = Brushes.Transparent, Child = dock, Cursor = Cursors.Hand, Focusable = true };
-        host.MouseEnter += (_, _) => { host.Background = Rd.WithOpacity(Ui.Brush("RdSoft"), 0.6); Ui.SetIconBrush(arrow, Ui.Brush("AppAccent")); };
-        host.MouseLeave += (_, _) => { host.Background = Brushes.Transparent; Ui.SetIconBrush(arrow, Brushes.Transparent); };
-        host.MouseLeftButtonUp += (_, _) => SetQuery(query);
-        host.KeyDown += (_, e) => { if (e.Key is Key.Enter or Key.Space) { SetQuery(query); e.Handled = true; } };
-        System.Windows.Automation.AutomationProperties.SetName(host, $"{meaning}: {query}");
+        // A real button: screen readers read it, Tab reaches it, Enter and Space run it.
+        var host = new ListRow(dock, $"{meaning}: {query}", () => SetQuery(query), null)
+        {
+            Height = 46, Hover = Rd.WithOpacity(Ui.Brush("RdSoft"), 0.6),
+        };
+        host.MouseEnter += (_, _) => Ui.SetIconBrush(arrow, Ui.Brush("AppAccent"));
+        host.MouseLeave += (_, _) => Ui.SetIconBrush(arrow, Brushes.Transparent);
         return host;
     }
 
@@ -525,18 +552,15 @@ public sealed class FindExplorePage : UserControl
                 SavedSearches.Save(SavedSearches.Load().Where(s => s.Id != search.Id));
                 Rebuild();
             }, 26);
-            var row = SearchRowItem(search.Name, search.Query, total, remove);
-            row.Cursor = Cursors.Hand;
-            row.Background = Brushes.Transparent;
-            row.MouseEnter += (_, _) => row.Background = Rd.WithOpacity(Ui.Brush("RdSoft"), 0.6);
-            row.MouseLeave += (_, _) => row.Background = Brushes.Transparent;
-            row.MouseLeftButtonUp += (_, _) =>
+            var row = new ListRow(SearchRowItem(search.Name, search.Query, total, remove), $"Run {search.Name}: {search.Query}", () =>
             {
                 _sort = search.FileSort switch { FileQuery.Sort.Oldest => FindSort.Oldest, FileQuery.Sort.Newest => FindSort.Newest, _ => FindSort.Largest };
                 SetQuery(search.Query);
+            }, null)
+            {
+                Hover = Rd.WithOpacity(Ui.Brush("RdSoft"), 0.6),
+                ToolTip = "Run this search",
             };
-            row.ToolTip = "Run this search";
-            System.Windows.Automation.AutomationProperties.SetName(row, $"Run {search.Name}: {search.Query}");
             rows.Children.Add(row);
         }
         return rows;
@@ -584,21 +608,19 @@ public sealed class FindExplorePage : UserControl
         string changed = _sort is FindSort.Oldest or FindSort.Newest ? "Last changed ↓" : "Last changed";
         grid.Children.Add(ListKit.ColumnHeader(columns, "Kind", size, false, changed, "Can be freed"));
 
-        var list = new StackPanel { Opacity = _running ? 0.6 : 1 };
-        foreach (var row in _rows)
+        _list = new LazyRows(_rows, item => item is Row row && IsSelected(row.Id), (item, selected) =>
         {
-            bool freeable = index.Contains(row.Id, tree);
-            var verdict = StorageClassifier.Classify(row.AbsolutePath, row.IsDirectory);
-            var r = row;
-            var element = ListKit.FileRow(row.Name, BiggestFilesExplorePage.RelativeParent(row.AbsolutePath, root),
-                row.IsDirectory ? "DIR" : ListKit.Badge(row.Name, row.Kind),
-                row.IsDirectory ? BiggestFoldersExplorePage.FolderKind(verdict.Class) : ListKit.KindText(row.Kind, verdict.Class),
-                (double)row.Bytes / largest, row.Bytes, ExplorePage.LastUsed(row.ModifiedDay, today),
-                ListKit.FreeNote(freeable, row.Bytes, verdict), freeable, staged.Contains(row.AbsolutePath),
-                row.Id == _selected || Model.MultiSelection.Contains(row.Id), columns,
-                select: () => SelectRow(r.Id),
+            var r = (Row)item;
+            bool freeable = index.Contains(r.Id, tree);
+            var verdict = StorageClassifier.Classify(r.AbsolutePath, r.IsDirectory);
+            var element = ListKit.FileRow(r.Name, BiggestFilesExplorePage.RelativeParent(r.AbsolutePath, root),
+                r.IsDirectory ? "DIR" : ListKit.Badge(r.Name, r.Kind),
+                r.IsDirectory ? BiggestFoldersExplorePage.FolderKind(verdict.Class) : ListKit.KindText(r.Kind, verdict.Class),
+                (double)r.Bytes / largest, r.Bytes, ExplorePage.LastUsed(r.ModifiedDay, today),
+                ListKit.FreeNote(freeable, r.Bytes, verdict), freeable, staged.Contains(r.AbsolutePath), selected, columns,
+                select: () => SelectRow(r),
                 add: () => Model.Stage(r.Id, reason),
-                open: row.IsDirectory ? () => { Model.DrillTo(r.Id); Model.Select(r.Id); Model.ShowPage("Biggest Folders"); } : null);
+                open: r.IsDirectory ? () => { Model.DrillTo(r.Id); Model.Select(r.Id); Model.ShowPage("Biggest Folders"); } : null);
             var showInExplore = new MenuItem { Header = "Show in Explore" };
             showInExplore.Click += (_, _) =>
             {
@@ -607,11 +629,13 @@ public sealed class FindExplorePage : UserControl
                 Model.ShowPage("Visualize");
             };
             element.ContextMenu = new ContextMenu { Items = { showInExplore } };
-            list.Children.Add(element);
-        }
-        var scroll = _scroll.Wrap(list, _runKey ?? "");
-        Grid.SetRow(scroll, 1);
-        grid.Children.Add(scroll);
+            return element;
+        }, "Find results", _scroll, _runKey ?? "")
+        {
+            Opacity = _running ? 0.6 : 1,
+        };
+        Grid.SetRow(_list, 1);
+        grid.Children.Add(_list);
 
         var text = ListKit.FooterText((FooterLine(_rows.Count, _matchCount, _matchedBytes), "RdInk2"));
         var footer = _rows.Count > 1
@@ -628,24 +652,25 @@ public sealed class FindExplorePage : UserControl
     {
         _text = query;
         _syncedQuery = query;
-        Model.SearchQuery = query;   // StateChanged rebuilds and runs it
-        Rebuild();
+        // A new query raises StateChanged, which rebuilds and runs it: one rebuild, not two.
+        if (Model.SearchQuery == query) Rebuild();
+        else Model.SearchQuery = query;
     }
 
-    private void SelectRow(int id)
+    /// <summary>A click: the row is selected (Ctrl adds it) and keeps the keyboard, so ↑↓ and Delete act from it.</summary>
+    private void SelectRow(Row row)
     {
-        Focus();   // a click gives the list the keyboard (the search box kept it, so ↑↓ and Delete did nothing)
-        _selected = id;
-        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) Model.ToggleMulti(id);
-        else { Model.ClearMulti(); Model.Select(id); }
-        Rebuild();
+        _selected = row.Id;
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) Model.ToggleMulti(row.Id);
+        else { Model.ClearMulti(); Model.Select(row.Id); }
+        RefreshSelection(row);
     }
 
     private void SelectAll()
     {
         Model.ClearMulti();
         foreach (var r in _rows) Model.ToggleMulti(r.Id);
-        Rebuild();
+        RefreshSelection();
     }
 
     private void Keep(string name, string query, FindSort sort)
@@ -754,9 +779,11 @@ public sealed class FindExplorePage : UserControl
         if (ListKit.ListKey(e, ids, ref selected, id => Model.Stage(id, reason),
                 id => rows.FirstOrDefault(r => r.Id == id)?.AbsolutePath, SelectAll))
         {
+            ListKit.RevealSelection = false;   // the list reveals the row itself
+            bool moved = selected != _selected;
             _selected = selected;
             e.Handled = true;
-            Rebuild();
+            RefreshSelection(moved ? rows.FirstOrDefault(r => r.Id == selected) : null);
         }
     }
 }

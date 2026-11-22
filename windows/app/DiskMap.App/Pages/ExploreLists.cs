@@ -22,8 +22,15 @@ internal sealed class ScrollMemory
 
     public ScrollViewer Wrap(UIElement list, string key)
     {
-        if (key != _key) { _key = key; _offset = 0; }
         var scroll = new ScrollViewer { Content = list, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false };
+        Track(scroll, key);
+        return scroll;
+    }
+
+    /// <summary>Keeps <paramref name="scroll"/>'s offset under <paramref name="key"/> and brings it back once it's loaded.</summary>
+    public void Track(ScrollViewer scroll, string key)
+    {
+        if (key != _key) { _key = key; _offset = 0; }
         double restore = _offset;
         bool restored = restore <= 0;
         scroll.ScrollChanged += (_, e) =>
@@ -37,7 +44,174 @@ internal sealed class ScrollMemory
             scroll.ScrollToVerticalOffset(restore);
             scroll.Dispatcher.InvokeAsync(() => restored = true, System.Windows.Threading.DispatcherPriority.Loaded);
         };
-        return scroll;
+    }
+}
+
+/// <summary>
+/// A list row as a real Button: screen readers read its name, a press selects it, a double-click
+/// opens it, and the page's keys (↑↓, Enter, Delete, Esc) act on it. A selection change repaints
+/// it in place (<see cref="Paint"/>), so the row with the keyboard keeps it.
+/// </summary>
+internal sealed class ListRow : Button
+{
+    private readonly Action? _open;
+    private bool _selected;
+
+    public ListRow(UIElement content, string name, Action select, Action? open)
+    {
+        _open = open;
+        Content = content;
+        Template = Rd.PlainTemplate(0, row: true);
+        Padding = new Thickness(0);
+        Background = Brushes.Transparent;
+        Cursor = Cursors.Hand;
+        ClickMode = ClickMode.Press;   // selects on press, as the rows always did
+        System.Windows.Automation.AutomationProperties.SetName(this, name);
+        Click += (_, _) => select();
+        PreviewMouseLeftButtonDown += (_, e) =>
+        {
+            if (e.ClickCount == 2 && _open is not null && !InsideNestedButton(e.OriginalSource as DependencyObject))
+            {
+                _open();
+                e.Handled = true;
+            }
+        };
+        MouseEnter += (_, _) => Background = Hover;
+        MouseLeave += (_, _) => Background = Rest;
+    }
+
+    /// <summary>Sets the row's look for a selection state: <see cref="Rest"/>, <see cref="Hover"/>, marks.</summary>
+    public Action<bool>? Paint { get; set; }
+
+    public Brush Rest { get; set; } = Brushes.Transparent;
+    public Brush Hover { get; set; } = Brushes.Transparent;
+
+    public bool Selected
+    {
+        get => _selected;
+        set
+        {
+            _selected = value;
+            Paint?.Invoke(value);
+            Background = IsMouseOver ? Hover : Rest;
+            System.Windows.Automation.AutomationProperties.SetItemStatus(this, value ? "Selected" : "");
+        }
+    }
+
+    /// <summary>Enter opens a folder where no page key claims it first (the lists' Enter reveals).</summary>
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && _open is not null) { _open(); e.Handled = true; return; }
+        base.OnKeyDown(e);
+    }
+
+    /// <summary>True for a press on the row's own add button, which handles its own clicks.</summary>
+    private bool InsideNestedButton(DependencyObject? from)
+    {
+        for (var node = from; node is not null && node != this; node = node is Visual ? VisualTreeHelper.GetParent(node) : null)
+            if (node is System.Windows.Controls.Primitives.ButtonBase) return true;
+        return false;
+    }
+}
+
+/// <summary>
+/// A virtualized list (Mac: LazyVStack): rows are built only as they scroll into view, and a
+/// selection change repaints the rows on screen in place. The list pages used to build up to
+/// 500 hand-made rows of about 30 elements each, twice, on every click and arrow key.
+/// </summary>
+internal sealed class LazyRows : ItemsControl
+{
+    private readonly Func<object, bool> _isSelected;
+    private readonly Func<object, bool, FrameworkElement> _build;
+    private readonly ScrollMemory? _memory;
+    private readonly string _memoryKey;
+    private readonly Dictionary<ContentPresenter, object> _live = [];
+
+    private static readonly ItemsPanelTemplate VirtualPanel = new(new FrameworkElementFactory(typeof(VirtualizingStackPanel)));
+
+    private static readonly ControlTemplate ListTemplate = (ControlTemplate)System.Windows.Markup.XamlReader.Parse(@"
+<ControlTemplate TargetType=""ItemsControl""
+    xmlns=""http://schemas.microsoft.com/winfx/2006/xaml/presentation""
+    xmlns:x=""http://schemas.microsoft.com/winfx/2006/xaml"">
+  <ScrollViewer x:Name=""Scroll"" Focusable=""False"" CanContentScroll=""True""
+                VerticalScrollBarVisibility=""Auto"" HorizontalScrollBarVisibility=""Disabled"">
+    <ItemsPresenter/>
+  </ScrollViewer>
+</ControlTemplate>");
+
+    /// <param name="items">The rows' items; anything <paramref name="build"/> knows, e.g. a closing "+N more" line.</param>
+    /// <param name="memory">Brings the scroll position back across page rebuilds under the same <paramref name="memoryKey"/>.</param>
+    public LazyRows(System.Collections.IList items, Func<object, bool> isSelected, Func<object, bool, FrameworkElement> build,
+        string name, ScrollMemory? memory = null, string memoryKey = "")
+    {
+        _isSelected = isSelected;
+        _build = build;
+        _memory = memory;
+        _memoryKey = memoryKey;
+        ItemsPanel = VirtualPanel;
+        Template = ListTemplate;
+        Focusable = false;
+        VirtualizingPanel.SetIsVirtualizing(this, true);
+        VirtualizingPanel.SetVirtualizationMode(this, VirtualizationMode.Recycling);
+        VirtualizingPanel.SetScrollUnit(this, ScrollUnit.Pixel);
+        ScrollViewer.SetCanContentScroll(this, true);
+        // One Tab stop (WPF returns to the row that last had focus); the page's arrow keys move between rows.
+        KeyboardNavigation.SetTabNavigation(this, KeyboardNavigationMode.Once);
+        System.Windows.Automation.AutomationProperties.SetName(this, name);
+        ItemsSource = items;
+    }
+
+    public override void OnApplyTemplate()
+    {
+        base.OnApplyTemplate();
+        if (_memory is not null && GetTemplateChild("Scroll") is ScrollViewer scroll) _memory.Track(scroll, _memoryKey);
+    }
+
+    protected override DependencyObject GetContainerForItemOverride() => new ContentPresenter();
+
+    protected override bool IsItemItsOwnContainerOverride(object item) => false;
+
+    protected override void PrepareContainerForItemOverride(DependencyObject element, object item)
+    {
+        base.PrepareContainerForItemOverride(element, item);
+        var host = (ContentPresenter)element;
+        bool selected = _isSelected(item);
+        host.Content = _build(item, selected);
+        _live[host] = item;
+    }
+
+    protected override void ClearContainerForItemOverride(DependencyObject element, object item)
+    {
+        base.ClearContainerForItemOverride(element, item);
+        var host = (ContentPresenter)element;
+        host.Content = null;
+        _live.Remove(host);
+    }
+
+    /// <summary>
+    /// Repaints the rows on screen whose selection changed. With <paramref name="reveal"/> (an
+    /// arrow-key move or a click), that item's row also scrolls into view and takes the keyboard,
+    /// so screen readers announce it.
+    /// </summary>
+    public void Refresh(object? reveal = null)
+    {
+        foreach (var (host, item) in _live)
+        {
+            if (host.Content is not ListRow row) continue;
+            bool selected = _isSelected(item);
+            if (selected != row.Selected) row.Selected = selected;
+        }
+        if (reveal is null || Items.IndexOf(reveal) is not (>= 0 and var index)) return;
+        if (ItemContainerGenerator.ContainerFromIndex(index) is not ContentPresenter { Content: FrameworkElement shown })
+        {
+            // Not realized yet (scrolled far away): the panel makes it, then it can take focus.
+            var panel = _live.Keys.Select(VisualTreeHelper.GetParent).OfType<VirtualizingPanel>().FirstOrDefault();
+            panel?.BringIndexIntoViewPublic(index);
+            if (ItemContainerGenerator.ContainerFromIndex(index) is not ContentPresenter { Content: FrameworkElement made }) return;
+            shown = made;
+        }
+        shown.BringIntoView();
+        shown.Focus();
     }
 }
 
@@ -75,15 +249,14 @@ internal static class ListKit
             x.VerticalAlignment = VerticalAlignment.Center;
             row.Children.Add(x);
         }
-        var chip = new Border
-        {
-            Height = 28, Padding = new Thickness(10, 0, 10, 0), CornerRadius = new CornerRadius(7),
-            Background = Ui.Brush("RdCard"), BorderBrush = Ui.Brush(isOn ? "RdInk" : "RdLine"), BorderThickness = new Thickness(1),
-            Child = row, Cursor = Cursors.Hand,
-        };
-        chip.MouseLeftButtonUp += (_, _) => action();
-        System.Windows.Automation.AutomationProperties.SetName(chip, count is { } m ? $"{title} {m}" : title);
-        return chip;
+        var chip = Rd.Pressable(row, count is { } m ? $"{title} {m}" : title, action, 7);
+        chip.Height = 28;
+        chip.Padding = new Thickness(10, 0, 10, 0);
+        chip.Background = Ui.Brush("RdCard");
+        chip.BorderBrush = Ui.Brush(isOn ? "RdInk" : "RdLine");
+        chip.BorderThickness = new Thickness(1);
+        if (isOn) System.Windows.Automation.AutomationProperties.SetItemStatus(chip, "On");
+        return Rd.ButtonHost(chip);
     }
 
     /// <summary>"Not changed in  Any time ⌄" — a chip-styled menu.</summary>
@@ -97,28 +270,36 @@ internal static class ListKit
         var chevron = Ui.Glyph(Icons.ChevronDown, 9, Ui.Brush("RdInk3"));
         chevron.VerticalAlignment = VerticalAlignment.Center;
         row.Children.Add(chevron);
-        var box = new Border
+        Border? box = null;
+        var button = Rd.Pressable(row, $"{label} {title(selection)}", () =>
         {
-            Height = 28, Padding = new Thickness(10, 0, 10, 0), CornerRadius = new CornerRadius(7),
-            Background = Ui.Brush("RdCard"), BorderBrush = Ui.Brush("RdLine"), BorderThickness = new Thickness(1),
-            Child = row, Cursor = Cursors.Hand,
-        };
-        box.MouseLeftButtonUp += (_, _) =>
-        {
-            var menu = new ContextMenu();
-            foreach (var option in options)
-            {
-                var item = new MenuItem { Header = (EqualityComparer<T>.Default.Equals(option, selection) ? "✓  " : "     ") + title(option) };
-                var captured = option;
-                item.Click += (_, _) => pick(captured);
-                menu.Items.Add(item);
-            }
-            menu.PlacementTarget = box;
-            menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
-            menu.IsOpen = true;
-        };
-        System.Windows.Automation.AutomationProperties.SetName(box, $"{label} {title(selection)}");
+            if (box is not null) OpenMenu(box, options.Select(o => (title(o), EqualityComparer<T>.Default.Equals(o, selection), (Action)(() => pick(o)))));
+        }, 7);
+        button.Height = 28;
+        button.Padding = new Thickness(10, 0, 10, 0);
+        button.Background = Ui.Brush("RdCard");
+        button.BorderBrush = Ui.Brush("RdLine");
+        button.BorderThickness = new Thickness(1);
+        box = Rd.ButtonHost(button);
         return box;
+    }
+
+    /// <summary>A menu under <paramref name="anchor"/>, the current choice ticked (Down and Enter work in it).</summary>
+    public static void OpenMenu(FrameworkElement anchor, IEnumerable<(string Title, bool Current, Action Pick)> options)
+    {
+        var menu = new ContextMenu
+        {
+            PlacementTarget = anchor,
+            Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom,
+        };
+        foreach (var (text, current, choose) in options)
+        {
+            var item = new MenuItem { Header = (current ? "✓  " : "     ") + text };
+            System.Windows.Automation.AutomationProperties.SetName(item, current ? $"{text}, current" : text);
+            item.Click += (_, _) => choose();
+            menu.Items.Add(item);
+        }
+        menu.IsOpen = true;
     }
 
     /// <summary>
@@ -289,37 +470,30 @@ internal static class ListKit
             Grid.SetColumn(noteView, next++);
             grid.Children.Add(noteView);
         }
-        var addView = AddView(name, staged, selected, columns, add);
-        addView.HorizontalAlignment = HorizontalAlignment.Right;
-        addView.Margin = new Thickness(0, 0, 8, 0);
-        Grid.SetColumn(addView, next);
-        grid.Children.Add(addView);
+        var addHost = new ContentControl { Focusable = false, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 0, 8, 0) };
+        Grid.SetColumn(addHost, next);
+        grid.Children.Add(addHost);
         foreach (FrameworkElement child in grid.Children) child.VerticalAlignment = VerticalAlignment.Center;
 
-        var edge = new Border
-        {
-            Width = staged ? 3 : 2, HorizontalAlignment = HorizontalAlignment.Left,
-            Background = selected || staged ? Ui.Brush("AppAccent") : Brushes.Transparent,
-        };
+        var edge = new Border { Width = staged ? 3 : 2, HorizontalAlignment = HorizontalAlignment.Left };
         var layers = new Grid();
         layers.Children.Add(grid);
         layers.Children.Add(edge);
-        var host = new Border
+        var host = new ListRow(layers, $"{name}, {ByteFormat.Format(bytes)}, changed {changed}{(staged ? ", in the basket" : "")}", select, open)
         {
-            Height = columns.RowHeight, Child = layers, Cursor = Cursors.Hand,
-            Background = staged ? Rd.InBasketFill : selected ? Ui.Brush("RdAccentWash") : Brushes.Transparent,
-            BorderBrush = Ui.Brush("RdLine"), BorderThickness = new Thickness(0, 0, 0, 1),
+            Height = columns.RowHeight,
+            BorderBrush = Ui.Brush("RdLine"),
+            BorderThickness = new Thickness(0, 0, 0, 1),
         };
-        Brush rest = host.Background;
-        host.MouseEnter += (_, _) => { if (staged) host.Background = Rd.InBasketHover; else if (!selected) host.Background = Ui.Brush("RdHover"); };
-        host.MouseLeave += (_, _) => host.Background = rest;
-        host.MouseLeftButtonDown += (_, e) =>
+        host.Paint = on =>
         {
-            if (e.ClickCount == 2 && open is not null) open();
-            else select();
+            host.Rest = staged ? Rd.InBasketFill : on ? Ui.Brush("RdAccentWash") : Brushes.Transparent;
+            host.Hover = staged ? Rd.InBasketHover : on ? host.Rest : Ui.Brush("RdHover");
+            edge.Background = on || staged ? Ui.Brush("AppAccent") : Brushes.Transparent;
+            addHost.Content = AddView(name, staged, on, columns, add);
         };
-        System.Windows.Automation.AutomationProperties.SetName(host, $"{name}, {ByteFormat.Format(bytes)}, changed {changed}{(staged ? ", in the basket" : "")}");
-        // An arrow-key move rebuilds the list; the new selected row scrolls into view once.
+        host.Selected = selected;
+        // A list rebuilt after an arrow-key move brings its new selected row into view once.
         if (selected && RevealSelection)
             host.Loaded += (_, _) =>
             {
@@ -364,7 +538,7 @@ internal static class ListKit
             return kept;
         }
         if (staged) return new Border { Width = 26 };   // the violet row says it; no button to press twice
-        var row = new StackPanel { Orientation = Orientation.Horizontal, Background = Brushes.Transparent, Cursor = Cursors.Hand };
+        var row = new StackPanel { Orientation = Orientation.Horizontal };
         if (selected && columns.ShowFree)
         {
             var t = Rd.Text("Add to basket", 13, null, "RdAccentDeep");
@@ -382,11 +556,11 @@ internal static class ListKit
             },
         };
         row.Children.Add(plus);
-        row.ToolTip = "Add to basket";
-        row.MouseLeftButtonUp += (_, e) => { add(); e.Handled = true; };
-        row.MouseLeftButtonDown += (_, e) => e.Handled = true;
-        System.Windows.Automation.AutomationProperties.SetName(row, $"Add {name} to basket");
-        return row;
+        var button = Rd.Pressable(row, $"Add {name} to basket", add, 7);
+        button.ToolTip = "Add to basket";
+        // The row keeps the keyboard (Delete adds it); a press here mustn't take it.
+        button.Focusable = false;
+        return button;
     }
 
     /// <summary>Folders | Files | Forgotten: the Explore list's three ways to look.</summary>
@@ -562,14 +736,24 @@ internal static class ListKit
         }).OrderByDescending(id => id < totals.Length ? totals[id] : 0).ToList();
 
     /// <summary>
+    /// The selection a page may act on: the selection is app-wide and outlives pages and filters,
+    /// so only what this page lists right now counts.
+    /// </summary>
+    public static HashSet<int> VisibleSelection(IReadOnlyCollection<int> selection, IEnumerable<int> visible) =>
+        visible.Where(selection.Contains).ToHashSet();
+
+    /// <summary>
     /// NodeSelectionToolbar: once anything is Ctrl-selected, "N selected  size  Clear", then
     /// Show in File Explorer, Copy Paths and Add to basket — 48 tall on the card colour.
-    /// Null when nothing is selected.
+    /// Null when nothing is selected. With <paramref name="visible"/>, only the selected items
+    /// the page lists count (hidden ones were added under this page's name).
     /// </summary>
-    public static FrameworkElement? SelectionToolbar(string pageLabel)
+    public static FrameworkElement? SelectionToolbar(string pageLabel, IEnumerable<int>? visible = null)
     {
         if (Model.MultiSelection.Count == 0 || Model.Tree is not { } tree) return null;
-        var roots = SelectionRoots(tree, Model.MultiSelection, Model.Totals);
+        IReadOnlyCollection<int> selection = visible is null ? Model.MultiSelection : VisibleSelection(Model.MultiSelection, visible);
+        if (selection.Count == 0) return null;
+        var roots = SelectionRoots(tree, selection, Model.Totals);
         long bytes = roots.Sum(id => id < Model.Totals.Length ? Model.Totals[id] : 0);
         var paths = roots.Select(Model.PathOf).ToList();
         var dock = new DockPanel { Margin = new Thickness(16, 0, 16, 0) };
@@ -598,15 +782,12 @@ internal static class ListKit
         size.Margin = new Thickness(8, 0, 0, 0);
         left.Children.Add(size);
         var clear = Rd.Text("Clear", 13, FontWeights.Medium, "RdInk2");
-        var clearBox = new Border
-        {
-            Height = 28, Padding = new Thickness(8, 0, 8, 0), CornerRadius = new CornerRadius(6), Margin = new Thickness(8, 0, 0, 0),
-            Background = Brushes.Transparent, Child = clear, Cursor = Cursors.Hand,
-        };
+        var clearBox = Rd.Pressable(clear, "Clear selection", Model.ClearMulti, 6);
+        clearBox.Height = 28;
+        clearBox.Padding = new Thickness(8, 0, 8, 0);
+        clearBox.Margin = new Thickness(8, 0, 0, 0);
         clearBox.MouseEnter += (_, _) => { clearBox.Background = Ui.Brush("RdHover"); clear.Foreground = Ui.Brush("RdInk"); };
         clearBox.MouseLeave += (_, _) => { clearBox.Background = Brushes.Transparent; clear.Foreground = Ui.Brush("RdInk2"); };
-        clearBox.MouseLeftButtonUp += (_, _) => Model.ClearMulti();
-        System.Windows.Automation.AutomationProperties.SetName(clearBox, "Clear selection");
         left.Children.Add(clearBox);
         dock.Children.Add(left);
         return new Border
@@ -620,7 +801,8 @@ internal static class ListKit
     public static bool ListKey(KeyEventArgs e, IReadOnlyList<int> ids, ref int? selected, Action<int> stage,
         Func<int, string?> path, Action selectAll)
     {
-        if (e.OriginalSource is TextBox or System.Windows.Controls.Primitives.ButtonBase || ids.Count == 0) return false;
+        // A row (a button too) takes these keys; the search box and other buttons keep theirs.
+        if (!TakesListKeys(e.OriginalSource) || ids.Count == 0) return false;
         int? current = selected;
         int index = current is { } s ? ids.ToList().IndexOf(s) : -1;
         switch (e.Key)
@@ -650,6 +832,10 @@ internal static class ListKit
         }
         return false;
     }
+
+    /// <summary>The list's keys apply from the page or a row, never from the search box or another button.</summary>
+    public static bool TakesListKeys(object? source) =>
+        source is not TextBox && (source is not System.Windows.Controls.Primitives.ButtonBase || source is ListRow);
 }
 
 /// <summary>
@@ -694,13 +880,16 @@ public sealed class BiggestFilesExplorePage : UserControl
     private Rd.WidthClass _class = Rd.WidthClass.Regular;
     private readonly Grid _root = new();
     private TextBox? _search;
+    private LazyRows? _rows;
+    private List<Entry> _shown = [];
+    private object? _chromeFor;
 
     public BiggestFilesExplorePage()
     {
         Background = Ui.Brush("RdPage");
         Content = _root;
         Focusable = true;
-        ModelEvents.WhileLoaded(this, Rebuild);
+        ModelEvents.WhileLoaded(this, OnModelChanged);
         Loaded += (_, _) => Model.StagedChanged += OnStaged;
         Unloaded += (_, _) => Model.StagedChanged -= OnStaged;
         SizeChanged += (_, _) => { if (Rd.ClassFor(WindowWidth) != _class) Rebuild(); };
@@ -708,6 +897,17 @@ public sealed class BiggestFilesExplorePage : UserControl
     }
 
     private void OnStaged(object? sender, EventArgs e) => Dispatcher.InvokeAsync(Rebuild);
+
+    /// <summary>What the page around the rows is built from; a change to anything else (a selection) only repaints rows.</summary>
+    private static object ChromeKey() => (Model.Tree, Model.Totals, Model.Reviewables);
+
+    private void OnModelChanged()
+    {
+        if (_rows is not null && Equals(_chromeFor, ChromeKey())) _rows.Refresh();
+        else Rebuild();
+    }
+
+    private bool IsSelected(int id) => id == _selected || Model.MultiSelection.Contains(id);
 
     private double WindowWidth =>
         Harness.ContentSize is { } pinned ? pinned.Width
@@ -772,14 +972,19 @@ public sealed class BiggestFilesExplorePage : UserControl
     {
         _class = Rd.ClassFor(WindowWidth);
         if (Model.Tree is not { } tree) { Model.ShowPage("Overview"); return; }
+        _chromeFor = ChromeKey();
+        _debounce?.Stop();   // this rebuild already has the latest query
         if (!ReferenceEquals(_rankedFor, Model.Totals)) { Rank(); }
         if (PendingClassFilter is { } pending) { _category = pending; PendingClassFilter = null; }
         bool searchFocused = _search?.IsKeyboardFocusWithin == true;
+        bool listFocused = _rows?.IsKeyboardFocusWithin == true;
         int caret = _search?.CaretIndex ?? 0;
 
         var parsed = ListQuery.Parse(_query);
         var visible = Filter(_entries, parsed, _kind, _age, _category, AgeMap.Today());
         double pad = _class.PagePadding();
+        _rows = null;
+        _shown = [];
         _root.Children.Clear();
         _root.RowDefinitions.Clear();
         _root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -809,6 +1014,7 @@ public sealed class BiggestFilesExplorePage : UserControl
             _search.Focus();
             _search.CaretIndex = Math.Min(caret, _search.Text.Length);
         }
+        else if (listFocused) Focus();   // the rebuilt list dropped its rows; the page keeps the keys
     }
 
     private static FrameworkElement Empty(string title, string message)
@@ -893,15 +1099,13 @@ public sealed class BiggestFilesExplorePage : UserControl
             tries.Children.Add(Rd.Text("Try", 12, null, "RdInk3"));
             foreach (var (title, query) in _class == Rd.WidthClass.Compact ? Suggestions.Take(2) : Suggestions)
             {
-                var link = Rd.Text(title, 12);
+                string captured = query;
+                var link = Rd.Link(title, () => { _query = captured; Rebuild(); }, 12, "RdInk", FontWeights.Normal);
                 link.TextDecorations = new TextDecorationCollection
                 {
                     new TextDecoration(TextDecorationLocation.Underline, new Pen(Ui.Brush("RdLine"), 1), 1, TextDecorationUnit.Pixel, TextDecorationUnit.Pixel),
                 };
-                link.Cursor = Cursors.Hand;
                 link.Margin = new Thickness(12, 0, 0, 0);
-                string captured = query;
-                link.MouseLeftButtonUp += (_, _) => { _query = captured; Rebuild(); };
                 tries.Children.Add(link);
             }
             DockPanel.SetDock(field, Dock.Left);
@@ -947,29 +1151,18 @@ public sealed class BiggestFilesExplorePage : UserControl
             Child = header, BorderBrush = Rd.WithOpacity(Ui.Brush("RdInk"), 0.85), BorderThickness = new Thickness(0, 0, 0, 1),
         });
 
-        var list = new StackPanel();
-        var ids = rows.Select(r => r.Id).ToList();
-        foreach (var e in rows)
+        _shown = rows;
+        _rows = new LazyRows(rows, item => item is Entry e && IsSelected(e.Id), (item, selected) =>
         {
+            var e = (Entry)item;
             bool free = freeable.Contains(e.Id, tree);
-            var entry = e;
-            list.Children.Add(ListKit.FileRow(e.Name, e.Parent, ListKit.Badge(e.Name, e.Kind), ListKit.KindText(e.Kind, e.Category.Class),
+            return ListKit.FileRow(e.Name, e.Parent, ListKit.Badge(e.Name, e.Kind), ListKit.KindText(e.Kind, e.Category.Class),
                 (double)e.Size / largest, e.Size, ExplorePage.LastUsed(e.ModifiedDay, today),
-                ListKit.FreeNote(free, e.Size, e.Category), free, staged.Contains(e.AbsolutePath),
-                e.Id == _selected || Model.MultiSelection.Contains(e.Id), columns,
-                select: () =>
-                {
-                    Focus();   // the list takes the keyboard from the search box
-                    _selected = entry.Id;
-                    if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) Model.ToggleMulti(entry.Id);
-                    else { Model.ClearMulti(); Model.Select(entry.Id); }
-                    Rebuild();
-                },
-                add: () => Stage(entry)));
-        }
-        var scroll = _scroll.Wrap(list, $"{_query}|{_kind}|{_age}|{_category}");
-        Grid.SetRow(scroll, 1);
-        grid.Children.Add(scroll);
+                ListKit.FreeNote(free, e.Size, e.Category), free, staged.Contains(e.AbsolutePath), selected, columns,
+                select: () => Select(e), add: () => Stage(e));
+        }, "Biggest files", _scroll, $"{_query}|{_kind}|{_age}|{_category}");
+        Grid.SetRow(_rows, 1);
+        grid.Children.Add(_rows);
 
         var footer = Footer(tree, visible, freeable);
         Grid.SetRow(footer, 2);
@@ -998,7 +1191,7 @@ public sealed class BiggestFilesExplorePage : UserControl
             {
                 Model.ClearMulti();
                 foreach (var v in visible.Take(500)) Model.ToggleMulti(v.Id);
-                Rebuild();
+                _rows?.Refresh();
             });
             all.Margin = new Thickness(0, 0, 8, 0);
             buttons.Children.Add(all);
@@ -1044,27 +1237,29 @@ public sealed class BiggestFilesExplorePage : UserControl
         if (entry.Id >= 0) Model.Stage(entry.Id, "Biggest file: " + entry.Name);
     }
 
+    /// <summary>A click: the row is selected (Ctrl adds it to the selection) and keeps the keyboard.</summary>
+    private void Select(Entry entry)
+    {
+        _selected = entry.Id;
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) Model.ToggleMulti(entry.Id);
+        else { Model.ClearMulti(); Model.Select(entry.Id); }
+        _rows?.Refresh(entry);
+    }
+
     private void OnKey(object sender, KeyEventArgs e)
     {
-        if (e.OriginalSource is TextBox or System.Windows.Controls.Primitives.ButtonBase || _preparing) return;
-        var parsed = ListQuery.Parse(_query);
-        var rows = Filter(_entries, parsed, _kind, _age, _category, AgeMap.Today()).Take(500).ToList();
+        if (!ListKit.TakesListKeys(e.OriginalSource) || _preparing) return;
+        var rows = _shown;
         if (rows.Count == 0) return;
         int index = _selected is { } s ? rows.FindIndex(r => r.Id == s) : -1;
         switch (e.Key)
         {
-            case Key.Down or Key.J:
-                _selected = rows[Math.Min(rows.Count - 1, index + 1)].Id;
-                Model.Select(_selected.Value);
-                ListKit.RevealSelection = true;
-                Rebuild();
-                e.Handled = true;
-                break;
-            case Key.Up or Key.K:
-                _selected = rows[Math.Max(0, index - 1)].Id;
-                Model.Select(_selected.Value);
-                ListKit.RevealSelection = true;
-                Rebuild();
+            case Key.Down or Key.J when Keyboard.Modifiers == ModifierKeys.None:
+            case Key.Up or Key.K when Keyboard.Modifiers == ModifierKeys.None:
+                var next = rows[e.Key is Key.Down or Key.J ? Math.Min(rows.Count - 1, index + 1) : Math.Max(0, index - 1)];
+                _selected = next.Id;
+                Model.Select(next.Id);
+                _rows?.Refresh(next);
                 e.Handled = true;
                 break;
             case Key.Delete when index >= 0:
@@ -1078,12 +1273,12 @@ public sealed class BiggestFilesExplorePage : UserControl
             case Key.A when Keyboard.Modifiers == ModifierKeys.Control:
                 Model.ClearMulti();
                 foreach (var r in rows) Model.ToggleMulti(r.Id);
-                Rebuild();
+                _rows?.Refresh();
                 e.Handled = true;
                 break;
             case Key.Escape:
                 Model.ClearMulti();
-                Rebuild();
+                _rows?.Refresh();
                 e.Handled = true;
                 break;
         }
