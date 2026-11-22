@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Diagnostics;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
@@ -1007,8 +1006,7 @@ public sealed class AppsBoardPage : UserControl
     private static void OpenFolder(ApplicationEntry app)
     {
         if (app.InstallPath.Length == 0 || !System.IO.Directory.Exists(app.InstallPath)) return;
-        try { Process.Start("explorer.exe", $"\"{app.InstallPath}\""); }
-        catch { /* explorer missing is not fatal */ }
+        Explorer.OpenFolder(app.InstallPath);
     }
 
     /// <summary>The registry's own uninstall command line — copied, never executed.</summary>

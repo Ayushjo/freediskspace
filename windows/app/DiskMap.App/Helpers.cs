@@ -1,8 +1,8 @@
-using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Media;
 using DiskMap.Core;
+using DiskMap.Core.Native;
 
 namespace DiskMap.App;
 
@@ -160,19 +160,65 @@ public static class ByteFormat
 }
 
 /// <summary>
-/// Explorer integration — the Windows counterpart of Quick Look / Reveal.
+/// Explorer integration — the Windows counterpart of Quick Look / Reveal. Everything starts
+/// through File Explorer by its full path and with the signed-in user's own rights
+/// (<see cref="UnelevatedLaunch"/>), never this administrator process's; programs and scripts
+/// are revealed, never run.
 /// </summary>
 public static class Explorer
 {
-    public static void Reveal(string path)
+    private static string ExplorerExe =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe");
+
+    /// <summary>Extensions Open reveals instead of running (Quick Look never runs anything).</summary>
+    internal static readonly HashSet<string> RunnableExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
-        try
-        {
-            if (File.Exists(path) || Directory.Exists(path))
-                Process.Start("explorer.exe", $"/select,\"{path}\"");
-            else
-                Process.Start("explorer.exe", $"\"{Path.GetDirectoryName(path) ?? path}\"");
-        }
-        catch { /* explorer missing is not fatal */ }
+        ".exe", ".com", ".bat", ".cmd", ".ps1", ".psm1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh",
+        ".msi", ".msix", ".msixbundle", ".appx", ".appxbundle", ".scr", ".pif", ".lnk", ".url", ".reg",
+        ".cpl", ".hta", ".jar", ".application", ".appref-ms", ".gadget", ".inf", ".sys", ".dll",
+        ".py", ".pyw", ".chm",
+    };
+
+    /// <summary>Selects the item in File Explorer, or opens its folder when the item is gone.</summary>
+    public static void Reveal(string path) =>
+        Launch(File.Exists(path) || Directory.Exists(path)
+            ? "/select," + Quote(path)
+            : Quote(Path.GetDirectoryName(path) ?? path));
+
+    public static void OpenFolder(string path) => Launch(Quote(path));
+
+    /// <summary>A folder opens in File Explorer, a document in its app; programs and scripts are revealed instead.</summary>
+    public static void Open(string path)
+    {
+        if (Directory.Exists(path)) OpenFolder(path);
+        else if (!File.Exists(path) || RunnableExtensions.Contains(Path.GetExtension(path))) Reveal(path);
+        else Launch(Quote(path));
+    }
+
+    /// <summary>A Windows Settings page; the caller checks it is an ms-settings: URI.</summary>
+    public static void OpenSettings(string uri) => Launch(uri);
+
+    /// <summary>A terminal in the folder (Windows Terminal, else Command Prompt). Nothing runs; the person types the command.</summary>
+    public static void OpenTerminal(string folder)
+    {
+        string wt = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Microsoft", "WindowsApps", "wt.exe");
+        if (File.Exists(wt) && UnelevatedLaunch.TryStart(wt, "-d " + Quote(folder), folder)) return;
+        if (!UnelevatedLaunch.TryStart(Path.Combine(Environment.SystemDirectory, "cmd.exe"), "", folder))
+            ScanModel.Shared.Toast("Couldn't open a terminal");
+    }
+
+    private static void Launch(string arguments)
+    {
+        if (!UnelevatedLaunch.TryStart(ExplorerExe, arguments))
+            ScanModel.Shared.Toast("Couldn't open File Explorer");
+    }
+
+    /// <summary>Quoted for a command line; a drive root keeps a trailing "." so its "\" can't escape the closing quote.</summary>
+    internal static string Quote(string path)
+    {
+        string p = path.TrimEnd('\\', '/');
+        if (p.EndsWith(':')) p += @"\.";
+        return "\"" + p + "\"";
     }
 }

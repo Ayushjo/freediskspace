@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
@@ -785,32 +784,14 @@ internal static class ExploreInspector
 
     // ---- Actions ----
 
-    /// <summary>Extensions "Open" won't launch — it reveals them instead (Quick Look never runs anything).</summary>
-    private static readonly HashSet<string> RunnableExtensions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".exe", ".com", ".bat", ".cmd", ".ps1", ".psm1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh",
-        ".msi", ".msix", ".msixbundle", ".appx", ".appxbundle", ".scr", ".pif", ".lnk", ".url", ".reg",
-        ".cpl", ".hta", ".jar", ".application", ".appref-ms", ".gadget", ".inf", ".sys", ".dll",
-    };
-
     /// <summary>
-    /// Quick Look's Windows stand-in: a folder opens in File Explorer, a document in its app.
-    /// Programs and scripts are revealed rather than run.
+    /// Quick Look's Windows stand-in: a folder opens in File Explorer, a document in its app,
+    /// both as the signed-in user. Programs and scripts are revealed rather than run.
     /// </summary>
     internal static void OpenItem(string path, bool isDirectory)
     {
-        try
-        {
-            if (isDirectory || System.IO.Directory.Exists(path))
-                Process.Start("explorer.exe", $"\"{path}\"");
-            else if (RunnableExtensions.Contains(System.IO.Path.GetExtension(path)))
-                Explorer.Reveal(path);
-            else if (System.IO.File.Exists(path))
-                Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
-            else
-                Explorer.Reveal(path);
-        }
-        catch { /* no handler for the type is not fatal */ }
+        if (isDirectory) Explorer.OpenFolder(path);
+        else Explorer.Open(path);
     }
 
     private static void CopyPath(string path)

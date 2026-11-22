@@ -21,9 +21,10 @@ public sealed class ScanModel : ViewModelBase
 
     private ScanModel()
     {
-        // A landed measurement changes the staged figures. With hundreds staged they land in a
-        // stream for minutes, and every refresh rebuilds the open pages: refresh at most once a
-        // second, with the reclaim math (hard links of a whole cache) done here, off the UI thread.
+        // A landed measurement changes the staged figures, never what is staged. With hundreds
+        // staged they land in a stream for minutes: refresh the estimate at most once a second,
+        // with the reclaim math (hard links of a whole cache) done here, off the UI thread. Only
+        // ReclaimEstimate changes, so pages that show what's in the basket don't rebuild for it.
         Cleanup.Measured += (_, _) =>
         {
             if (Interlocked.Exchange(ref _measuredRefreshQueued, 1) == 1) return;
@@ -32,12 +33,11 @@ public sealed class ScanModel : ViewModelBase
                 await Task.Delay(1000).ConfigureAwait(false);
                 Volatile.Write(ref _measuredRefreshQueued, 0);
                 int version = Volatile.Read(ref _stagedVersion);
-                var items = Cleanup.AllItems();
                 var estimate = Cleanup.Estimate();
                 System.Windows.Application.Current?.Dispatcher.InvokeAsync(() =>
                 {
                     // A staging change on the UI thread meanwhile already showed newer figures.
-                    if (version == _stagedVersion) ApplyStaged(items, estimate);
+                    if (version == _stagedVersion) ReclaimEstimate = estimate;
                 }, System.Windows.Threading.DispatcherPriority.Background);
             });
         };
@@ -682,7 +682,7 @@ public sealed class ScanModel : ViewModelBase
         bool ok = Cleanup.Stage(path, size, reason, group, groupCount);
         if (ok)
         {
-            RefreshStaged();
+            StagedSoon(path);
             if (notify) ToastAdded(1);
         }
         return ok;
@@ -781,16 +781,59 @@ public sealed class ScanModel : ViewModelBase
         bool ok = Cleanup.Stage(path, size, reason);
         if (ok)
         {
-            RefreshStaged();
+            StagedSoon(path);
             if (notify) ToastAdded(1);
         }
         return ok;
     }
 
+    /// <summary>Every staged path, as the queue normalized it — what <see cref="IsStaged"/> reads.</summary>
+    private readonly HashSet<string> _stagedPaths = new(StringComparer.OrdinalIgnoreCase);
+    private bool _stagedRefreshQueued;
+
+    /// <summary>
+    /// After a successful stage: the path counts as staged at once (pages ask right after
+    /// adding), while the reclaim estimate, <see cref="StagedItems"/> and
+    /// <see cref="StagedChanged"/> follow once per burst. A bulk add of thousands used to
+    /// re-estimate the whole basket and rebuild every open page once per item.
+    /// </summary>
+    private void StagedSoon(string path)
+    {
+        if (Normalized(path) is { } normalized) _stagedPaths.Add(normalized);
+        if (System.Windows.Application.Current?.Dispatcher is not { } dispatcher)
+        {
+            RefreshStaged();
+            return;
+        }
+        if (_stagedRefreshQueued) return;
+        _stagedRefreshQueued = true;
+        dispatcher.InvokeAsync(() =>
+        {
+            _stagedRefreshQueued = false;
+            RefreshStaged();
+        }, System.Windows.Threading.DispatcherPriority.Background);
+    }
+
+    private static string? Normalized(string path)
+    {
+        try { return CleanupQueue.NormalizePath(path); }
+        catch (Exception) { return null; }   // not a usable path: never staged
+    }
+
     /// <summary>True when this exact path is in the basket.</summary>
-    public bool IsStaged(string path) =>
-        StagedItems.Any(s => string.Equals(System.IO.Path.GetFullPath(s.Path).TrimEnd('\\'),
-            System.IO.Path.GetFullPath(path).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase));
+    public bool IsStaged(string path) => Normalized(path) is { } p && _stagedPaths.Contains(p);
+
+    /// <summary>
+    /// True when this path or a folder above it is in the basket: confirming the basket moves it
+    /// either way. Duplicates use it so the copy they keep is never inside a staged folder.
+    /// </summary>
+    public bool IsCovered(string path)
+    {
+        if (Normalized(path) is not { } p) return false;
+        for (string? dir = p; !string.IsNullOrEmpty(dir); dir = System.IO.Path.GetDirectoryName(dir))
+            if (_stagedPaths.Contains(System.IO.Path.TrimEndingDirectorySeparator(dir))) return true;
+        return false;
+    }
 
     /// <summary>
     /// Put Back the last cleanup from the Recycle Bin (Mac: putBackLastCleanup). Restoring is
@@ -820,7 +863,8 @@ public sealed class ScanModel : ViewModelBase
     public void UnstagePaths(IEnumerable<string> paths)
     {
         var set = paths.Select(p => p.TrimEnd('\\')).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var item in StagedItems.Where(s => set.Contains(s.Path.TrimEnd('\\'))).ToList()) Cleanup.Unstage(item.Id);
+        // The queue, not StagedItems: an add in this same dispatcher turn isn't in StagedItems yet.
+        foreach (var item in Cleanup.AllItems().Where(s => set.Contains(s.Path.TrimEnd('\\')))) Cleanup.Unstage(item.Id);
         RefreshStaged();
     }
 
@@ -838,7 +882,12 @@ public sealed class ScanModel : ViewModelBase
     {
         _stagedVersion++;
         StagedItems.Clear();
-        foreach (var item in items) StagedItems.Add(item);
+        _stagedPaths.Clear();
+        foreach (var item in items)
+        {
+            StagedItems.Add(item);
+            _stagedPaths.Add(item.Path);
+        }
         ReclaimEstimate = estimate;
         StagedChanged?.Invoke(this, EventArgs.Empty);
     }

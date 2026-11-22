@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
@@ -1818,26 +1817,11 @@ public sealed class DeveloperBoardPage : UserControl
 
     private static void OpenFolder(string path)
     {
-        try
-        {
-            if (System.IO.Directory.Exists(path)) Process.Start("explorer.exe", $"\"{path}\"");
-            else Explorer.Reveal(path);
-        }
-        catch { /* explorer missing is not fatal */ }
+        if (System.IO.Directory.Exists(path)) Explorer.OpenFolder(path);
+        else Explorer.Reveal(path);
     }
 
-    /// <summary>Opens a terminal in the folder (Windows Terminal, else Command Prompt). Nothing runs; the person types the command.</summary>
-    private static void OpenTerminal(string path)
-    {
-        string folder = System.IO.Directory.Exists(path) ? path : System.IO.Path.GetDirectoryName(path) ?? path;
-        try
-        {
-            Process.Start(new ProcessStartInfo("wt.exe") { ArgumentList = { "-d", folder }, UseShellExecute = false });
-        }
-        catch
-        {
-            try { Process.Start(new ProcessStartInfo("cmd.exe") { WorkingDirectory = folder, UseShellExecute = true }); }
-            catch { /* no terminal is not fatal */ }
-        }
-    }
+    /// <summary>Opens a terminal in the folder, as the signed-in user. Nothing runs; the person types the command.</summary>
+    private static void OpenTerminal(string path) =>
+        Explorer.OpenTerminal(System.IO.Directory.Exists(path) ? path : System.IO.Path.GetDirectoryName(path) ?? path);
 }

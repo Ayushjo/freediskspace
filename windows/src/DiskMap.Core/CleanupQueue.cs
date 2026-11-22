@@ -75,6 +75,8 @@ public sealed class CleanupQueue
         bool IsLowerBound);
 
     private readonly List<StagedItem> _items = [];
+    /// <summary>The staged paths, kept beside <see cref="_items"/> so a bulk add checks each one in O(1).</summary>
+    private readonly HashSet<string> _paths = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _gate = new();
     private readonly List<TaskCompletionSource> _measurementWaiters = [];
 
@@ -357,7 +359,7 @@ public sealed class CleanupQueue
     /// it. A bare "C:" is a trimmed drive root to every caller here; left
     /// alone, GetFullPath would read it as the working folder on C:.
     /// </summary>
-    internal static string NormalizePath(string path) =>
+    public static string NormalizePath(string path) =>
         Path.TrimEndingDirectorySeparator(Path.GetFullPath(
             path is [_, ':'] ? path + Path.DirectorySeparatorChar : path));
 
@@ -402,8 +404,7 @@ public sealed class CleanupQueue
         lock (_gate)
         {
             if (IsExcludedPath(normalized)) return false;
-            if (_items.Any(i => string.Equals(i.Path, normalized, StringComparison.OrdinalIgnoreCase)))
-                return false;
+            if (!_paths.Add(normalized)) return false;   // already staged
             item = new StagedItem
             {
                 Path = normalized, Size = size, Reason = reason,
@@ -472,9 +473,17 @@ public sealed class CleanupQueue
     {
         lock (_gate)
         {
-            _items.RemoveAll(i => i.Id == id);
+            RemoveItems(i => i.Id == id);
             ResumeWaitersIfSettled();
         }
+    }
+
+    /// <summary>Removes matching items and their paths; call under <see cref="_gate"/>.</summary>
+    private void RemoveItems(Predicate<StagedItem> match)
+    {
+        foreach (var item in _items)
+            if (match(item)) _paths.Remove(item.Path);
+        _items.RemoveAll(match);
     }
 
     public IReadOnlyList<StagedItem> AllItems()
@@ -585,20 +594,23 @@ public sealed class CleanupQueue
         };
     }
 
-    /// <summary>Items whose path lies inside another queued item's folder.</summary>
-    internal static HashSet<Guid> CoveredItemIds(IReadOnlyList<StagedItem> items)
+    /// <summary>
+    /// Items whose path lies inside another queued item's folder. Each item
+    /// walks its own parent folders against a set of every queued path, so a
+    /// basket of thousands costs items × depth, not items².
+    /// </summary>
+    public static HashSet<Guid> CoveredItemIds(IReadOnlyList<StagedItem> items)
     {
-        var folders = items
-            .Select(i => i.Path.TrimEnd('\\', '/') + '\\')
-            .ToArray();
+        var paths = new HashSet<string>(items.Select(i => i.Path.TrimEnd('\\', '/')), StringComparer.OrdinalIgnoreCase);
         var covered = new HashSet<Guid>();
-        for (int i = 0; i < items.Count; i++)
+        foreach (var item in items)
         {
-            for (int j = 0; j < folders.Length; j++)
+            for (string? dir = Path.GetDirectoryName(item.Path.TrimEnd('\\', '/')); !string.IsNullOrEmpty(dir);
+                 dir = Path.GetDirectoryName(dir))
             {
-                if (i != j && items[i].Path.StartsWith(folders[j], StringComparison.OrdinalIgnoreCase))
+                if (paths.Contains(dir.TrimEnd('\\', '/')))
                 {
-                    covered.Add(items[i].Id);
+                    covered.Add(item.Id);
                     break;
                 }
             }
@@ -697,7 +709,7 @@ public sealed class CleanupQueue
         lock (_gate)
         {
             var failedIds = outcomes.Where(o => o.Error is not null).Select(o => o.Item.Id).ToHashSet();
-            _items.RemoveAll(i => !failedIds.Contains(i.Id));
+            RemoveItems(i => !failedIds.Contains(i.Id));
         }
         var report = new CommitReport(entries, freed.Bytes, freed.IsLowerBound);
         SaveCleanupRecord(report, startedUtc);
@@ -755,7 +767,7 @@ public sealed class CleanupQueue
         lock (_gate)
         {
             var deleted = succeeded.Select(i => i.Id).ToHashSet();
-            _items.RemoveAll(i => deleted.Contains(i.Id));
+            RemoveItems(i => deleted.Contains(i.Id));
         }
         return new CommitReport(
             outcomes.Select(o => new CommitEntry(o.Item, o.Error, false,

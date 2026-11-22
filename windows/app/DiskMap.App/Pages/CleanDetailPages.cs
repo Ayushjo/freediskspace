@@ -492,11 +492,7 @@ public sealed class CleanDownloadsPage : CleanDetailPage
     /// <summary>The account's Downloads folder, opened in File Explorer (Mac: ~/Downloads in Finder).</summary>
     private static string DownloadsFolder() => System.IO.Path.Combine(UserFolders.Home, "Downloads");
 
-    private static void OpenDownloads()
-    {
-        try { System.Diagnostics.Process.Start("explorer.exe", $"\"{DownloadsFolder()}\""); }
-        catch (Exception) { /* explorer missing is not fatal */ }
-    }
+    private static void OpenDownloads() => Explorer.OpenFolder(DownloadsFolder());
 }
 
 /// <summary>Clean up → Large media: the videos, photos, audio and media projects using the most space (Mac: LargeMediaView).</summary>

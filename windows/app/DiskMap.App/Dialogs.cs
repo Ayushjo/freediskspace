@@ -524,9 +524,7 @@ public static class Dialogs
     /// <summary>Opens a Windows Settings page. Launching a local Settings page, not networking; only ms-settings: is allowed.</summary>
     private static void OpenSettings(string uri)
     {
-        if (!SystemStorageCatalog.IsSettingsUri(uri)) return;
-        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(uri) { UseShellExecute = true }); }
-        catch { ScanModel.Shared.Toast("Couldn't open Settings"); }
+        if (SystemStorageCatalog.IsSettingsUri(uri)) Explorer.OpenSettings(uri);
     }
 
     /// <summary>One trash entry's path to the basket, through the model's single stage path (Mac: stageRow).</summary>

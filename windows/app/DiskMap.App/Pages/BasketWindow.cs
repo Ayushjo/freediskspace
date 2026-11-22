@@ -52,7 +52,13 @@ public sealed class BasketWindow : Window
         Background = Ui.Brush("RdPage");
         Content = _root;
         Model.StagedChanged += OnStaged;
-        Closed += (_, _) => Model.StagedChanged -= OnStaged;
+        // Sizes landing move only the estimate (ScanModel), and the rows show those sizes.
+        Model.PropertyChanged += OnModelProperty;
+        Closed += (_, _) =>
+        {
+            Model.StagedChanged -= OnStaged;
+            Model.PropertyChanged -= OnModelProperty;
+        };
         // Esc closes (Done is the cancel action); mid-move that only hides it.
         PreviewKeyDown += (_, e) =>
         {
@@ -84,6 +90,11 @@ public sealed class BasketWindow : Window
     }
 
     private void OnStaged(object? sender, EventArgs e) => RequestRebuild();
+
+    private void OnModelProperty(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(ScanModel.ReclaimEstimate)) RequestRebuild();
+    }
 
     private bool _rebuildQueued;
 
@@ -219,9 +230,7 @@ public sealed class BasketWindow : Window
         }
 
         var list = new StackPanel { Margin = new Thickness(24, 0, 24, 24) };
-        var folders = items.Select(i => i.Path.TrimEnd('\\') + "\\").ToArray();
-        var covered = items.Where((_, k) => folders.Where((_, j) => j != k)
-            .Any(f => folders[k].StartsWith(f, StringComparison.OrdinalIgnoreCase))).Select(i => i.Id).ToHashSet();
+        var covered = CleanupQueue.CoveredItemIds(items);
         // Sizes land one by one: keep each row whose caption didn't change instead of
         // re-creating hundreds of rows per landing (that rebuild is what froze the window).
         var rows = new Dictionary<Guid, (string Key, FrameworkElement Row)>();
@@ -335,18 +344,8 @@ public sealed class BasketWindow : Window
         return host;
     }
 
-    /// <summary>Open a folder in File Explorer, a file in its app; programs are only shown, never run.</summary>
-    private static void OpenItem(string path)
-    {
-        try
-        {
-            string ext = System.IO.Path.GetExtension(path).ToLowerInvariant();
-            bool runnable = ext is ".exe" or ".msi" or ".bat" or ".cmd" or ".ps1" or ".lnk" or ".com" or ".scr" or ".vbs" or ".js";
-            if (Directory.Exists(path) || runnable) Explorer.Reveal(path);
-            else System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
-        }
-        catch { Explorer.Reveal(path); }
-    }
+    /// <summary>Open a folder in File Explorer, a file in its app, as the signed-in user; programs are only shown, never run.</summary>
+    private static void OpenItem(string path) => Explorer.Open(path);
 
     // ---- Receipt column ----
 
