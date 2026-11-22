@@ -269,6 +269,7 @@ public class DuplicateFinderTests
     }
 }
 
+[Collection("ProcessEnvironment")]   // runs alone: other classes commit to the Recycle Bin and the shared Put Back record it reads
 public class CleanupQueueTests
 {
     [Fact]
