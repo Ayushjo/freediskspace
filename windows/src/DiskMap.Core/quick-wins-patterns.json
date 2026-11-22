@@ -9,9 +9,7 @@
     "dist",
     "build",
     "out",
-    "DerivedData",
-    "__pycache__",
-    ".gradle"
+    "__pycache__"
   ],
   "pathSuffixes": [
     "%LOCALAPPDATA%\\Temp",
@@ -24,27 +22,19 @@
     "%USERPROFILE%\\.gradle\\caches",
     "%USERPROFILE%\\.cargo\\registry",
     "%LOCALAPPDATA%\\Android\\Sdk\\system-images",
-    "%LOCALAPPDATA%\\Microsoft\\Windows\\INetCache",
-    "%LOCALAPPDATA%\\CrashDumps",
-    "~/Library/Caches",
-    "~/Library/Logs",
-    "~/Library/Developer/Xcode/DerivedData",
-    "~/Library/Developer/Xcode/iOS DeviceSupport",
-    "~/Library/Developer/CoreSimulator/Caches"
+    "%LOCALAPPDATA%\\CrashDumps"
   ],
   "categories": {
     "node_modules": "Development dependencies",
     ".venv": "Development dependencies",
     "venv": "Development dependencies",
     "__pycache__": "Development caches",
-    ".gradle": "Development dependencies",
     "target": "Build outputs",
     ".next": "Build outputs",
     ".turbo": "Build outputs",
     "dist": "Build outputs",
     "build": "Build outputs",
     "out": "Build outputs",
-    "DerivedData": "Development caches",
     "%LOCALAPPDATA%\\Temp": "System caches",
     "%LOCALAPPDATA%\\npm-cache": "Development caches",
     "%LOCALAPPDATA%\\Yarn\\Cache": "Development caches",
@@ -55,13 +45,7 @@
     "%USERPROFILE%\\.gradle\\caches": "Development caches",
     "%USERPROFILE%\\.cargo\\registry": "Development caches",
     "%LOCALAPPDATA%\\Android\\Sdk\\system-images": "Device support files",
-    "%LOCALAPPDATA%\\Microsoft\\Windows\\INetCache": "System caches",
-    "%LOCALAPPDATA%\\CrashDumps": "Diagnostics",
-    "~/Library/Caches": "System caches",
-    "~/Library/Logs": "Diagnostics",
-    "~/Library/Developer/Xcode/DerivedData": "Development caches",
-    "~/Library/Developer/Xcode/iOS DeviceSupport": "Device support files",
-    "~/Library/Developer/CoreSimulator/Caches": "Development caches"
+    "%LOCALAPPDATA%\\CrashDumps": "Diagnostics"
   },
   "categoryNotes": [
     { "title": "Development dependencies", "note": "Recreated by your package manager's install or the next build." },

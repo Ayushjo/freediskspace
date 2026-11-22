@@ -6,8 +6,11 @@ namespace DiskMap.Core;
 /// three at a stand-in profile (DISKMAP_HOME, DISKMAP_HOME\AppData\Local,
 /// DISKMAP_HOME\AppData\Roaming) so a demo folder classifies exactly like a
 /// real profile. Used by the render harness and tests only.
-/// The safety lists in CleanupQueue never use this: they always read the real
-/// folders, so an override can't loosen what may be staged.
+/// CleanupQueue's excluded prefixes always read the real folders, but
+/// StorageClassifier reads a path under the override as C:\Users\demo\…, so its
+/// profile and container rules — and with them IsExcludedPath's container check —
+/// follow the stand-in. An override moves what counts as the profile, which is why
+/// the app drops DISKMAP_* when it runs elevated.
 /// </summary>
 public static class UserFolders
 {

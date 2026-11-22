@@ -27,12 +27,26 @@ public sealed class CleanUpPage : UserControl
     private readonly ScrollViewer _listScroll = new() { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false };
     private readonly ScrollViewer _receiptScroll = new() { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false };
     private readonly HashSet<string> _ticked = [];
-    private readonly HashSet<CleanGroup> _expanded = [];
+    /// <summary>Groups opened past their preview ("N more"), and opened past <see cref="ExpandedLimit"/> ("Show all").</summary>
+    private readonly HashSet<CleanGroup> _expanded = [], _showAll = [];
     private object? _tickedFor;
     private bool _isMoving;
     /// <summary>"Last used" filter, in days (0 = any time), and each row's newest file date, per catalog.</summary>
     private int _lastUsed;
     private readonly Dictionary<string, int> _lastDay = [];
+    /// <summary>
+    /// Built once per catalog, not on every tick: the rows (thousands of downloads and media
+    /// re-filtered per click), each row's risky-folder count, and the last cleanup's record,
+    /// which is read again only when the catalog or the basket changes (a commit, a Put Back).
+    /// </summary>
+    private object? _itemsFor, _downloadsFor, _mediaFor;
+    private List<CleanItem> _items = [];
+    private readonly Dictionary<string, int> _risky = [];
+    private CleanupRecord? _lastCleanup;
+    private bool _recordStale = true;
+    /// <summary>This build's focusable controls by key, so a rebuild hands focus back (see <see cref="RestoreFocus"/>).</summary>
+    private readonly Dictionary<string, FrameworkElement> _focusables = [];
+    private string? _pendingFocus;
     private Rd.WidthClass _class = Rd.WidthClass.Regular;
 
     public CleanUpPage()
@@ -52,7 +66,11 @@ public sealed class CleanUpPage : UserControl
         _layout.Children.Add(receiptHost);
         Content = _layout;
         ModelEvents.WhileLoaded(this, Rebuild);
-        Loaded += (_, _) => Model.StagedChanged += OnStaged;
+        Loaded += (_, _) =>
+        {
+            Model.StagedChanged += OnStaged;
+            Focus();   // Enter works at once, and Tab starts from the page
+        };
         Unloaded += (_, _) => Model.StagedChanged -= OnStaged;
         SizeChanged += (_, _) =>
         {
@@ -70,7 +88,11 @@ public sealed class CleanUpPage : UserControl
         };
     }
 
-    private void OnStaged(object? sender, EventArgs e) => Dispatcher.InvokeAsync(Rebuild);
+    private void OnStaged(object? sender, EventArgs e)
+    {
+        _recordStale = true;   // a commit or a Put Back rewrote the last cleanup's record
+        Dispatcher.InvokeAsync(Rebuild);
+    }
 
     private double WindowWidth =>
         Harness.ContentSize is { } pinned ? pinned.Width
@@ -79,13 +101,22 @@ public sealed class CleanUpPage : UserControl
 
     private bool Ready => Model.Reviewables is not null && Model.OldDownloads is not null && Model.LargeMedia is not null;
 
-    private List<CleanItem> Items() => BuildItems(Model.Reviewables ?? [], Model.Totals,
-        DownloadItems(Model.OldDownloads?.Candidates ?? [], Model.RootPath),
-        MediaItems(Model.LargeMedia?.Candidates ?? [], Model.RootPath));
+    private List<CleanItem> Items()
+    {
+        if (!ReferenceEquals(_itemsFor, Model.Reviewables) || !ReferenceEquals(_downloadsFor, Model.OldDownloads)
+            || !ReferenceEquals(_mediaFor, Model.LargeMedia))
+        {
+            (_itemsFor, _downloadsFor, _mediaFor) = (Model.Reviewables, Model.OldDownloads, Model.LargeMedia);
+            _items = BuildItems(Model.Reviewables ?? [], Model.Totals,
+                DownloadItems(Model.OldDownloads?.Candidates ?? [], Model.RootPath),
+                MediaItems(Model.LargeMedia?.Candidates ?? [], Model.RootPath));
+        }
+        return _items;
+    }
 
     /// <summary>
     /// Old downloads older than 30 days — the Old downloads page's default, so the group's
-    /// "Not opened in a long time" holds and its count matches the page.
+    /// "Not changed in a long time" holds and its count matches the page.
     /// </summary>
     public static List<CleanItem> DownloadItems(IReadOnlyList<OldDownloadsCandidate> candidates, string? root) =>
         OldDownloadsCatalog.Filter(candidates, OldDownloadsAgeFilter.Days30, OldDownloadsSizeFilter.Any, OldDownloadsTypeFilter.All, "")
@@ -167,9 +198,37 @@ public sealed class CleanUpPage : UserControl
     {
         CleanGroup.Rebuilds => "Apps and tools make these again",
         CleanGroup.ReviewFirst => "Emulator images, dependencies and other things you can get back",
-        CleanGroup.Downloads => "Not opened in a long time",
+        CleanGroup.Downloads => "Not changed in a long time",   // aged by file dates; nothing records when it was opened
         _ => "Never ticked for you. Look before you add them",
     };
+
+    /// <summary>The big button. It fills the basket; the move to the Recycle Bin is confirmed there.</summary>
+    public static string MoveTitle(int count) =>
+        count == 0 ? "Tick something to free" : $"Add {count:N0} item{(count == 1 ? "" : "s")} to the basket";
+
+    /// <summary>Rows an opened group draws before "Show all": the page rebuilds on every tick.</summary>
+    public const int ExpandedLimit = 100;
+
+    /// <summary>
+    /// How many of a group's rows (biggest first) to draw. Folded: the preview — but a ticked row
+    /// is never folded away under "N more": a tick past the preview opens the group. Open: up to
+    /// <see cref="ExpandedLimit"/> rows until "Show all"; ticks past that are counted on the link.
+    /// </summary>
+    public static int RowsShown(IReadOnlyList<CleanItem> rows, int preview, IReadOnlySet<string> ticked,
+        bool expanded, bool showAll)
+    {
+        if (showAll) return rows.Count;
+        bool open = expanded || rows.Skip(preview).Any(r => ticked.Contains(r.Id));
+        return Math.Min(rows.Count, open ? Math.Max(preview, ExpandedLimit) : preview);
+    }
+
+    /// <summary>
+    /// The link under rows still hidden: "12 more · 3 GB" while folded (nothing hidden is ticked
+    /// then), "Show all 250 · 40 more ticked" past <see cref="ExpandedLimit"/>, so no tick is hidden unsaid.
+    /// </summary>
+    public static string MoreLink(int count, int shown, int preview, int hiddenTicked, long hiddenBytes) =>
+        shown <= preview ? $"{count - shown:N0} more · {ByteFormat.Format(hiddenBytes)}"
+        : $"Show all {count:N0} · " + (hiddenTicked > 0 ? $"{hiddenTicked:N0} more ticked" : $"{ByteFormat.Format(hiddenBytes)} more");
 
     /// <summary>The page with the full, filterable list behind a group.</summary>
     private static string? DetailPage(CleanGroup g) => g switch
@@ -180,7 +239,7 @@ public sealed class CleanUpPage : UserControl
         _ => null,
     };
 
-    private static int Preview(CleanGroup g) => g == CleanGroup.Rebuilds ? 8 : 4;
+    public static int Preview(CleanGroup g) => g == CleanGroup.Rebuilds ? 8 : 4;
 
     // ---- Build ----
 
@@ -196,12 +255,17 @@ public sealed class CleanUpPage : UserControl
             Model.ShowPage("Overview");   // the first launch lives on Overview
             return;
         }
+        string? focusKey = _pendingFocus
+            ?? (Keyboard.FocusedElement is FrameworkElement { Tag: string key } had && IsAncestorOf(had) ? key : null);
+        _focusables.Clear();
         var all = Ready ? Items() : [];
         // New catalogs (a scan, a rescan, a basis change) re-tick from the defaults.
         if (Ready && !ReferenceEquals(_tickedFor, Model.Reviewables))
         {
             _tickedFor = Model.Reviewables;
             _lastDay.Clear();
+            _risky.Clear();
+            _recordStale = true;
             _ticked.Clear();
             _ticked.UnionWith(DefaultTicks(all, Model.IsStaged, AppSettings.Load().TickRebuilds));
         }
@@ -217,6 +281,30 @@ public sealed class CleanUpPage : UserControl
         _listScroll.ScrollToVerticalOffset(offset);
         var picked = all.Where(i => _ticked.Contains(i.Id)).ToList();
         _receiptScroll.Content = BuildReceiptColumn(picked);
+        RestoreFocus(focusKey);
+    }
+
+    /// <summary>Remembers a focusable control under a key that survives rebuilds.</summary>
+    private T Keyed<T>(T element, string key) where T : FrameworkElement
+    {
+        element.Tag = key;
+        _focusables[key] = element;
+        return element;
+    }
+
+    /// <summary>
+    /// A rebuild replaces every control, so the one that had keyboard focus gets it back by key
+    /// once the new ones are laid out — a keyboard user ticks row after row.
+    /// </summary>
+    private void RestoreFocus(string? key)
+    {
+        if (key is null || !_focusables.ContainsKey(key)) return;
+        _pendingFocus = key;
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (_pendingFocus is { } k && _focusables.TryGetValue(k, out var element)) element.Focus();
+            _pendingFocus = null;
+        }, System.Windows.Threading.DispatcherPriority.Loaded);
     }
 
     /// <summary>The newest file anywhere in the row's folders — when it was last used.</summary>
@@ -268,13 +356,13 @@ public sealed class CleanUpPage : UserControl
             lastUsed.ToolTip = "Only what nothing has touched for a while — the newest file inside each item";
             lastUsed.Margin = new Thickness(0, 0, 8, 0);
             buttons.Children.Add(lastUsed);
-            buttons.Children.Add(Rd.SecondaryButton("Tick safe only", () =>
+            buttons.Children.Add(Keyed(Rd.SecondaryButton("Tick safe only", () =>
             {
                 _ticked.Clear();
                 _ticked.UnionWith(all.Where(i => i.Group == CleanGroup.Rebuilds).Select(i => i.Id));
                 Rebuild();
-            }));
-            var untick = Rd.SecondaryButton("Untick all", () => { _ticked.Clear(); Rebuild(); });
+            }), "safe"));
+            var untick = Keyed(Rd.SecondaryButton("Untick all", () => { _ticked.Clear(); Rebuild(); }), "untick");
             untick.Margin = new Thickness(8, 0, 0, 0);
             untick.IsEnabled = _ticked.Count > 0;
             buttons.Children.Add(untick);
@@ -297,9 +385,10 @@ public sealed class CleanUpPage : UserControl
         int on = ids.Count(_ticked.Contains);
         var state = on == 0 ? TickState.Off : on == ids.Count ? TickState.On : TickState.Mixed;
         long total = rows.Sum(r => r.Bytes);
-        bool open = _expanded.Contains(group);
         int preview = Preview(group);
-        var shown = open ? rows : rows.Take(preview).ToList();
+        bool expanded = _expanded.Contains(group), showAll = _showAll.Contains(group);
+        int shown = RowsShown(rows, preview, _ticked, expanded, showAll);
+        int folded = RowsShown(rows, preview, _ticked, expanded: false, showAll: false);
 
         var stack = new StackPanel();
         var head = new DockPanel { Margin = new Thickness(0, 22, 0, 0) };
@@ -308,22 +397,19 @@ public sealed class CleanUpPage : UserControl
         head.Children.Add(size);
         if (DetailPage(group) is { } page)
         {
-            var every = Rd.Text("See every one →", 12, null, "RdAccentDeep");
-            every.Cursor = Cursors.Hand;
+            var every = Keyed(Rd.Link("See every one →", () => Model.ShowPage(page), 12, "RdAccentDeep", FontWeights.Normal), "every:" + group);
             every.ToolTip = "The full list, with filters";
             every.Margin = new Thickness(8, 0, 12, 0);
-            every.MouseLeftButtonUp += (_, _) => Model.ShowPage(page);
             DockPanel.SetDock(every, Dock.Right);
             head.Children.Add(every);
         }
-        var box = TickBox(state, () =>
-        {
-            if (state == TickState.On) _ticked.ExceptWith(ids); else _ticked.UnionWith(ids);
-            Rebuild();
-        });
-        System.Windows.Automation.AutomationProperties.SetName(box,
-            $"{GroupTitle(group)}: {(state == TickState.On ? "all ticked" : state == TickState.Mixed ? "some ticked" : "none ticked")}");
-        box.Margin = new Thickness(0, 0, 12, 0);
+        var box = Box(state == TickState.On ? true : state == TickState.Off ? false : null,
+            $"{GroupTitle(group)}, {ByteFormat.Format(total)}", "group:" + group, () =>
+            {
+                if (state == TickState.On) _ticked.ExceptWith(ids); else _ticked.UnionWith(ids);
+                Rebuild();
+            });
+        box.Margin = new Thickness(-5, 0, 7, 0);   // the box itself lines up with the rows' boxes
         DockPanel.SetDock(box, Dock.Left);
         head.Children.Add(box);
         var title = Rd.Text(GroupTitle(group), 15.5, FontWeights.SemiBold);
@@ -338,22 +424,32 @@ public sealed class CleanUpPage : UserControl
             BorderBrush = Ui.Brush("RdInk"), BorderThickness = new Thickness(0, 0, 0, 1),
         });
 
-        foreach (var item in shown) stack.Children.Add(Row(item));
-        if (rows.Count > preview)
+        foreach (var item in rows.Take(shown)) stack.Children.Add(Row(item));
+        var links = new StackPanel { Orientation = Orientation.Horizontal, Height = 34, Margin = new Thickness(31, 0, 0, 0) };
+        if (shown < rows.Count)
         {
-            var hidden = rows.Skip(preview).ToList();
-            var more = Rd.Text(open ? "Show fewer" : $"{hidden.Count} more · {ByteFormat.Format(hidden.Sum(h => h.Bytes))}",
-                12, null, "AppAccent");
-            more.Margin = new Thickness(31, 0, 0, 0);
-            var moreRow = new Border { Height = 34, Background = Brushes.Transparent, Cursor = Cursors.Hand, Child = more };
-            moreRow.MouseLeftButtonUp += (_, _) =>
+            var hidden = rows.Skip(shown).ToList();
+            bool isFolded = shown <= preview;
+            string text = MoreLink(rows.Count, shown, preview, hidden.Count(r => _ticked.Contains(r.Id)), hidden.Sum(h => h.Bytes));
+            links.Children.Add(Keyed(Rd.Link(text, () =>
             {
-                if (!_expanded.Remove(group)) _expanded.Add(group);
+                if (isFolded) _expanded.Add(group); else _showAll.Add(group);
                 Rebuild();
-            };
-            System.Windows.Automation.AutomationProperties.SetName(moreRow, more.Text);
-            stack.Children.Add(moreRow);
+            }, 12, "AppAccent", FontWeights.Normal), "more:" + group));
         }
+        if (folded < shown)
+        {
+            var fewer = Keyed(Rd.Link("Show fewer", () =>
+            {
+                _expanded.Remove(group);
+                _showAll.Remove(group);
+                Rebuild();
+            }, 12, "AppAccent", FontWeights.Normal), "fewer:" + group);
+            if (links.Children.Count > 0) fewer.Margin = new Thickness(18, 0, 0, 0);
+            links.Children.Add(fewer);
+        }
+        foreach (FrameworkElement link in links.Children) link.VerticalAlignment = VerticalAlignment.Center;
+        if (links.Children.Count > 0) stack.Children.Add(links);
         return stack;
     }
 
@@ -368,8 +464,11 @@ public sealed class CleanUpPage : UserControl
             Rebuild();
         }
         var row = new DockPanel { Margin = new Thickness(3, 0, 2, 0) };
-        var box = TickBox(ticked || staged ? TickState.On : TickState.Off, toggle);
-        box.Margin = new Thickness(0, 0, 13, 0);
+        var box = Box(ticked || staged, $"{item.Title}, {ByteFormat.Format(item.Bytes)}{(staged ? ", in the basket" : "")}",
+            "row:" + item.Id, toggle);
+        System.Windows.Automation.AutomationProperties.SetHelpText(box, item.Why);
+        box.IsEnabled = !staged;   // in the basket: the violet row is the tick; take it out from the menu or the basket
+        box.Margin = new Thickness(-5, 0, 8, 0);
         DockPanel.SetDock(box, Dock.Left);
         row.Children.Add(box);
         var size = Rd.Figure(ByteFormat.Format(item.Bytes), 12);
@@ -411,14 +510,24 @@ public sealed class CleanUpPage : UserControl
         menu.Items.Add(tick);
         menu.Items.Add(reveal);
         host.ContextMenu = menu;
-        System.Windows.Automation.AutomationProperties.SetName(host,
-            $"{item.Title}, {ByteFormat.Format(item.Bytes)}, {(staged ? "in the basket" : ticked ? "ticked" : "not ticked")}");
         return host;
+    }
+
+    /// <summary>
+    /// A real check box in App.xaml's style — Tab reaches it, Space ticks it and a screen reader
+    /// reads its state; null is the mixed state of a partly ticked group.
+    /// </summary>
+    private CheckBox Box(bool? isChecked, string name, string key, Action toggle)
+    {
+        var box = Keyed(new CheckBox { IsChecked = isChecked, VerticalAlignment = VerticalAlignment.Center, Cursor = Cursors.Hand }, key);
+        System.Windows.Automation.AutomationProperties.SetName(box, name);
+        box.Click += (_, _) => toggle();
+        return box;
     }
 
     public enum TickState { Off, On, Mixed }
 
-    /// <summary>A violet tick box: off, on, or mixed (some of a group). 16 pt, radius 4.</summary>
+    /// <summary>A violet tick box: off, on, or mixed (some of a group). 16 pt, radius 4. Clean up itself uses real check boxes.</summary>
     public static Border TickBox(TickState state, Action action)
     {
         var mark = new Grid();
@@ -457,14 +566,19 @@ public sealed class CleanUpPage : UserControl
         var stack = new StackPanel { Margin = new Thickness(compact ? 18 : 28, _class.PagePadding(), compact ? 18 : 28, _class.PagePadding()) };
         var vol = Model.Volume ?? Model.Snapshot?.Volume;
         string name = vol?.DriveLabel ?? System.IO.Path.GetFileName(Model.RootPath?.TrimEnd('\\') ?? "") ?? "This PC";
-        int skipped = picked.SelectMany(p => p.Targets).Count(t => IsRisky(t.NodeId));
+        int skipped = picked.Sum(Risky);
         stack.Children.Add(new ReceiptView(picked.Select(p => (p.Title, p.Bytes)).ToList(), bytes, vol?.FreeBytes, name, skipped, compact));
         stack.Children.Add(MoveButton(picked, bytes));
         var note = Rd.Text("You’ll see the full list once more before anything moves.", 12, null, "RdInk2", wrap: true);
         note.TextAlignment = TextAlignment.Center;
         note.Margin = new Thickness(0, 12, 0, 0);
         stack.Children.Add(note);
-        if (CleanupRecord.Load() is { Items.Count: > 0 } last)
+        if (_recordStale)
+        {
+            _lastCleanup = CleanupRecord.Load();
+            _recordStale = false;
+        }
+        if (_lastCleanup is { Items.Count: > 0 } last)
         {
             var card = LastCleanupCard(last);
             card.Margin = new Thickness(0, 28, 0, 0);
@@ -476,45 +590,38 @@ public sealed class CleanUpPage : UserControl
     private static bool IsRisky(int nodeId) =>
         nodeId >= 0 && Model.VerdictOf(nodeId).Advice is CleanupAdvice.Warn or CleanupAdvice.Never;
 
+    /// <summary>How many of a row's folders are risky — classified once per catalog, not per tick (Temp alone can be thousands).</summary>
+    private int Risky(CleanItem item)
+    {
+        if (!_risky.TryGetValue(item.Id, out int count))
+            _risky[item.Id] = count = item.Targets.Count(t => IsRisky(t.NodeId));
+        return count;
+    }
+
     private FrameworkElement MoveButton(List<CleanItem> picked, long bytes)
     {
         bool compact = _class == Rd.WidthClass.Compact;
         bool empty = picked.Count == 0;
-        string title = empty ? "Tick something to free" : $"Move {picked.Count} item{(picked.Count == 1 ? "" : "s")} to Recycle Bin";
-        var content = new StackPanel { Margin = new Thickness(20, 16, 20, 16) };
+        string title = MoveTitle(picked.Count);
+        var content = new StackPanel();
         var enter = Rd.Figure("⏎ ENTER", 10.5, FontWeights.Medium, "RdOnAccent");
         enter.Opacity = 0.85;
         content.Children.Add(enter);
         var big = Rd.TightText(title, compact ? 19 : 23, -0.4, "RdOnAccent");
-        big.Margin = new Thickness(0, compact ? 10 : 18, 0, 0);
-        content.Children.Add(new Viewbox { Child = big, Stretch = Stretch.Uniform, StretchDirection = StretchDirection.DownOnly, HorizontalAlignment = HorizontalAlignment.Left, Margin = big.Margin });
-        big.Margin = new Thickness(0);
-        var face = new Border
+        content.Children.Add(new Viewbox
         {
-            CornerRadius = new CornerRadius(14),
-            Background = empty ? Rd.WithOpacity(Ui.Brush("AppAccent"), 0.45) : Ui.Brush("AppAccent"),
-            BorderBrush = new SolidColorBrush(Color.FromArgb(217, 0, 0, 0)),
-            BorderThickness = new Thickness(1),
-            Child = content,
-        };
-        var shadow = new Border
-        {
-            CornerRadius = new CornerRadius(14),
-            Background = new SolidColorBrush(Color.FromArgb(224, 0, 0, 0)),
-            Margin = new Thickness(5, 5, -5, -5),
-        };
-        var button = new Grid { Margin = new Thickness(0, compact ? 22 : 32, 5, 0), Cursor = empty ? Cursors.Arrow : Cursors.Hand };
-        button.Children.Add(shadow);
-        button.Children.Add(face);
-        button.MouseLeftButtonDown += (_, _) => { if (!empty) face.RenderTransform = new TranslateTransform(2, 2); };
-        button.MouseLeave += (_, _) => face.RenderTransform = null;
-        button.MouseLeftButtonUp += (_, _) =>
-        {
-            face.RenderTransform = null;
-            MoveTicked();
-        };
+            Child = big, Stretch = Stretch.Uniform, StretchDirection = StretchDirection.DownOnly,
+            HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, compact ? 10 : 18, 0, 0),
+        });
+        // A real button: Tab reaches it, Enter or Space presses it, a screen reader names it.
+        var button = Keyed(Rd.AccentButton(title, MoveTicked, large: true, fullWidth: true, hard: true), "move");
+        button.Content = content;
+        button.Height = double.NaN;
+        button.Padding = new Thickness(20, 16, 20, 16);
+        button.Margin = new Thickness(0, compact ? 22 : 32, 3, 0);
+        button.IsEnabled = !empty;
         System.Windows.Automation.AutomationProperties.SetName(button,
-            empty ? "Nothing ticked" : $"Move {picked.Count} items to Recycle Bin, {ByteFormat.Format(bytes)}");
+            empty ? "Nothing ticked" : $"{title}, {ByteFormat.Format(bytes)}");
         return button;
     }
 
@@ -575,10 +682,29 @@ public sealed class CleanUpPage : UserControl
 }
 
 /// <summary>The paper receipt: what moves, what you get back, where it goes, the undo (Mac: Receipt).</summary>
-internal sealed class ReceiptView : Border
+public sealed class ReceiptView : Border
 {
     private static readonly Brush Paper = Brushes.White;
     private static Brush Black(double opacity) => new SolidColorBrush(Color.FromArgb((byte)Math.Round(opacity * 255), 0, 0, 0));
+
+    /// <summary>
+    /// The fine print, in order. Recycling frees nothing by itself: the space comes back once the
+    /// bin is emptied, and Put Back works only until then. Nothing is deleted for good unless you
+    /// confirm it (the basket asks before deleting what the bin refuses as too big).
+    /// </summary>
+    public static List<(string Label, string Value, bool Mono)> Terms(long? freeBefore, long total)
+    {
+        var terms = new List<(string, string, bool)> { ("Where it goes", "The Recycle Bin", false) };
+        if (freeBefore is { } free)
+            terms.Add(("Free once emptied", $"{ShellFormat.HeroBytes(free)} → {ShellFormat.HeroBytes(free + total)}", true));
+        terms.Add(("Deleted forever", "Only if you confirm", false));
+        terms.Add(("Undo", "Put Back, until it's emptied", false));
+        return terms;
+    }
+
+    /// <summary>Shown at every width: without it the receipt reads as if the space were free already.</summary>
+    public const string Footnote =
+        "The space comes back when you empty the Recycle Bin. Put Back returns everything to the same place, with the same name.";
 
     public ReceiptView(List<(string Title, long Bytes)> lines, long total, long? freeBefore, string volumeName,
         int skippedCount, bool compact)
@@ -621,19 +747,12 @@ internal sealed class ReceiptView : Border
         ((TextBlock)back.Children[0]).Foreground = Brushes.Black;
         back.Margin = new Thickness(0, 6, 0, 6);
         stack.Children.Add(back);
-        if (freeBefore is { } free)
-            stack.Children.Add(Dotted("Free space after", $"{ShellFormat.HeroBytes(free)} → {ShellFormat.HeroBytes(free + total)}"));
-        stack.Children.Add(Dotted("Where it goes", "The Recycle Bin", mono: false));
-        stack.Children.Add(Dotted("Deleted forever", "Nothing", mono: false));
-        stack.Children.Add(Dotted("Undo", "Put Back, any time", mono: false));
-        if (!compact)
-        {
-            stack.Children.Add(Dashed());
-            var foot = Rd.Text("The space comes back when you empty the Recycle Bin. Put Back returns everything to the same place, with the same name.", 12, wrap: true);
-            foot.Foreground = Black(0.55);
-            foot.LineHeight = Math.Ceiling(Ui.Scaled(12) * Rd.TextLineHeight) + 2;   // .lineSpacing(2)
-            stack.Children.Add(foot);
-        }
+        foreach (var (label, value, mono) in Terms(freeBefore, total)) stack.Children.Add(Dotted(label, value, mono: mono));
+        stack.Children.Add(Dashed());
+        var foot = Rd.Text(Footnote, 12, wrap: true);
+        foot.Foreground = Black(0.55);
+        foot.LineHeight = Math.Ceiling(Ui.Scaled(12) * Rd.TextLineHeight) + 2;   // .lineSpacing(2)
+        stack.Children.Add(foot);
 
         // The paper is drawn on a Canvas, which measures as zero: the torn teeth hang 7 pt below
         // the text, and a Path that took part in layout grew the box by 7 pt on every pass
@@ -651,7 +770,7 @@ internal sealed class ReceiptView : Border
         Margin = new Thickness(0, 0, 0, 7);   // the torn teeth hang below the box
         Effect = new System.Windows.Media.Effects.DropShadowEffect { Color = Colors.Black, Opacity = 0.18, BlurRadius = 44, ShadowDepth = 18, Direction = 270 };
         System.Windows.Automation.AutomationProperties.SetName(this,
-            $"Receipt: {lines.Count} items, you get back {ByteFormat.Format(total)}, to the Recycle Bin, undo with Put Back");
+            $"Receipt: {lines.Count} items, {ByteFormat.Format(total)}, to the Recycle Bin. The space comes back once you empty it; until then Put Back undoes it.");
     }
 
     /// <summary>A receipt with a torn, zig-zag bottom edge: 8 pt teeth, 7 deep.</summary>

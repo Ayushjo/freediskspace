@@ -64,9 +64,12 @@ public sealed record SafetyAssessment
 /// </summary>
 public static class SafetyClassifier
 {
-    /// <summary>Folder names apps use for disposable caches (Chromium, Electron, Firefox, WinINet).</summary>
+    /// <summary>
+    /// Folder names apps use for disposable caches (Chromium, Electron, Firefox). Not INetCache:
+    /// Windows' own sits in AppData\Local\Microsoft\Windows, which the queue never stages.
+    /// </summary>
     public static readonly IReadOnlySet<string> CacheFolderNames = new HashSet<string>(
-        ["Cache", "Code Cache", "GPUCache", "cache2", "INetCache", "ShaderCache", "GrShaderCache", "DawnCache"],
+        ["Cache", "Code Cache", "GPUCache", "cache2", "ShaderCache", "GrShaderCache", "DawnCache"],
         StringComparer.OrdinalIgnoreCase);
 
     public static SafetyAssessment Assess(string path, string name, bool isDirectory)
@@ -147,19 +150,14 @@ public static class SafetyClassifier
                 "Spotify's cached songs and podcasts. Spotify downloads them again when played.", "Spotify cache",
                 "Some songs or podcasts may need to be downloaded again.");
         }
-        if (n == "deriveddata" || p.Contains(@"\developer\xcode\deriveddata"))
-        {
-            return new SafetyAssessment(SafetyLevel.Safe,
-                "Xcode DerivedData holds build products. Xcode regenerates it on the next build.",
-                "Xcode DerivedData", "Next Xcode build will be slower until DerivedData rebuilds.",
-                "Safe to clear when you are not mid-build.");
-        }
-        if (n == ".cargo" || p.Contains(@"\.cargo\registry"))
+        // Only the download caches: .cargo also holds credentials.toml and installed binaries,
+        // and the Gradle home gradle.properties.
+        if (Within(p, @"\.cargo\registry") || Within(p, @"\.cargo\git"))
         {
             return new SafetyAssessment(SafetyLevel.Safe,
                 "Cargo registry/cache for Rust crates. Cargo re-downloads as needed.", "Cargo cache");
         }
-        if (n == ".gradle" || p.Contains(@"\.gradle\caches"))
+        if (Within(p, @"\.gradle\caches"))
         {
             return new SafetyAssessment(SafetyLevel.Safe,
                 "Gradle caches. Builds re-download dependencies afterward.", "Gradle cache");
@@ -243,6 +241,10 @@ public static class SafetyClassifier
     }
 
     private static string Normalize(string path) => path.Replace('/', '\\').TrimEnd('\\').ToLowerInvariant();
+
+    /// <summary>The folder <paramref name="folder"/> ("\.cargo\git") itself or anything inside it — not "\.cargo\github".</summary>
+    private static bool Within(string p, string folder) =>
+        p.EndsWith(folder, StringComparison.Ordinal) || p.Contains(folder + "\\", StringComparison.Ordinal);
 
     /// <summary>"c:\windows" or "c:\windows\…", on any drive letter.</summary>
     private static bool AtDriveRoot(string p, string folder)

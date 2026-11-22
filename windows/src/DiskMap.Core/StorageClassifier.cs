@@ -137,6 +137,13 @@ public static class StorageClassifier
     private const string ShaderNote = "A graphics shader cache — rebuilt as games and apps run.";
     private const string WaveformNote = "A simulation waveform dump — re-run the simulation to recreate it.";
     private const string CadBackupNote = "A backup copy your design app saves next to the real file — the main file is separate.";
+    private const string GradleHomeNote = "Gradle's home: gradle.properties here often holds credentials and signing keys. Only its caches and downloaded distributions come back.";
+    private const string MavenHomeNote = "Maven's home: settings.xml here often holds repository credentials. Only the repository folder downloads again.";
+    private const string DotCacheNote = "Tools keep caches here, but some hold work not saved anywhere else yet (rclone's VFS cache keeps uploads in progress). Look inside first.";
+    private const string CloudNote = "Synced with the cloud: removing a file here also removes it from the cloud and your other devices.";
+    private const string CloudInstead = "To keep a file in the cloud but free the space here, make it online-only in the sync app (OneDrive: right-click → Free up space).";
+    private const string OneNoteNote = "OneNote's notebook cache — notes that haven't synced yet exist only here.";
+    private const string BoxNote = "Box Drive's local store — files that haven't uploaded yet exist only here.";
 
     private sealed record Rule(
         string[] Pattern, StorageClass Class, bool Claim,
@@ -235,8 +242,13 @@ public static class StorageClassifier
         Claim("venv", Dependencies),
         Claim(".dart_tool", Dependencies),
         Claim(".terraform", Dependencies),
-        Claim("deriveddata", Dependencies),
-        Claim(".gradle", PackageCaches),
+        // The Gradle home keeps gradle.properties beside its caches: only the caches are package
+        // caches. The area comes before the generic claim, which a project's own .gradle (build
+        // state) still takes — first match per depth wins.
+        Claim("users/?/.gradle/caches", PackageCaches, depth: 1),
+        Claim("users/?/.gradle/wrapper/dists", PackageCaches, depth: 1),
+        Area("users/?/.gradle", DevTools, CleanupAdvice.Review, GradleHomeNote, depth: 1),
+        Claim(".gradle", Dependencies),
         Claim(".git", Projects, CleanupAdvice.Warn, GitNote),
         Claim(".ssh", AppData, CleanupAdvice.Never, SecretsNote),
         Claim(".gnupg", AppData, CleanupAdvice.Never, SecretsNote),
@@ -301,6 +313,9 @@ public static class StorageClassifier
         Claim("appdata/local/coreaiplatform.00", System, CleanupAdvice.Never,
             "Recall's encrypted snapshot store — removing its files breaks Recall instead of freeing space cleanly.",
             "Delete snapshots or lower the limit in Settings → Privacy & security → Recall & snapshots."),
+        // Caches that hold the only copy of something.
+        Claim("appdata/local/microsoft/onenote", AppData, CleanupAdvice.Warn, OneNoteNote),
+        Claim("appdata/local/box/box", Cloud, CleanupAdvice.Warn, BoxNote),
         Claim("appdata/local/temp", Caches),
         Claim("appdata/local/crashdumps", Caches),
         Claim("appdata/local/npm-cache", PackageCaches),
@@ -313,7 +328,8 @@ public static class StorageClassifier
         Claim("appdata/local/ms-playwright", PackageCaches),
         Claim("appdata/local/cypress", PackageCaches),
         Claim("appdata/local/node-gyp", PackageCaches),
-        Claim("appdata/local/electron*", PackageCaches),
+        Claim("appdata/local/electron", PackageCaches),           // not electron*: Electronic Arts is app data
+        Claim("appdata/local/electron-builder", PackageCaches),
         Claim("appdata/local/uv", PackageCaches),
         Claim("appdata/roaming/npm", DevTools, CleanupAdvice.Review),
         Claim("appdata/roaming/code", DevTools, CleanupAdvice.Review),
@@ -365,11 +381,18 @@ public static class StorageClassifier
         // Home-folder toolchains (Users\you\.cargo …).
         Claim(".cargo", DevTools, CleanupAdvice.Review),
         Claim(".rustup", DevTools, CleanupAdvice.Review),
-        Claim(".m2", PackageCaches),
-        Claim(".nuget", PackageCaches),
-        Claim(".npm", PackageCaches),
-        Claim(".yarn", PackageCaches),
-        Claim(".pnpm-store", PackageCaches),
+        // Package caches only in the profile: a project's own .yarn (Yarn Berry's releases,
+        // patches, plugins) is committed. Where the tool keeps more beside its cache (Maven's
+        // settings.xml, NuGet's credential-provider plugins, Yarn's global bins), only the cache is claimed.
+        Claim("users/?/.m2/repository", PackageCaches, depth: 1),
+        Area("users/?/.m2", DevTools, CleanupAdvice.Review, MavenHomeNote, depth: 1),
+        Claim("users/?/.nuget/packages", PackageCaches, depth: 1),
+        Area("users/?/.nuget", DevTools, CleanupAdvice.Review, depth: 1),
+        Claim("users/?/.npm", PackageCaches, depth: 1),
+        Claim("users/?/.yarn/berry/cache", PackageCaches, depth: 1),
+        Area("users/?/.yarn", DevTools, CleanupAdvice.Review, depth: 1),
+        Claim("users/?/.pnpm-store", PackageCaches, depth: 1),
+        Claim(".pnpm-store", PackageCaches, depth: 1),   // pnpm's store at the root of another drive
         Claim(".bun", DevTools, CleanupAdvice.Review),
         Claim(".deno", DevTools, CleanupAdvice.Review),
         Claim(".nvm", DevTools, CleanupAdvice.Review),
@@ -387,7 +410,7 @@ public static class StorageClassifier
         Claim(".espressif", DevTools, CleanupAdvice.Review),
         Claim(".arduino15", DevTools, CleanupAdvice.Review),
         Claim(".sdkman", DevTools, CleanupAdvice.Review),
-        Area(".cache", PackageCaches),
+        Area(".cache", PackageCaches, CleanupAdvice.Review, DotCacheNote),
         Claim("users/?/go", DevTools, CleanupAdvice.Review),
         Claim("users/?/scoop", Apps, CleanupAdvice.Warn, "Apps installed with Scoop.", "Remove them with `scoop uninstall <app>` (and `scoop cleanup *` for old versions)."),
         Claim("users/?/flutter", DevTools, CleanupAdvice.Review),
@@ -420,11 +443,11 @@ public static class StorageClassifier
         Area("users/?/git", Projects),
         Area("users/?/saved games", Games),
         Area("users/?/documents/my games", Games),
-        Area("users/?/onedrive*", Cloud),
-        Area("users/?/google drive", Cloud),
-        Area("users/?/dropbox", Cloud),
-        Area("users/?/icloud*", Cloud),
-        Area("users/?/box", Cloud),
+        Area("users/?/onedrive*", Cloud, CleanupAdvice.Review, CloudNote, CloudInstead),
+        Area("users/?/google drive", Cloud, CleanupAdvice.Review, CloudNote, CloudInstead),
+        Area("users/?/dropbox", Cloud, CleanupAdvice.Review, CloudNote, CloudInstead),
+        Area("users/?/icloud*", Cloud, CleanupAdvice.Review, CloudNote, CloudInstead),
+        Area("users/?/box", Cloud, CleanupAdvice.Review, CloudNote, CloudInstead),
         Area("users/?/documents", Documents),
         Area("users/?/desktop", Documents),
         Area("users/?/downloads", Downloads),

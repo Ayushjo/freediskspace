@@ -67,13 +67,29 @@ public static class ReviewableCatalog
             int id = hit.Id;
             if (used.Contains(id) || id < 0 || id >= tree.Count || !tree.IsDirectory[id]) continue;
             if (HasAncestorIn(tree, id, used)) continue;
-            // A quick win that contains grouped caches only offers what's left beside them.
-            long bytes = totals[id] - used.Where(u => IsAncestor(tree, id, u)).Sum(u => totals[u]);
-            if (bytes <= 0) continue;
             string path = tree.PathOf(id, root);
             string name = tree.NameOf(id);
+            if (!Offerable(path)) continue;
             var safety = SafetyClassifier.Assess(path, name, true);
             if (safety.Level == SafetyLevel.Protected) continue;
+            List<int> ids;
+            long bytes;
+            if (IsTemp(name, path))
+            {
+                // Temp goes as its top-level entries, never as the folder: one file an app holds
+                // open would fail the whole item, and %TEMP% itself must stay. Cache groups never
+                // reach into Temp, so nothing in it is counted twice.
+                ids = TopLevel(tree, id, totals);
+                bytes = ids.Sum(i => totals[i]);
+            }
+            else
+            {
+                ids = [id];
+                // A quick win that contains grouped caches only offers what's left beside them.
+                bytes = totals[id] - used.Where(u => IsAncestor(tree, id, u)).Sum(u => totals[u]);
+            }
+            if (bytes <= 0) continue;
+            var paths = ids.Select(i => tree.PathOf(i, root)).ToList();
             var category = Categorize(name, path);
             used.Add(id);
             targets.Add(new ReviewableTarget(
@@ -82,9 +98,9 @@ public static class ReviewableCatalog
                 DisplayName: DisplayName(name, path, category),
                 Detail: Detail(name, category),
                 Bytes: bytes,
-                PrimaryPath: path,
-                Paths: [path],
-                NodeIds: [id],
+                PrimaryPath: paths[0],
+                Paths: paths,
+                NodeIds: ids,
                 Safety: safety,
                 Consequence: Consequence(category, name, safety),
                 Symbol: SymbolFor(category),
@@ -129,8 +145,8 @@ public static class ReviewableCatalog
     }
 
     /// <summary>
-    /// Every outermost cache folder (Cache, Code Cache, GPUCache, cache2, INetCache …, plus
-    /// Spotify's Data) under the scan's AppData\Local or AppData\Roaming, summed per app.
+    /// Every outermost cache folder (Cache, Code Cache, GPUCache, cache2 …, plus Spotify's Data)
+    /// under the scan's AppData\Local or AppData\Roaming that <see cref="CacheRoot"/> accepts, summed per app.
     /// </summary>
     private static List<ReviewableTarget> GroupCaches(FileTree tree, string root, long[] totals)
     {
@@ -161,9 +177,7 @@ public static class ReviewableCatalog
                 PrimaryPath: t.pairs[0].Path,
                 Paths: t.pairs.Select(p => p.Path).ToList(),
                 NodeIds: t.pairs.Select(p => p.Id).ToList(),
-                Safety: t.kv.Value.Safety.Level == SafetyLevel.Protected
-                    ? new SafetyAssessment(SafetyLevel.Review, t.kv.Value.Safety.Reason, t.kv.Key)
-                    : t.kv.Value.Safety,
+                Safety: t.kv.Value.Safety,
                 Consequence: t.kv.Value.Consequence,
                 Symbol: t.kv.Value.Symbol,
                 BundleHint: t.kv.Value.BundleHint))
@@ -183,11 +197,20 @@ public static class ReviewableCatalog
 
     private sealed record CacheLocation(string Path, string[] AppSegments);
 
-    /// <summary>The cache's path and the folders between AppData\Local|Roaming and it, or null when it isn't under AppData.</summary>
+    /// <summary>A package's own files: a folder called cache in here is source code, not a cache.</summary>
+    private static readonly HashSet<string> PackageFolders = new(
+        ["node_modules", "site-packages", "dist-packages"], StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The cache's path and the folders between AppData\Local|Roaming and it, or null when it is
+    /// not an app cache Clean up may offer: outside AppData, in Temp, inside a package (npm's
+    /// make-fetch-happen\lib\cache), or somewhere the queue refuses or the classifier warns about.
+    /// </summary>
     private static CacheLocation? CacheRoot(FileTree tree, string root, int id)
     {
         string path = tree.PathOf(id, root);
         string[] parts = path.Split('\\', '/');
+        if (parts.Any(PackageFolders.Contains)) return null;
         for (int i = 0; i + 2 < parts.Length; i++)
         {
             if (!parts[i].Equals("AppData", StringComparison.OrdinalIgnoreCase)) continue;
@@ -197,15 +220,30 @@ public static class ReviewableCatalog
             string[] inner = parts[(i + 2)..];
             // Temp is its own quick win; never fold it into an app.
             if (inner.Length > 0 && inner[0].Equals("Temp", StringComparison.OrdinalIgnoreCase)) return null;
-            return new CacheLocation(path, inner);
+            return Offerable(path) ? new CacheLocation(path, inner) : null;
         }
         return null;
     }
 
+    /// <summary>
+    /// What Clean up may offer at all: nothing the queue refuses, nothing the classifier warns about
+    /// (an installed app, a browser profile, a sync store) or never stages (Windows' own state).
+    /// </summary>
+    private static bool Offerable(string path) =>
+        !CleanupQueue.IsExcludedPath(path)
+        && StorageClassifier.Classify(path, isDirectory: true).Advice is not (CleanupAdvice.Warn or CleanupAdvice.Never);
+
+    private const string UnknownCacheReason =
+        "An app's cache folder. Most apps rebuild theirs, but some keep offline or not-yet-synced data in one.";
+
     private static void Absorb(Dictionary<string, Acc> byApp, CacheLocation location, int id, long bytes)
     {
-        var mapped = MapCacheFolder(location);
         var safety = SafetyClassifier.Assess(location.Path, location.AppSegments[^1], true);
+        if (safety.Level == SafetyLevel.Protected) return;   // credentials and keys are never offered
+        var mapped = MapCacheFolder(location);
+        // Only the apps MapCacheFolder names are known to rebuild their caches.
+        if (!mapped.Known && safety.Level == SafetyLevel.Safe)
+            safety = new SafetyAssessment(SafetyLevel.Review, UnknownCacheReason, mapped.App);
         if (!byApp.TryGetValue(mapped.App, out var acc))
         {
             acc = new Acc
@@ -221,7 +259,8 @@ public static class ReviewableCatalog
         if (acc.Safety.Level == SafetyLevel.Safe && safety.Level == SafetyLevel.Review) acc.Safety = safety;
     }
 
-    private sealed record Mapped(string App, string Detail, string Symbol, string? BundleHint, string Consequence);
+    /// <summary>Known: an app named in <see cref="MapCacheFolder"/>, whose cache rebuilds by itself.</summary>
+    private sealed record Mapped(string App, string Detail, string Symbol, string? BundleHint, string Consequence, bool Known = true);
 
     /// <summary>Vendor folders that hold one folder per product (Google\Chrome, Microsoft\Edge).</summary>
     private static readonly HashSet<string> VendorContainers = new(
@@ -247,9 +286,6 @@ public static class ReviewableCatalog
             return M("Firefox", "Browser cache", "globe", "Mozilla.Firefox", "Firefox can recreate this cache.");
         if (inner.StartsWith("opera software")) return M("Opera", "Browser cache", "globe", null, "Opera can recreate this cache.");
         if (inner.StartsWith("vivaldi")) return M("Vivaldi", "Browser cache", "globe", null, "Vivaldi can recreate this cache.");
-        if (inner.StartsWith(@"microsoft\windows\inetcache"))
-            return M("Internet cache", "Windows web cache", "globe", null,
-                "Windows and older apps can recreate this cache.");
         if (inner.StartsWith("spotify"))
             return M("Spotify", "Cached media", "music.note", "Spotify.Spotify",
                 "Some songs or podcasts may need to be downloaded again.");
@@ -278,11 +314,13 @@ public static class ReviewableCatalog
         if (inner.StartsWith(@"pip\"))
             return M("pip", "Package download cache", "shippingbox", null, "pip re-downloads packages as needed.");
 
-        // Otherwise the app is the first folder under AppData (or the product under a vendor folder).
+        // Otherwise the app is the first folder under AppData (or the product under a vendor folder),
+        // and nothing says its cache rebuilds: it waits for a look (Review), never ticked for you.
         string[] seg = location.AppSegments;
         string app = seg.Length > 1 && VendorContainers.Contains(seg[0]) && seg.Length > 2 ? seg[1] : seg[0];
-        return M(app, "Application cache", "internaldrive", null,
-            "Apps can usually recreate this. You may see slower first runs or re-downloads.");
+        return new Mapped(app, "Application cache", "internaldrive", null,
+            "Usually rebuilt by the app, but some apps keep offline or unsynced data here. Look inside before you add it.",
+            Known: false);
     }
 
     // ---- Quick-win targets ----
@@ -296,9 +334,9 @@ public static class ReviewableCatalog
     {
         string n = name.ToLowerInvariant();
         string p = path.Replace('/', '\\').ToLowerInvariant();
-        if (n == "deriveddata" || n == "inetcache" || SafetyClassifier.CacheFolderNames.Contains(n)) return ReviewableCategory.Caches;
+        if (SafetyClassifier.CacheFolderNames.Contains(n)) return ReviewableCategory.Caches;
         if (BuildNames.Contains(n)) return ReviewableCategory.BuildArtifacts;
-        if (n is "npm-cache" or ".npm" or ".pnpm-store" or ".cargo" or ".gradle" or ".pub-cache" or "v3-cache" or "plugins-cache"
+        if (n is "npm-cache" or ".npm" or ".pnpm-store" or ".pub-cache" or "v3-cache" or "plugins-cache"
             || p.Contains(@"\.cargo\registry") || p.Contains(@"\.gradle\caches") || p.Contains(@"\nuget\"))
             return ReviewableCategory.PackageCaches;
         return ReviewableCategory.Other;
@@ -320,15 +358,15 @@ public static class ReviewableCatalog
                 };
             case ReviewableCategory.PackageCaches:
                 if (name is "npm-cache" or ".npm") return "npm cache";
-                if (name == ".cargo" || p.Contains(@"\.cargo\")) return "Cargo cache";
-                if (name == ".gradle" || p.Contains(@"\.gradle\")) return "Gradle cache";
+                if (p.Contains(@"\.cargo\")) return "Cargo cache";
+                if (p.Contains(@"\.gradle\")) return "Gradle cache";
                 if (p.Contains(@"\nuget\")) return "NuGet cache";
                 return name;
             case ReviewableCategory.Caches:
-                return name == "DerivedData" ? "Xcode DerivedData" : name;
+                return name;
             default:
                 if (p.Contains(@"\android\sdk\system-images")) return "Android system images";
-                if (name.Equals("Temp", StringComparison.OrdinalIgnoreCase) && p.Contains(@"\appdata\local\temp")) return "Temporary files";
+                if (IsTemp(name, path)) return "Temporary files";
                 if (name.Equals("CrashDumps", StringComparison.OrdinalIgnoreCase)) return "Crash dumps";
                 return name;
         }
@@ -371,6 +409,22 @@ public static class ReviewableCatalog
         ReviewableCategory.PackageCaches => "shippingbox",
         _ => "folder",
     };
+
+    /// <summary>The profile's own Temp folder (the %LOCALAPPDATA%\Temp quick win).</summary>
+    private static bool IsTemp(string name, string path) =>
+        name.Equals("Temp", StringComparison.OrdinalIgnoreCase)
+        && path.Replace('/', '\\').EndsWith(@"\AppData\Local\Temp", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>A folder's direct entries that hold bytes, biggest first.</summary>
+    private static List<int> TopLevel(FileTree tree, int id, long[] totals)
+    {
+        var ids = new List<int>();
+        for (int c = tree.FirstChild[id]; c != -1; c = tree.NextSibling[c])
+            if (totals[c] > 0) ids.Add(c);
+        ids.Sort((a, b) => totals[b] != totals[a] ? totals[b].CompareTo(totals[a])
+            : string.CompareOrdinal(tree.NameOf(a), tree.NameOf(b)));
+        return ids;
+    }
 
     private static bool IsAncestor(FileTree tree, int ancestor, int id)
     {

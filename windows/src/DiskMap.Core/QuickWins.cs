@@ -62,7 +62,7 @@ public static class QuickWins
             }
         }
         return new Patterns(
-            DirectoryNames: ["node_modules", ".venv", "venv", "target", ".next", "dist", "build", "__pycache__", ".gradle"],
+            DirectoryNames: ["node_modules", ".venv", "venv", "target", ".next", "dist", "build", "__pycache__"],
             PathSuffixes: [@"AppData\Local\Temp", @"AppData\Local\npm-cache", @"AppData\Local\pip\cache"]);
     }
 
