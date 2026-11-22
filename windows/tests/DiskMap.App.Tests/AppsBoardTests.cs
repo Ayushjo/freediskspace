@@ -43,14 +43,14 @@ public class AppsBoardTests
     [Fact]
     public void InspectorWords()
     {
-        Assert.Equal("LEFTOVERS · 1 PLACE", AppsBoardPage.PlacesLabel(1));
-        Assert.Equal("LEFTOVERS · 3 PLACES", AppsBoardPage.PlacesLabel(3));
+        Assert.Equal("APP DATA · 1 PLACE", AppsBoardPage.PlacesLabel(1));
+        Assert.Equal("APP DATA · 3 PLACES", AppsBoardPage.PlacesLabel(3));
         Assert.Equal("Valve Corporation · version 2.10", AppsBoardPage.PublisherLine("Valve Corporation", "2.10"));
         Assert.Equal("version 2.10", AppsBoardPage.PublisherLine(null, "2.10"));
         Assert.Equal("", AppsBoardPage.PublisherLine(null, null));
-        Assert.Equal("In the basket", AppsBoardPage.PrimaryTitle(true, 2, 10));
-        Assert.Equal("Tick the leftovers to clean up", AppsBoardPage.PrimaryTitle(false, 0, 0));
-        Assert.Equal("Clean up · add 1.37 GB to basket", AppsBoardPage.PrimaryTitle(false, 2, 1_370_000_000));
+        Assert.Equal("In the basket", AppsBoardPage.PrimaryTitle(true, 2));
+        Assert.Equal("Tick the app data to add", AppsBoardPage.PrimaryTitle(false, 0));
+        Assert.Equal("Add app data to basket", AppsBoardPage.PrimaryTitle(false, 2));
         Assert.Contains("Settings › Apps", AppsBoardPage.Guidance(App("Steam", 1, 0)));
         Assert.Contains("Microsoft Store", AppsBoardPage.Guidance(App("Pkg", 1, 0) with { Source = ApplicationSource.Store }));
     }

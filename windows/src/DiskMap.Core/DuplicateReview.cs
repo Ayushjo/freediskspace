@@ -58,16 +58,22 @@ public static class DuplicateReview
 
     /// <summary>
     /// Which copy stays under a policy. Ties go to the oldest, then the lowest id, so it
-    /// never flickers.
+    /// never flickers. While some copy can stay, a copy <paramref name="isCovered"/> says
+    /// goes with the basket (in it, or inside a folder in it) never does, nor does the
+    /// person's <paramref name="chosen"/> copy if it is one of those.
     /// </summary>
-    public static int? Keeper(DuplicateGroup group, DuplicateKeepPolicy policy, Func<int, int> day, Func<int, int> pathLength)
+    public static int? Keeper(DuplicateGroup group, DuplicateKeepPolicy policy, Func<int, int> day, Func<int, int> pathLength,
+        Func<int, bool>? isCovered = null, int? chosen = null)
     {
-        if (group.FileIDs.Count == 0) return null;
+        var ids = group.FileIDs;
+        if (isCovered is not null && ids.Where(id => !isCovered(id)).ToList() is { Count: > 0 } free) ids = free;
+        if (ids.Count == 0) return null;
+        if (chosen is { } pick && ids.Contains(pick)) return pick;
         return policy switch
         {
-            DuplicateKeepPolicy.Oldest => group.DefaultKeeperId(day),
-            DuplicateKeepPolicy.Newest => group.FileIDs.MinBy(id => (-(long)day(id), id)),
-            _ => group.FileIDs.MinBy(id => (pathLength(id), day(id), id)),
+            DuplicateKeepPolicy.Oldest => ids.MinBy(id => (day(id), id)),
+            DuplicateKeepPolicy.Newest => ids.MinBy(id => (-(long)day(id), id)),
+            _ => ids.MinBy(id => (pathLength(id), day(id), id)),
         };
     }
 
@@ -127,8 +133,9 @@ public static class DuplicateReview
 
     /// <summary>
     /// What Duplicates ticks for you: every copy but the kept one in groups that free
-    /// something. Copies already in the basket stay as they are; copies a project or app
-    /// owns are never pre-ticked (Mac: selectOtherCopies).
+    /// something. Copies already in the basket (or in a folder that is) stay as they are;
+    /// copies <see cref="DuplicatePreTick.NeverPreTicked"/> rules out are never pre-ticked
+    /// (Mac: selectOtherCopies).
     /// </summary>
     public static HashSet<int> PreTicked(IEnumerable<DuplicateGroup> groups, Func<DuplicateGroup, int?> keeperOf,
         Func<int, string> pathOf, Func<string, bool> isStaged)
@@ -142,10 +149,28 @@ public static class DuplicateReview
             {
                 if (id == keep) continue;
                 string path = pathOf(id);
-                if (!isStaged(path) && !DuplicatePreTick.IsToolOwned(path)) next.Add(id);
+                if (!isStaged(path) && !DuplicatePreTick.NeverPreTicked(path)) next.Add(id);
             }
         }
         return next;
+    }
+
+    /// <summary>
+    /// The search's answer checked against the disk again, just before ticked copies go in the
+    /// basket: hashes are trusted only while each copy keeps the length and last write it had
+    /// when it was read. <c>Changed</c> is the ticked copies that no longer match (leave them
+    /// out); <c>KeptCopyIntact</c> is false when no copy that stays (unticked, not in the
+    /// basket) still matches, and then nothing of the group may go in.
+    /// </summary>
+    public static (bool KeptCopyIntact, HashSet<int> Changed) Recheck(DuplicateGroup group, IReadOnlySet<int> ticked,
+        Func<int, bool> isCovered, Func<int, string> pathOf, Func<string, FileStamp?>? stampOf = null)
+    {
+        stampOf ??= FileStamp.Of;
+        bool same(int id) => group.Stamps is { } stamps && stamps.TryGetValue(id, out var then)
+                             && stampOf(pathOf(id)) == then;
+        var changed = group.FileIDs.Where(id => ticked.Contains(id) && !same(id)).ToHashSet();
+        bool kept = group.FileIDs.Any(id => !ticked.Contains(id) && !isCovered(id) && same(id));
+        return (kept, changed);
     }
 
     /// <summary>A stable key for a group: clone-only groups all hash "shared-extents".</summary>
@@ -237,6 +262,21 @@ public static class DuplicatePreTick
 
     private static readonly string[] BundleSuffixes =
         [".app", ".framework", ".bundle", ".plugin", ".photoslibrary", ".xcodeproj", ".xcworkspace"];
+
+    /// <summary>Program files: identical ones are two programs' own copies of a library (UnityPlayer.dll, libcef.dll).</summary>
+    private static readonly HashSet<string> ProgramExtensions = new(StringComparer.OrdinalIgnoreCase) { ".exe", ".dll", ".sys" };
+
+    /// <summary>
+    /// Never ticked for you: a copy a tool or app owns, a program file, or a copy in a cloud
+    /// sync folder (recycling that one deletes it from the cloud and every synced PC too).
+    /// The person can still tick any of them by hand.
+    /// </summary>
+    public static bool NeverPreTicked(string path) =>
+        IsToolOwned(path)
+        || ProgramExtensions.Contains(Path.GetExtension(path))
+        // The folder, not the file: a file rule (.iso, .zip) would win over the cloud area.
+        || Path.GetDirectoryName(path) is { Length: > 0 } folder
+           && StorageClassifier.Classify(folder, isDirectory: true).Class == StorageClassifier.Cloud;
 
     /// <summary>True when a folder above the file (not the file itself) belongs to a tool. Either separator.</summary>
     public static bool IsToolOwned(string path)
