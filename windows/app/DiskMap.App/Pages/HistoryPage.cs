@@ -25,11 +25,19 @@ public sealed class HistoryPage : UserControl
     private CleanupHistory _history = new();
     private Rd.WidthClass _class = Rd.WidthClass.Regular;
     private TextBox? _search;
+    // Typing redraws the page once it pauses, not per keystroke.
+    private readonly System.Windows.Threading.DispatcherTimer _searchDelay = new() { Interval = TimeSpan.FromMilliseconds(250) };
+    private readonly HashSet<int> _showAll = [];
+    private int _loads;
+
+    /// <summary>Rows an open cleanup draws before "Show all": each row is a line with its own Put Back button.</summary>
+    public const int RowCap = 25;
 
     public HistoryPage()
     {
         Background = Ui.Brush("RdPage");
         Content = _scroll;
+        _searchDelay.Tick += (_, _) => { _searchDelay.Stop(); Rebuild(); };
         ModelEvents.WhileLoaded(this, Reload);
         Loaded += (_, _) => Model.StagedChanged += OnStaged;
         Unloaded += (_, _) => Model.StagedChanged -= OnStaged;
@@ -46,9 +54,13 @@ public sealed class HistoryPage : UserControl
     /// <summary>Re-read the history and which Recycle Bin copies still exist, off the UI thread.</summary>
     private async void Reload()
     {
+        // Reloads overlap (a Put Back, then the basket changing): only the newest one may draw.
+        int load = ++_loads;
         var history = await Task.Run(() => CleanupHistory.LoadOrSeed());
+        if (load != _loads) return;
         var paths = history.Entries.SelectMany(e => e.Record.Items.Select(i => i.TrashedPath)).ToList();
         var found = await Task.Run(() => paths.Where(CleanupHistory.ExistsInTrash).ToHashSet(StringComparer.OrdinalIgnoreCase));
+        if (load != _loads) return;
         _history = history;
         _inTrash = found;
         if (!_didSetDefaults)
@@ -122,9 +134,9 @@ public sealed class HistoryPage : UserControl
         var titles = new StackPanel();
         int deleted = _history.DeletedPermanentlyCount;
         var title = new TextBlock { FontFamily = Rd.FontFor(26), FontSize = Ui.Scaled(26), FontWeight = FontWeights.SemiBold };
-        title.Inlines.Add(new System.Windows.Documents.Run($"Freed {ShellFormat.HeroBytes(_history.FreedBytes)} with freedisk.space") { Foreground = Ui.Brush("RdInk") });
+        title.Inlines.Add(new System.Windows.Documents.Run(MovedTitle(_history.FreedBytes)) { Foreground = Ui.Brush("RdInk") });
         if (_class != Rd.WidthClass.Compact)
-            title.Inlines.Add(new System.Windows.Documents.Run($" · {deleted:N0} {(deleted == 1 ? "folder" : "files")} deleted permanently") { Foreground = Ui.Brush("RdInk3") });
+            title.Inlines.Add(new System.Windows.Documents.Run(" · " + DeletedText(deleted)) { Foreground = Ui.Brush("RdInk3") });
         titles.Children.Add(new Viewbox { Child = title, Stretch = Stretch.Uniform, StretchDirection = StretchDirection.DownOnly, HorizontalAlignment = HorizontalAlignment.Left });
         var lede = Rd.Text("Every cleanup goes to the Recycle Bin first. While it's there, Put Back returns it to the same place, with the same name.", 13, null, "RdInk2", wrap: true);
         lede.Margin = new Thickness(0, 6, 0, 0);
@@ -153,7 +165,8 @@ public sealed class HistoryPage : UserControl
         {
             _query = box.Text;
             hint.Visibility = _query.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
-            Rebuild();
+            _searchDelay.Stop();
+            _searchDelay.Start();
         };
         _search = box;
         var field = new Grid();
@@ -176,6 +189,7 @@ public sealed class HistoryPage : UserControl
     private FrameworkElement Stats()
     {
         long trashBytes = _history.BytesInTrash(Exists);
+        long freed = FreedBytes(_history, Exists);
         var first = _history.Entries.LastOrDefault()?.Record.Date;
         int deleted = _history.DeletedPermanentlyCount;
         var grid = new Grid();
@@ -193,11 +207,13 @@ public sealed class HistoryPage : UserControl
             grid.Children.Add(e);
         }
         int count = _history.Entries.Count;
-        column(Stat("Freed so far", ShellFormat.HeroBytes(_history.FreedBytes), $"in {count} cleanup{(count == 1 ? "" : "s")}",
-            first is { } f ? $"Since you started on {DayText(f)}." : "", accent: false));
-        // Only moves to the Recycle Bin — except the documented too-big regenerable folders.
-        column(Stat("Deleted permanently", deleted.ToString("N0"), deleted == 1 ? "folder" : "files",
-            deleted == 0 ? "Nothing skipped the Recycle Bin." : $"Too big for the Recycle Bin, regenerable, deleted with your OK · {ByteFormat.Format(_history.DeletedPermanentlyBytes)}.",
+        // Freed means gone from the disk: the Recycle Bin emptied, or deleted permanently.
+        column(Stat("Freed so far", ShellFormat.HeroBytes(freed), $"in {count} cleanup{(count == 1 ? "" : "s")}",
+            trashBytes > 0 ? $"{ShellFormat.HeroBytes(trashBytes)} more once you empty the Recycle Bin."
+            : first is { } f ? $"Since you started on {DayText(f)}." : "", accent: false));
+        // Only moves to the Recycle Bin — except the documented regenerable folders it wouldn't take.
+        column(Stat("Deleted permanently", deleted.ToString("N0"), deleted == 1 ? "item" : "items",
+            deleted == 0 ? "Nothing skipped the Recycle Bin." : $"The Recycle Bin wouldn't take them; regenerable, so deleted with your OK · {ByteFormat.Format(_history.DeletedPermanentlyBytes)}.",
             accent: false));
         column(Stat("Still in Recycle Bin", ShellFormat.HeroBytes(trashBytes), trashBytes > 0 ? "can be put back" : "",
             trashBytes > 0 ? "Empty the Recycle Bin when you're sure." : "The Recycle Bin has been emptied since.", accent: trashBytes > 0));
@@ -324,7 +340,14 @@ public sealed class HistoryPage : UserControl
 
         if (open)
         {
-            for (int k = 0; k < items.Count; k++) stack.Children.Add(ItemRow(items[k], states[k], entry.Number));
+            int shown = ShownRows(items.Count, _showAll.Contains(entry.Number));
+            for (int k = 0; k < shown; k++) stack.Children.Add(ItemRow(items[k], states[k], entry.Number));
+            if (shown < items.Count)
+            {
+                var all = Rd.Link($"Show all {items.Count:N0}", () => { _showAll.Add(entry.Number); Rebuild(); }, 13);
+                all.Margin = new Thickness(18, 14, 18, 14);
+                stack.Children.Add(new Border { Child = all, BorderBrush = Ui.Brush("RdLine"), BorderThickness = new Thickness(0, 1, 0, 0) });
+            }
             if (back.Count > 0)
             {
                 var foot = new DockPanel { Height = 56, Margin = new Thickness(18, 0, 18, 0) };
@@ -356,10 +379,11 @@ public sealed class HistoryPage : UserControl
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(14) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(compact ? 120 : 250) });
-        string name = System.IO.Path.GetFileName(item.OriginalPath.TrimEnd('\\'));
+        string name = Dialogs.SafeDisplay(System.IO.Path.GetFileName(item.OriginalPath.TrimEnd('\\')));
         void put(FrameworkElement e, int c) { e.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(e, c); grid.Children.Add(e); }
         put(Rd.Text(name, 13.5, FontWeights.Medium, gone ? "RdInk3" : "RdInk"), 0);
-        var where = Rd.Figure(CanonicalPath.DisplayPath(System.IO.Path.GetDirectoryName(item.OriginalPath) ?? ""), 11.5, null, "RdInk3");
+        var where = Rd.Figure(Dialogs.SafeDisplay(CanonicalPath.DisplayPath(System.IO.Path.GetDirectoryName(item.OriginalPath) ?? "")), 11.5, null, "RdInk3");
+        where.ToolTip = Dialogs.SafeDisplay(item.OriginalPath);   // the column cuts it; the whole path on hover
         put(where, 2);
         var size = Rd.Figure(ShellFormat.HeroBytes(item.Bytes), 12, null, gone ? "RdInk3" : "RdInk");
         size.HorizontalAlignment = HorizontalAlignment.Right;
@@ -414,6 +438,21 @@ public sealed class HistoryPage : UserControl
     }
 
     // ---- Words ----
+
+    /// <summary>The page title: moved, not freed — space comes back once the Recycle Bin is emptied.</summary>
+    public static string MovedTitle(long movedBytes) => $"Moved {ShellFormat.HeroBytes(movedBytes)} to the Recycle Bin with freedisk.space";
+
+    /// <summary>"1 item deleted permanently", "2 items deleted permanently".</summary>
+    public static string DeletedText(int count) => $"{count:N0} item{(count == 1 ? "" : "s")} deleted permanently";
+
+    /// <summary>Space actually freed: what left the Recycle Bin when it was emptied, plus the permanent deletes.</summary>
+    public static long FreedBytes(CleanupHistory history, Func<string, bool> existsInTrash) =>
+        history.Entries.Sum(e => e.Record.Items
+            .Where(i => CleanupHistory.State(i, e, existsInTrash) == CleanupHistory.ItemState.TrashEmptied).Sum(i => i.Bytes))
+        + history.DeletedPermanentlyBytes;
+
+    /// <summary>Rows an open cleanup draws: every one once asked, else the first <see cref="RowCap"/>.</summary>
+    public static int ShownRows(int total, bool showAll) => showAll ? total : Math.Min(total, RowCap);
 
     /// <summary>The card's tag: ALL IN RECYCLE BIN, 2 IN RECYCLE BIN, PUT BACK, BIN EMPTIED.</summary>
     public static (string Text, bool Accent) CardTag(IReadOnlyList<CleanupHistory.ItemState> states)
