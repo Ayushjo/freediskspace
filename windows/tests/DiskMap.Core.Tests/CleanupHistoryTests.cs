@@ -60,6 +60,7 @@ public class CleanupHistoryTests
             h.Append(Record(date, ("a", 10)));
             h.MarkRestored(h.Entries[0].Record.Items, 1);
             h.Save(path);
+            Assert.Contains("\"Restored\":[\"", File.ReadAllText(path));   // still a JSON array, as before the set
             var back = CleanupHistory.Load(path);
             Assert.NotNull(back);
             Assert.Equal(date, back!.Entries[0].Record.Date);

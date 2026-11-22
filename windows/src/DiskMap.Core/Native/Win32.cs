@@ -377,11 +377,23 @@ internal static partial class Win32
         return @"\\?\" + path;
     }
 
+    // ---- Known folders ----
+
+    private static readonly Guid FOLDERID_Downloads = new("374DE290-123F-4565-9164-39C4925E467B");
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern int SHGetKnownFolderPath(
+        [MarshalAs(UnmanagedType.LPStruct)] Guid rfid, uint dwFlags, IntPtr hToken,
+        [MarshalAs(UnmanagedType.LPWStr)] out string? ppszPath);
+
+    /// <summary>The real Downloads folder, wherever it was moved (.NET has no SpecialFolder for it); null when unknown.</summary>
+    public static string? DownloadsFolder() =>
+        SHGetKnownFolderPath(FOLDERID_Downloads, 0, IntPtr.Zero, out var path) == 0 ? path : null;
+
     // ---- Token privileges ----
     //
-    // Raw volume reads need SeBackupPrivilege/SeRestorePrivilege
-    // *enabled* in the process token —
-    // elevated tokens carry them present-but-disabled, so AdjustTokenPrivileges
+    // Raw volume reads need SeBackupPrivilege *enabled* in the process token —
+    // elevated tokens carry it present-but-disabled, so AdjustTokenPrivileges
     // is mandatory before touching $MFT. Without it the MFT path silently
     // fails and every scan falls back to FindFirstFileExW.
 
@@ -427,8 +439,10 @@ internal static partial class Win32
     public static extern bool CloseHandle(IntPtr hObject);
 
     /// <summary>
-    /// Enables SeBackupPrivilege + SeRestorePrivilege on the current process
-    /// token. Returns false when the process can't hold them (non-elevated).
+    /// Enables SeBackupPrivilege on the current process token — every caller
+    /// only reads (volume, $MFT, change journal). Never the restore privilege:
+    /// it lets backup-semantics opens write and delete past ACLs, the net the
+    /// never-stage list relies on. False when the process can't hold it (non-elevated).
     /// </summary>
     public static bool EnableBackupPrivileges()
     {
@@ -436,23 +450,16 @@ internal static partial class Win32
             return false;
         try
         {
-            bool ok = true;
-            foreach (var name in new[] { "SeBackupPrivilege", "SeRestorePrivilege" })
+            if (!LookupPrivilegeValueW(null, "SeBackupPrivilege", out var luid)) return false;
+            var tp = new TOKEN_PRIVILEGES
             {
-                if (!LookupPrivilegeValueW(null, name, out var luid)) { ok = false; continue; }
-                var tp = new TOKEN_PRIVILEGES
-                {
-                    PrivilegeCount = 1,
-                    Privileges = new LUID_AND_ATTRIBUTES { Luid = luid, Attributes = SE_PRIVILEGE_ENABLED },
-                };
-                if (!AdjustTokenPrivileges(token, false, ref tp, 0, IntPtr.Zero, IntPtr.Zero))
-                    ok = false;
-                // AdjustTokenPrivileges returns success even when a privilege
-                // isn't assigned — GetLastError reports NOT_ALL_ASSIGNED.
-                else if (Marshal.GetLastWin32Error() == 1300 /* ERROR_NOT_ALL_ASSIGNED */)
-                    ok = false;
-            }
-            return ok;
+                PrivilegeCount = 1,
+                Privileges = new LUID_AND_ATTRIBUTES { Luid = luid, Attributes = SE_PRIVILEGE_ENABLED },
+            };
+            // AdjustTokenPrivileges returns success even when the privilege
+            // isn't assigned — GetLastError reports NOT_ALL_ASSIGNED.
+            return AdjustTokenPrivileges(token, false, ref tp, 0, IntPtr.Zero, IntPtr.Zero)
+                && Marshal.GetLastWin32Error() != 1300 /* ERROR_NOT_ALL_ASSIGNED */;
         }
         finally
         {

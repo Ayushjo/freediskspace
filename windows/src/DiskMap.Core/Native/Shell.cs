@@ -4,10 +4,11 @@ namespace DiskMap.Core.Native;
 
 /// <summary>
 /// The Recycle Bin refused an item — too big for the bin's size limit on
-/// that drive. Nothing was deleted; the item is exactly where it was.
+/// that drive, or the drive has no bin (a network share, or the bin switched
+/// off). Nothing was deleted; the item is exactly where it was.
 /// </summary>
 public sealed class RecycleRefusedException(string path)
-    : IOException($"Too big for the Recycle Bin — nothing was deleted: {path}")
+    : IOException($"The Recycle Bin wouldn't take it (too big, or this drive has none) — nothing was deleted: {path}")
 {
     public string Path { get; } = path;
 }
