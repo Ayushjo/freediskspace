@@ -43,6 +43,7 @@ public sealed class SettingsWindow : Window
         Height = 780;
         MinWidth = 1000;
         MinHeight = 640;
+        WindowFit.ToWorkArea(this);   // the body scrolls, so a short screen loses nothing
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Background = Ui.Brush("RdPage");
         _root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(210) });
@@ -102,19 +103,16 @@ public sealed class SettingsWindow : Window
             var layers = new Grid();
             layers.Children.Add(row);
             if (on) layers.Children.Add(new Border { Width = 2, HorizontalAlignment = HorizontalAlignment.Left, Background = Ui.Brush("AppAccent") });
-            var item = new Border
-            {
-                Height = 32, CornerRadius = new CornerRadius(7), Child = layers, Cursor = Cursors.Hand,
-                Background = on ? Ui.Brush("RdSoft") : Brushes.Transparent, Margin = new Thickness(0, 0, 0, 2),
-            };
             string captured = title;
-            item.MouseLeftButtonUp += (_, _) =>
+            var item = PlainButton.Create(layers, title, () =>
             {
                 _section = captured;
                 Rebuild();
                 if (_groups.TryGetValue(captured, out var group)) Dispatcher.InvokeAsync(group.BringIntoView);
-            };
-            System.Windows.Automation.AutomationProperties.SetName(item, title);
+            }, radius: 7);
+            item.Height = 32;
+            item.Background = on ? Ui.Brush("RdSoft") : Brushes.Transparent;
+            item.Margin = new Thickness(0, 0, 0, 2);
             list.Children.Add(item);
         }
         dock.Children.Add(list);
@@ -209,10 +207,10 @@ public sealed class SettingsWindow : Window
             Row("What you use this PC for", SetupSummary(), Rd.SecondaryButton("Change…", ChangeSetup)),
             Row("Where your code lives", "Projects here are listed first on every scan.", folders, stacked: true),
             Row("Working on it now", "Projects committed to or changed this recently stay out of bulk cleans.",
-                Picker(ActiveChoices.Select(d => $"{d} days").ToArray(), Math.Max(0, Array.IndexOf(ActiveChoices, _settings.ActiveDays)),
+                Picker("Working on it now", ActiveChoices.Select(d => $"{d} days").ToArray(), Math.Max(0, Array.IndexOf(ActiveChoices, _settings.ActiveDays)),
                     i => { _settings.ActiveDays = ActiveChoices[i]; Save(); })),
             Row("Old projects", "What Clean old ones picks when the Last used filter is off.",
-                Picker(OldChoices.Select(DeveloperBoard.LastUsedTitle).ToArray(), Math.Max(0, Array.IndexOf(OldChoices, _settings.OldAfterDays)),
+                Picker("Old projects", OldChoices.Select(DeveloperBoard.LastUsedTitle).ToArray(), Math.Max(0, Array.IndexOf(OldChoices, _settings.OldAfterDays)),
                     i => { _settings.OldAfterDays = OldChoices[i]; Save(); })));
     }
 
@@ -242,7 +240,7 @@ public sealed class SettingsWindow : Window
 
     private FrameworkElement Scanning() => Group("Scanning",
         Row("ReFS block clones", CloneExplanation(_settings.CloneAccounting),
-            Picker(["Count every copy", "Count each family once"], _settings.CloneAccounting ? 1 : 0,
+            Picker("ReFS block clones", ["Count every copy", "Count each family once"], _settings.CloneAccounting ? 1 : 0,
                 i => { _settings.CloneAccounting = i == 1; Save(); }), stacked: true),
         Row("Keep storage history",
             "A few hundred folder sizes per scan, so Overview can say what grew. Kept on this PC, never sent anywhere.",
@@ -300,7 +298,7 @@ public sealed class SettingsWindow : Window
     private FrameworkElement Appearance()
     {
         string mode = _settings.Appearance;
-        var theme = Rd.SegmentSwitch(
+        var theme = Segments(
         [
             new Rd.Segment("Light", mode == "light", () => SetAppearance("light")),
             new Rd.Segment("Dark", mode == "dark", () => SetAppearance("dark")),
@@ -329,15 +327,16 @@ public sealed class SettingsWindow : Window
                 BorderThickness = new Thickness(on ? 2 : 1), Child = swatch,
             };
             Grid.SetColumnSpan(frame, 2);
-            var item = new StackPanel { Margin = new Thickness(0, 0, 14, 0), Cursor = Cursors.Hand, Background = Brushes.Transparent };
-            item.Children.Add(frame);
+            var face = new StackPanel();
+            face.Children.Add(frame);
             var label = Rd.Text(title, 12, null, on ? "RdInk" : "RdInk2");
             label.HorizontalAlignment = HorizontalAlignment.Center;
             label.Margin = new Thickness(0, 6, 0, 0);
-            item.Children.Add(label);
+            face.Children.Add(label);
             string captured = id;
-            item.MouseLeftButtonUp += (_, _) => SetAppearance(captured);
-            System.Windows.Automation.AutomationProperties.SetName(item, $"{title} theme");
+            var item = PlainButton.Create(face, on ? $"{title} theme, selected" : $"{title} theme",
+                () => SetAppearance(captured));
+            item.Margin = new Thickness(0, 0, 14, 0);
             swatches.Children.Add(item);
         }
         swatches.Children.Add(Rd.Text("System follows Windows, including at night.", 12, null, "RdInk3", wrap: true));
@@ -345,7 +344,7 @@ public sealed class SettingsWindow : Window
         return Group("Appearance",
             Row("Theme", null, theme),
             new Border { Child = swatches, BorderBrush = Ui.Brush("RdLine"), BorderThickness = new Thickness(0, 0, 0, 1) },
-            Row("Text size", null, Picker(TextScales.Select(t => t.Label).ToArray(), Math.Max(0, scaleIndex), i =>
+            Row("Text size", null, Picker("Text size", TextScales.Select(t => t.Label).ToArray(), Math.Max(0, scaleIndex), i =>
             {
                 _settings.TextScale = TextScales[i].Scale;
                 _onTextScale(TextScales[i].Scale);
@@ -491,8 +490,8 @@ public sealed class SettingsWindow : Window
         return track;
     }
 
-    /// <summary>A pop-up picker: the current value as a chip; a click shows the options.</summary>
-    private static Border Picker(string[] options, int selected, Action<int> pick)
+    /// <summary>A pop-up picker: the current value as a chip; a click, Enter or Space shows the options.</summary>
+    private static Button Picker(string label, string[] options, int selected, Action<int> pick)
     {
         var row = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         row.Children.Add(Rd.Text(options[selected], 13));
@@ -500,13 +499,15 @@ public sealed class SettingsWindow : Window
         chevrons.Margin = new Thickness(8, 0, 0, 0);
         chevrons.VerticalAlignment = VerticalAlignment.Center;
         row.Children.Add(chevrons);
-        var box = new Border
-        {
-            Height = 28, Padding = new Thickness(10, 0, 10, 0), CornerRadius = new CornerRadius(6),
-            Background = Ui.Brush("RdCard"), BorderBrush = Ui.Brush("RdLine"), BorderThickness = new Thickness(1),
-            Child = row, Cursor = Cursors.Hand,
-        };
-        box.MouseLeftButtonUp += (_, _) =>
+        var box = PlainButton.Create(row, $"{label}: {options[selected]}", null, radius: 6);
+        box.Height = 28;
+        box.Padding = new Thickness(10, 0, 10, 0);
+        box.Background = Ui.Brush("RdCard");
+        box.BorderBrush = Ui.Brush("RdLine");
+        box.BorderThickness = new Thickness(1);
+        box.HorizontalContentAlignment = HorizontalAlignment.Left;
+        box.VerticalContentAlignment = VerticalAlignment.Center;
+        box.Click += (_, _) =>
         {
             var menu = new ContextMenu();
             for (int i = 0; i < options.Length; i++)
@@ -520,12 +521,41 @@ public sealed class SettingsWindow : Window
             menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
             menu.IsOpen = true;
         };
-        System.Windows.Automation.AutomationProperties.SetName(box, options[selected]);
         return box;
     }
 
+    /// <summary>
+    /// Rd.SegmentSwitch's look (a soft well, the picked segment raised) made of buttons, so Tab
+    /// reaches each choice. Under high contrast the picked one is outlined: its fill would not show.
+    /// </summary>
+    private static Border Segments(IEnumerable<Rd.Segment> segments)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal };
+        foreach (var segment in segments)
+        {
+            var item = PlainButton.Create(Rd.Text(segment.Title, 13, FontWeights.Medium, segment.IsOn ? "RdInk" : "RdInk2"),
+                segment.IsOn ? $"{segment.Title}, selected" : segment.Title, segment.OnClick, radius: 6);
+            item.Height = 24;
+            item.Padding = new Thickness(11, 0, 11, 0);
+            item.Margin = new Thickness(row.Children.Count == 0 ? 0 : 2, 0, 0, 0);
+            item.Background = segment.IsOn ? Ui.Brush("RdSegmentOn") : Brushes.Transparent;
+            item.BorderBrush = Ui.Brush("RdLine");
+            item.BorderThickness = new Thickness(segment.IsOn && SystemParameters.HighContrast ? 1 : 0);
+            if (segment.IsOn)
+                item.Effect = new System.Windows.Media.Effects.DropShadowEffect
+                    { Color = Colors.Black, Opacity = 0.06, BlurRadius = 2, ShadowDepth = 1, Direction = 270 };
+            row.Children.Add(item);
+        }
+        return new Border
+        {
+            Background = Ui.Brush("RdSoft"), BorderBrush = Ui.Brush("RdLine"), BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8), Padding = new Thickness(2), HorizontalAlignment = HorizontalAlignment.Left,
+            Child = row,
+        };
+    }
+
     /// <summary>A radio choice: dot, title over detail; the accent wash when picked.</summary>
-    private static Border Choice(bool on, string title, string detail, Action action)
+    private static Button Choice(bool on, string title, string detail, Action action)
     {
         var dot = new Grid { Width = 16, Height = 16, Margin = new Thickness(0, 2, 12, 0), VerticalAlignment = VerticalAlignment.Top };
         dot.Children.Add(new Ellipse { Stroke = Ui.Brush(on ? "AppAccent" : "RdInk3"), StrokeThickness = 1.5 });
@@ -539,13 +569,9 @@ public sealed class SettingsWindow : Window
         d.Margin = new Thickness(0, 2, 0, 0);
         text.Children.Add(d);
         row.Children.Add(text);
-        var box = new Border
-        {
-            Padding = new Thickness(10), CornerRadius = new CornerRadius(8), Child = row, Cursor = Cursors.Hand,
-            Background = on ? Ui.Brush("RdAccentWash") : Brushes.Transparent,
-        };
-        box.MouseLeftButtonUp += (_, _) => action();
-        System.Windows.Automation.AutomationProperties.SetName(box, title);
+        var box = PlainButton.Create(row, on ? $"{title}, selected" : title, action, radius: 8);
+        box.Padding = new Thickness(10);
+        box.Background = on ? Ui.Brush("RdAccentWash") : Brushes.Transparent;
         return box;
     }
 }

@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Windows;
 
 [assembly:ThemeInfo(
@@ -8,3 +9,7 @@ using System.Windows;
                                                 //(used if a resource is not found in the page,
                                                 // app, or any theme specific resource dictionaries)
 )]
+
+// The app runs as administrator: a native library it imports by name comes from System32, never
+// from the app's or the working folder, where a planted copy could run elevated.
+[assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)]

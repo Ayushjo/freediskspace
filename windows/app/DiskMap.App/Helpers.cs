@@ -1,5 +1,6 @@
 using System.IO;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 using DiskMap.Core;
 using DiskMap.Core.Native;
@@ -124,15 +125,16 @@ public static class NodeColors
 /// <summary>
 /// How every page and chart listens to <see cref="ScanModel"/>: only while
 /// on screen (they used to subscribe forever, so every page ever opened
-/// kept re-rendering in the background), refreshed each time it appears,
-/// and coalesced into one callback queued below input priority so a burst
-/// of changes can't starve clicks.
+/// kept re-rendering in the background), refreshed when it appears if the
+/// model moved while it was away, and coalesced into one callback queued
+/// below input priority so a burst of changes can't starve clicks.
 /// </summary>
 public static class ModelEvents
 {
     public static void WhileLoaded(FrameworkElement element, Action onChange)
     {
         bool queued = false;
+        int builtFor = -1;   // the model version the last callback saw
         void Queue()
         {
             if (queued) return;
@@ -140,6 +142,7 @@ public static class ModelEvents
             element.Dispatcher.InvokeAsync(() =>
             {
                 queued = false;
+                builtFor = ScanModel.Shared.Version;
                 onChange();
             }, System.Windows.Threading.DispatcherPriority.Background);
         }
@@ -147,9 +150,88 @@ public static class ModelEvents
         element.Loaded += (_, _) =>
         {
             ScanModel.Shared.StateChanged += handler;
-            Queue();
+            // A cached page shown again rebuilt in full on every sidebar click, changed or not.
+            if (builtFor != ScanModel.Shared.Version) Queue();
         };
         element.Unloaded += (_, _) => ScanModel.Shared.StateChanged -= handler;
+    }
+}
+
+/// <summary>
+/// A button around content the caller draws (a nav row, a picker chip, a swatch): Tab reaches
+/// it, Enter and Space click it, and it has a name for screen readers. Rd's PlainTemplate
+/// pattern, with the content stretched to the face and no label of its own.
+/// </summary>
+public static class PlainButton
+{
+    private static readonly Dictionary<double, ControlTemplate> Templates = [];
+
+    public static Button Create(UIElement content, string name, Action? onClick, double radius = 0)
+    {
+        var button = new Button
+        {
+            Content = content,
+            Template = Template(radius),
+            Padding = new Thickness(0),
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            // Laid out like the Border it replaces, whatever the theme's Button style says.
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            MinWidth = 0,
+            MinHeight = 0,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            VerticalContentAlignment = VerticalAlignment.Stretch,
+            Cursor = System.Windows.Input.Cursors.Hand,
+        };
+        System.Windows.Automation.AutomationProperties.SetName(button, name);
+        if (onClick is not null) button.Click += (_, _) => onClick();
+        return button;
+    }
+
+    private static ControlTemplate Template(double radius)
+    {
+        if (Templates.TryGetValue(radius, out var cached)) return cached;
+        // Pressed: 82%, as Rd's buttons.
+        string xaml = $@"
+<ControlTemplate TargetType=""Button""
+    xmlns=""http://schemas.microsoft.com/winfx/2006/xaml/presentation""
+    xmlns:x=""http://schemas.microsoft.com/winfx/2006/xaml"">
+  <Border x:Name=""Face"" CornerRadius=""{radius.ToString(System.Globalization.CultureInfo.InvariantCulture)}""
+          Background=""{{TemplateBinding Background}}"" BorderBrush=""{{TemplateBinding BorderBrush}}""
+          BorderThickness=""{{TemplateBinding BorderThickness}}"" Padding=""{{TemplateBinding Padding}}""
+          SnapsToDevicePixels=""True"">
+    <ContentPresenter HorizontalAlignment=""{{TemplateBinding HorizontalContentAlignment}}""
+                      VerticalAlignment=""{{TemplateBinding VerticalContentAlignment}}""/>
+  </Border>
+  <ControlTemplate.Triggers>
+    <Trigger Property=""IsPressed"" Value=""True"">
+      <Setter TargetName=""Face"" Property=""Opacity"" Value=""0.82""/>
+    </Trigger>
+  </ControlTemplate.Triggers>
+</ControlTemplate>";
+        var template = (ControlTemplate)System.Windows.Markup.XamlReader.Parse(xaml);
+        Templates[radius] = template;
+        return template;
+    }
+}
+
+/// <summary>
+/// Window sizes that fit the screen: 1366×768 at 125 % leaves about 1093×576 DIPs, less than
+/// the main and Settings windows wanted, even as a minimum.
+/// </summary>
+public static class WindowFit
+{
+    /// <summary>A preferred size and minimum, neither bigger than what the screen has.</summary>
+    internal static (double Size, double Minimum) Clamp(double preferred, double minimum, double available) =>
+        (Math.Min(preferred, available), Math.Min(minimum, available));
+
+    public static void ToWorkArea(Window window)
+    {
+        // shortcut: the primary screen's work area; read the window's own monitor if they open elsewhere.
+        var area = SystemParameters.WorkArea;
+        (window.Width, window.MinWidth) = Clamp(window.Width, window.MinWidth, area.Width);
+        (window.Height, window.MinHeight) = Clamp(window.Height, window.MinHeight, area.Height);
     }
 }
 
