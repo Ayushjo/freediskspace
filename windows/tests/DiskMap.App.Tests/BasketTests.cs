@@ -11,7 +11,8 @@ public class BasketTests
     [InlineData("old download: setup.exe", "Old download")]
     [InlineData("duplicate", "Duplicates")]
     [InlineData("caches", "Caches")]
-    [InlineData("leftover of Slack", "App leftovers")]
+    [InlineData("leftover of Slack", "App data")]
+    [InlineData("Application: Slack", "App data")]   // what Applications stages with now
     [InlineData("", "Other")]
     [InlineData("  : x", "Other")]
     public void ItemsGroupByWhereTheyCameFrom(string reason, string expected) =>

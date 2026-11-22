@@ -726,7 +726,7 @@ public sealed class DuplicatesBoardPage : UserControl
         add(rule, 16);
         add(Rd.LeaderRow("You get back", ShellFormat.HeroBytes(groups.Sum(g => Reclaim(tree, g, shownTicks))), emphasis: true, accentValue: true), 16);
         add(Rd.LeaderRow("Where it goes", "The Recycle Bin"));
-        add(Rd.LeaderRow("Undo", "Put Back, any time"));
+        add(Rd.LeaderRow("Undo", "Put Back, until the bin is emptied"));
         stack.Children.Add(Rd.Card(receipt, 18));
 
         var check = new StackPanel();

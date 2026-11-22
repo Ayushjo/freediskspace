@@ -1,3 +1,5 @@
+using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using DiskMap.Core;
 
@@ -77,6 +79,38 @@ internal static class ChartNavigation
             default:
                 return false;
         }
+    }
+
+    /// <summary>
+    /// The slice a chart's menu is for: the one under the pointer for a right-click; from the
+    /// keyboard (Shift+F10 or the menu key) the selected one, which the arrow keys move, when shown.
+    /// </summary>
+    internal static int? MenuTarget(bool fromKeyboard, int? underPointer, int selected, bool selectedShown) =>
+        fromKeyboard ? (selectedShown ? selected : null) : underPointer;
+
+    /// <summary>
+    /// Fills a chart's ContextMenu as it opens, for <see cref="MenuTarget"/>'s slice; nothing there,
+    /// no menu. WPF passes -1 for the cursor when the keyboard opened it.
+    /// </summary>
+    public static void FillMenu(FrameworkElement chart, ContextMenuEventArgs e, int? underPointer,
+        List<(ChartSlice Slice, ChartSlice? Parent)> nav, string reason)
+    {
+        var model = ScanModel.Shared;
+        int selected = model.SelectedNode;
+        bool fromKeyboard = e.CursorLeft < 0 && e.CursorTop < 0;
+        if (MenuTarget(fromKeyboard, underPointer, selected, nav.Any(n => n.Slice.NodeID == selected)) is not { } id
+            || chart.ContextMenu is not { } menu)
+        {
+            e.Handled = true;
+            return;
+        }
+        menu.Items.Clear();
+        var reveal = new MenuItem { Header = "Reveal in Explorer" };
+        reveal.Click += (_, _) => Explorer.Reveal(model.PathOf(id));
+        menu.Items.Add(reveal);
+        var stage = new MenuItem { Header = "Add to basket" };
+        stage.Click += (_, _) => model.Stage(id, reason);
+        menu.Items.Add(stage);
     }
 
     /// <summary>Top-60 node ids by total — the accessible-item cap macOS uses.</summary>

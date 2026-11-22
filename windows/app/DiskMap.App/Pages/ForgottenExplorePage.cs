@@ -54,13 +54,16 @@ public sealed class ForgottenExplorePage : UserControl
     private Rd.WidthClass _class = Rd.WidthClass.Regular;
     private readonly Grid _root = new();
     private TextBox? _search;
+    private LazyRows? _rows;
+    private FrameworkElement? _toolbar;
+    private object? _chromeFor;
 
     public ForgottenExplorePage()
     {
         Background = Ui.Brush("RdPage");
         Content = _root;
         Focusable = true;
-        ModelEvents.WhileLoaded(this, Rebuild);
+        ModelEvents.WhileLoaded(this, OnModelChanged);
         Loaded += (_, _) => Model.StagedChanged += OnStaged;
         Unloaded += (_, _) => Model.StagedChanged -= OnStaged;
         SizeChanged += (_, _) => { if (Rd.ClassFor(WindowWidth) != _class) Rebuild(); };
@@ -68,6 +71,26 @@ public sealed class ForgottenExplorePage : UserControl
     }
 
     private void OnStaged(object? sender, EventArgs e) => Dispatcher.InvokeAsync(Rebuild);
+
+    /// <summary>What the page around the rows is built from; a change to anything else (a selection) only repaints rows.</summary>
+    private static object ChromeKey() => (Model.Tree, Model.Totals, Model.RootPath);
+
+    private void OnModelChanged()
+    {
+        if (_rows is not null && Equals(_chromeFor, ChromeKey())) RefreshSelection();
+        else Rebuild();
+    }
+
+    /// <summary>Repaints the rows whose selection changed and the selection toolbar; <paramref name="reveal"/> takes the keyboard.</summary>
+    private void RefreshSelection(object? reveal = null)
+    {
+        _rows?.Refresh(reveal);
+        if (_toolbar is not null) _root.Children.Remove(_toolbar);
+        _toolbar = ListKit.SelectionToolbar("Forgotten Files", _shown.Select(c => c.Id));
+        if (_toolbar is null) return;
+        Grid.SetRow(_toolbar, 2);
+        _root.Children.Add(_toolbar);
+    }
 
     private double WindowWidth =>
         Harness.ContentSize is { } pinned ? pinned.Width
@@ -159,8 +182,13 @@ public sealed class ForgottenExplorePage : UserControl
         if (Model.Tree is not { } tree || Model.RootPath is not { } root) { Model.ShowPage("Overview"); return; }
         if (!ReferenceEquals(_selectedTree, tree)) { _selected = null; _selectedTree = tree; }   // ids belong to one scan
         if (!ReferenceEquals(_builtFor, Model.Totals)) Build();
+        _chromeFor = ChromeKey();
+        _debounce?.Stop();   // this rebuild already has the latest query
         bool searchFocused = _search?.IsKeyboardFocusWithin == true;
+        bool listFocused = _rows?.IsKeyboardFocusWithin == true;
         int caret = _search?.CaretIndex ?? 0;
+        _rows = null;
+        _toolbar = null;
         _root.Children.Clear();
         _root.RowDefinitions.Clear();
         if (_preparing)
@@ -192,18 +220,14 @@ public sealed class ForgottenExplorePage : UserControl
         var body = _shown.Count == 0 ? EmptyState() : Table(root, pad);
         Grid.SetRow(body, 1);
         _root.Children.Add(body);
-
-        if (ListKit.SelectionToolbar("Forgotten Files") is { } bar)
-        {
-            Grid.SetRow(bar, 2);
-            _root.Children.Add(bar);
-        }
+        RefreshSelection();
 
         if (searchFocused && _search is not null)
         {
             _search.Focus();
             _search.CaretIndex = Math.Min(caret, _search.Text.Length);
         }
+        else if (listFocused) Focus();   // the rebuilt list dropped its rows; the page keeps the keys
     }
 
     private FrameworkElement Header()
@@ -290,24 +314,22 @@ public sealed class ForgottenExplorePage : UserControl
         grid.Children.Add(ListKit.ColumnHeader(columns, "Suggestion", _sort == SortMode.Largest ? "Size ↓" : "Size", false,
             _sort == SortMode.Oldest ? "Untouched ↓" : "Untouched", "Why"));
 
-        var list = new StackPanel();
-        foreach (var c in items)
+        // Each row is built only once it scrolls into view; a selection repaints the rows on screen.
+        _rows = new LazyRows(items, item => item is ForgottenCandidate c && IsSelected(c.Id), (item, selected) =>
         {
+            var c = (ForgottenCandidate)item;
             bool stageable = c.IsReviewable && c.Safety.Level != SafetyLevel.Protected;
-            var candidate = c;
-            list.Children.Add(ListKit.FileRow(c.Name, BiggestFilesExplorePage.RelativeParent(c.AbsolutePath, root),
+            return ListKit.FileRow(c.Name, BiggestFilesExplorePage.RelativeParent(c.AbsolutePath, root),
                 ListKit.Badge(c.Name, c.Kind), ConfidenceLabel(c.Confidence),
                 (double)c.Bytes / largest, c.Bytes, AgeText(c.AgeDays),
                 new ListKit.Note(ListKit.NoteKind.Plain, Why(c.Reasons)),
                 c.Confidence == ForgottenConfidence.LikelyForgotten,
-                staged.Contains(c.Id),
-                c.Id == _selected || Model.MultiSelection.Contains(c.Id), columns,
-                select: () => SelectRow(candidate.Id),
-                add: stageable ? () => StageOne(candidate) : null));
-        }
-        var scroll = _scroll.Wrap(list, $"{_query}|{_tab}|{_age}|{_sort}|{_onlyLarge}|{_onlyDownloads}|{_onlyMedia}");
-        Grid.SetRow(scroll, 1);
-        grid.Children.Add(scroll);
+                staged.Contains(c.Id), selected, columns,
+                select: () => SelectRow(c),
+                add: stageable ? () => StageOne(c) : null);
+        }, "Forgotten files", _scroll, $"{_query}|{_tab}|{_age}|{_sort}|{_onlyLarge}|{_onlyDownloads}|{_onlyMedia}");
+        Grid.SetRow(_rows, 1);
+        grid.Children.Add(_rows);
 
         var footer = Footer(staged);
         Grid.SetRow(footer, 2);
@@ -359,16 +381,15 @@ public sealed class ForgottenExplorePage : UserControl
 
     // ---- Actions ----
 
-    private void SelectRow(int id)
+    private bool IsSelected(int id) => id == _selected || Model.MultiSelection.Contains(id);
+
+    /// <summary>A click: the row is selected (Ctrl adds it) and keeps the keyboard, so ↑↓ and Delete act from it.</summary>
+    private void SelectRow(ForgottenCandidate c)
     {
-        Focus();   // a click gives the list the keyboard (the search box kept it, so ↑↓ and Delete did nothing)
-        _selected = id;
-        if (!CleanDetailPage.ModelRedraws(() =>
-            {
-                if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) Model.ToggleMulti(id);
-                else { Model.ClearMulti(); Model.Select(id); }
-            }))
-            Rebuild();
+        _selected = c.Id;
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) Model.ToggleMulti(c.Id);
+        else { Model.ClearMulti(); Model.Select(c.Id); }
+        RefreshSelection(c);
     }
 
     private static void StageOne(ForgottenCandidate c)
@@ -403,18 +424,19 @@ public sealed class ForgottenExplorePage : UserControl
         var items = _shown;
         var ids = items.Select(c => c.Id).ToList();
         int? selected = _selected;
-        bool handled = false;
-        bool redraws = CleanDetailPage.ModelRedraws(() => handled = ListKit.ListKey(e, ids, ref selected,
+        if (!ListKit.ListKey(e, ids, ref selected,
             id => { if (items.FirstOrDefault(c => c.Id == id) is { } c) StageOne(c); },
             id => items.FirstOrDefault(c => c.Id == id)?.AbsolutePath,
             () =>
             {
                 Model.ClearMulti();
                 foreach (var c in items.Where(c => c.IsReviewable)) Model.ToggleMulti(c.Id);
-            }));
-        if (!handled) return;
+            }))
+            return;
+        ListKit.RevealSelection = false;   // the list reveals the row itself
+        bool moved = selected != _selected;
         _selected = selected;
         e.Handled = true;
-        if (!redraws) Rebuild();
+        RefreshSelection(moved ? items.FirstOrDefault(c => c.Id == selected) : null);
     }
 }

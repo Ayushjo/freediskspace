@@ -295,11 +295,11 @@ public partial class MainWindow : Window
     private void AddNavRow(NavDestination dest)
     {
         // A button, so Tab reaches the row and Enter or Space opens it; RefreshNav draws its face.
-        var item = PlainButton.Create(new Grid(), dest.Title, () =>
+        var item = Rd.Pressable(new Grid(), dest.Title, () =>
         {
             if (dest.PageKey != "Overview" && _model.Tree is null) return;
             SelectPage(dest.PageKey);
-        }, radius: 7);
+        }, 7, stretch: true);
         item.Height = Ui.Scaled(30);
         item.Margin = new Thickness(0, 0, 0, 1);
         item.Tag = dest;

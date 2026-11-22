@@ -38,7 +38,8 @@ public sealed class HistoryPage : UserControl
         Background = Ui.Brush("RdPage");
         Content = _scroll;
         _searchDelay.Tick += (_, _) => { _searchDelay.Stop(); Rebuild(); };
-        ModelEvents.WhileLoaded(this, Reload);
+        // Every time it's shown: the Recycle Bin may have been emptied or restored from outside.
+        ModelEvents.WhileLoaded(this, Reload, everyShow: true);
         Loaded += (_, _) => Model.StagedChanged += OnStaged;
         Unloaded += (_, _) => Model.StagedChanged -= OnStaged;
         SizeChanged += (_, _) => { if (Rd.ClassFor(WindowWidth) != _class) Rebuild(); };

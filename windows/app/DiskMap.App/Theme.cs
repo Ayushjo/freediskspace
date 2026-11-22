@@ -105,8 +105,15 @@ public static class Theme
             // The "You can free" panel. The Mac forces the dark appearance on it (colorScheme .dark),
             // so its adaptive night colour resolves to the dark value in both themes.
             ["RdNight"] = "#FF1C1C21",
+            ["RdOnNight"] = "#FFFFFFFF",                            // text on the night panel (faded per use)
             ["RdAccentBright"] = dark ? "#FFAA9CF5" : "#FF9B8AF0",  // violet on night, dark figures
             ["RdOnAccent"] = "#FFFFFFFF",
+            // Fixed in both appearances, like the Mac's: the receipt is white paper with black
+            // print, the boards' hard shadows and scrims are black, a switch's knob is white.
+            ["RdPaper"] = "#FFFFFFFF",
+            ["RdOnPaper"] = "#FF000000",
+            ["RdShadow"] = "#FF000000",
+            ["RdKnob"] = "#FFFFFFFF",
             ["RdAccentDeep"] = dark ? "#FFB4A8F8" : "#FF5B48B8",    // "rebuilds" text on hatching
             ["RdAccentWash"] = dark ? "#FF24203A" : "#FFF3F0FD",    // behind hatching, selected rows
             ["RdHover"] = dark ? "#FF19191B" : "#FFF5F5F6",         // ink/white @ 4.5% over the page
@@ -128,8 +135,8 @@ public static class Theme
 
     /// <summary>
     /// What each palette key becomes under high contrast: surfaces and washes the window colour,
-    /// all text and lines the window text colour, the accent the highlight. Null keeps the key's
-    /// own colour: the night panel stays dark because pages draw its text white.
+    /// all text, lines, shadows and knobs the window text colour, the accent the highlight. The
+    /// night panel and the receipt paper are surfaces like any other there. Null: not a palette key.
     /// </summary>
     internal static ContrastRole? HighContrastRole(string key) => key switch
     {
@@ -137,12 +144,13 @@ public static class Theme
             or "AppAccentSoft" or "AppNavSelected" or "AppRowSelected" or "AppDangerBg" or "AppSuccessBg"
             or "AppWarningBg" or "AppInfoBg" or "AppInkButtonFg" or "AppPanel"
             or "RdPage" or "RdSidebar" or "RdCard" or "RdSoft" or "RdSegmentOn" or "RdAccentWash"
-            or "RdHover" or "RdAccentSoft" or "RdOnInk" => ContrastRole.Window,
+            or "RdHover" or "RdAccentSoft" or "RdOnInk" or "RdNight" or "RdPaper" => ContrastRole.Window,
         "AppForeground" or "AppSubtle" or "AppFaint" or "AppDanger" or "AppSuccess" or "AppWarning"
             or "AppInkButton" or "AppCardBorder" or "AppBorder"
-            or "RdInk" or "RdInk2" or "RdInk3" or "RdLine" => ContrastRole.WindowText,
+            or "RdInk" or "RdInk2" or "RdInk3" or "RdLine"
+            or "RdOnNight" or "RdOnPaper" or "RdShadow" or "RdKnob" => ContrastRole.WindowText,
         "AppBarTrack" => ContrastRole.GrayText,
-        "AppAccent" or "RdAccentDeep" => ContrastRole.Highlight,
+        "AppAccent" or "RdAccentDeep" or "RdAccentBright" => ContrastRole.Highlight,
         "RdOnAccent" => ContrastRole.HighlightText,
         _ => null,
     };

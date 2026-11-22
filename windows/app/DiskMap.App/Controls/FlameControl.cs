@@ -49,7 +49,7 @@ public sealed class FlameControl : FrameworkElement
         MouseLeftButtonDown += OnClick;
         MouseMove += OnMove;
         MouseLeave += (_, _) => { if (_tooltip is not null) _tooltip.IsOpen = false; };
-        MouseRightButtonDown += OnRightClick;
+        ContextMenu = new ContextMenu();   // filled as it opens: a right-click, Shift+F10 or the menu key
         Focusable = true;   // WIN-061: arrow-key chart navigation
     }
 
@@ -156,17 +156,9 @@ public sealed class FlameControl : FrameworkElement
         else if (_tooltip is not null) _tooltip.IsOpen = false;
     }
 
-    private void OnRightClick(object sender, MouseButtonEventArgs e)
+    protected override void OnContextMenuOpening(ContextMenuEventArgs e)
     {
-        if (HitAt(e.GetPosition(this)) is not { } id) return;
-        var model = ScanModel.Shared;
-        var menu = new ContextMenu();
-        var reveal = new MenuItem { Header = "Reveal in Explorer" };
-        reveal.Click += (_, _) => Explorer.Reveal(model.PathOf(id));
-        menu.Items.Add(reveal);
-        var stage = new MenuItem { Header = "Add to basket" };
-        stage.Click += (_, _) => model.Stage(id, "from flame graph");
-        menu.Items.Add(stage);
-        menu.IsOpen = true;
+        base.OnContextMenuOpening(e);
+        ChartNavigation.FillMenu(this, e, HitAt(Mouse.GetPosition(this)), _nav, "from flame graph");
     }
 }

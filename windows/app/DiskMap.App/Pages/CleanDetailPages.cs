@@ -503,10 +503,16 @@ public sealed class CleanDownloadsPage : CleanDetailPage
         yield return Rd.SecondaryButton("Open Downloads", OpenDownloads);
     }
 
-    /// <summary>The account's Downloads folder, opened in File Explorer (Mac: ~/Downloads in Finder).</summary>
-    private static string DownloadsFolder() => System.IO.Path.Combine(UserFolders.Home, "Downloads");
+    /// <summary>
+    /// The account's Downloads folder (Mac: ~/Downloads in Finder): where Windows says it is, so one
+    /// moved to another drive opens there; Home\Downloads when Windows names none (the demo PC).
+    /// </summary>
+    internal static string DownloadsFolder(IReadOnlyList<(string Folder, string Path)> knownFolders) =>
+        knownFolders.FirstOrDefault(k => k.Folder == "downloads").Path is { Length: > 0 } path
+            ? path
+            : System.IO.Path.Combine(UserFolders.Home, "Downloads");
 
-    private static void OpenDownloads() => Explorer.OpenFolder(DownloadsFolder());
+    private static void OpenDownloads() => Explorer.OpenFolder(DownloadsFolder(ForgottenFiles.KnownFolders()));
 }
 
 /// <summary>Clean up → Large media: the videos, photos, audio and media projects using the most space (Mac: LargeMediaView).</summary>

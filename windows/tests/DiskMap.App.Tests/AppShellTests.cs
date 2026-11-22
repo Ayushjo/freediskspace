@@ -141,16 +141,15 @@ public class AppShellTests
     public void HighContrastMapsEveryPaletteKeyToAWindowsColour()
     {
         Assert.Equal(Theme.Palette(dark: false).Keys.Order(), Theme.Palette(dark: true).Keys.Order());
-        foreach (string key in Theme.Palette(dark: false).Keys)
-        {
-            if (key is "RdNight" or "RdAccentBright") Assert.Null(Theme.HighContrastRole(key));   // pages draw white on it
-            else Assert.NotNull(Theme.HighContrastRole(key));
-        }
-        foreach (string text in new[] { "RdInk", "RdInk2", "RdInk3", "AppForeground", "AppSubtle", "AppFaint", "RdLine" })
+        // Every key, the night panel and the receipt paper too: pages no longer draw fixed white or black.
+        foreach (string key in Theme.Palette(dark: false).Keys) Assert.NotNull(Theme.HighContrastRole(key));
+        foreach (string text in new[] { "RdInk", "RdInk2", "RdInk3", "AppForeground", "AppSubtle", "AppFaint", "RdLine",
+                     "RdOnNight", "RdOnPaper", "RdShadow", "RdKnob" })
             Assert.Equal(Theme.ContrastRole.WindowText, Theme.HighContrastRole(text));
-        foreach (string surface in new[] { "RdPage", "RdCard", "RdSidebar", "RdSoft", "RdAccentWash", "AppBackground" })
+        foreach (string surface in new[] { "RdPage", "RdCard", "RdSidebar", "RdSoft", "RdAccentWash", "AppBackground", "RdNight", "RdPaper" })
             Assert.Equal(Theme.ContrastRole.Window, Theme.HighContrastRole(surface));
         Assert.Equal(Theme.ContrastRole.Highlight, Theme.HighContrastRole("AppAccent"));
+        Assert.Equal(Theme.ContrastRole.Highlight, Theme.HighContrastRole("RdAccentBright"));
         Assert.Equal(Theme.ContrastRole.HighlightText, Theme.HighContrastRole("RdOnAccent"));
         // Ink buttons invert: their label is the window colour on window-text.
         Assert.Equal(Theme.ContrastRole.WindowText, Theme.HighContrastRole("AppInkButton"));
@@ -160,7 +159,7 @@ public class AppShellTests
     // ---- Keyboard and screen reader ----
 
     [Fact]
-    public void PlainButtonIsFocusableNamedAndInvokable()
+    public void StretchedPressableIsFocusableNamedAndInvokable()
     {
         Exception? failure = null;
         var thread = new Thread(() =>
@@ -168,10 +167,13 @@ public class AppShellTests
             try
             {
                 int clicks = 0;
-                var button = PlainButton.Create(new TextBlock { Text = "Overview" }, "Overview", () => clicks++, radius: 7);
+                // The nav rows' and Settings' buttons (they were PlainButton): laid out like a Border.
+                var button = Rd.Pressable(new TextBlock { Text = "Overview" }, "Overview", () => clicks++, 7, stretch: true);
                 Assert.True(button.Focusable);
                 Assert.True(button.IsTabStop);
                 Assert.Equal("Overview", AutomationProperties.GetName(button));
+                Assert.Equal(System.Windows.HorizontalAlignment.Stretch, button.HorizontalAlignment);
+                Assert.Equal(0, button.MinHeight);
                 // The screen reader's "invoke"; Enter and Space end in the same Click.
                 var invoke = (IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)!;
                 invoke.Invoke();

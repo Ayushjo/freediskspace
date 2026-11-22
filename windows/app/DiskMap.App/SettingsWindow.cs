@@ -104,12 +104,12 @@ public sealed class SettingsWindow : Window
             layers.Children.Add(row);
             if (on) layers.Children.Add(new Border { Width = 2, HorizontalAlignment = HorizontalAlignment.Left, Background = Ui.Brush("AppAccent") });
             string captured = title;
-            var item = PlainButton.Create(layers, title, () =>
+            var item = Rd.Pressable(layers, title, () =>
             {
                 _section = captured;
                 Rebuild();
                 if (_groups.TryGetValue(captured, out var group)) Dispatcher.InvokeAsync(group.BringIntoView);
-            }, radius: 7);
+            }, 7, stretch: true);
             item.Height = 32;
             item.Background = on ? Ui.Brush("RdSoft") : Brushes.Transparent;
             item.Margin = new Thickness(0, 0, 0, 2);
@@ -209,7 +209,7 @@ public sealed class SettingsWindow : Window
             Row("Working on it now", "Projects committed to or changed this recently stay out of bulk cleans.",
                 Picker("Working on it now", ActiveChoices.Select(d => $"{d} days").ToArray(), Math.Max(0, Array.IndexOf(ActiveChoices, _settings.ActiveDays)),
                     i => { _settings.ActiveDays = ActiveChoices[i]; Save(); })),
-            Row("Old projects", "What Clean old ones picks when the Last used filter is off.",
+            Row("Old projects", "What Add old ones to basket picks when the Last used filter is off.",
                 Picker("Old projects", OldChoices.Select(DeveloperBoard.LastUsedTitle).ToArray(), Math.Max(0, Array.IndexOf(OldChoices, _settings.OldAfterDays)),
                     i => { _settings.OldAfterDays = OldChoices[i]; Save(); })));
     }
@@ -334,8 +334,8 @@ public sealed class SettingsWindow : Window
             label.Margin = new Thickness(0, 6, 0, 0);
             face.Children.Add(label);
             string captured = id;
-            var item = PlainButton.Create(face, on ? $"{title} theme, selected" : $"{title} theme",
-                () => SetAppearance(captured));
+            var item = Rd.Pressable(face, on ? $"{title} theme, selected" : $"{title} theme",
+                () => SetAppearance(captured), 0, stretch: true);
             item.Margin = new Thickness(0, 0, 14, 0);
             swatches.Children.Add(item);
         }
@@ -469,12 +469,13 @@ public sealed class SettingsWindow : Window
         };
     }
 
-    /// <summary>The macOS switch: 38 x 22 capsule, accent when on, a white knob.</summary>
+    /// <summary>The macOS switch: 38 x 22 capsule, accent when on, a white knob (on-accent when on, for high contrast).</summary>
     private static Border Switch(bool on, Action<bool> changed)
     {
         var knob = new Ellipse
         {
-            Width = 18, Height = 18, Fill = Brushes.White, HorizontalAlignment = on ? HorizontalAlignment.Right : HorizontalAlignment.Left,
+            Width = 18, Height = 18, Fill = Ui.Brush(on ? "RdOnAccent" : "RdKnob"),
+            HorizontalAlignment = on ? HorizontalAlignment.Right : HorizontalAlignment.Left,
             Margin = new Thickness(2),
             Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 3, ShadowDepth = 1, Direction = 270, Opacity = 0.25 },
         };
@@ -499,14 +500,12 @@ public sealed class SettingsWindow : Window
         chevrons.Margin = new Thickness(8, 0, 0, 0);
         chevrons.VerticalAlignment = VerticalAlignment.Center;
         row.Children.Add(chevrons);
-        var box = PlainButton.Create(row, $"{label}: {options[selected]}", null, radius: 6);
+        var box = Rd.Pressable(row, $"{label}: {options[selected]}", null, 6, stretch: true);
         box.Height = 28;
         box.Padding = new Thickness(10, 0, 10, 0);
         box.Background = Ui.Brush("RdCard");
         box.BorderBrush = Ui.Brush("RdLine");
         box.BorderThickness = new Thickness(1);
-        box.HorizontalContentAlignment = HorizontalAlignment.Left;
-        box.VerticalContentAlignment = VerticalAlignment.Center;
         box.Click += (_, _) =>
         {
             var menu = new ContextMenu();
@@ -533,8 +532,8 @@ public sealed class SettingsWindow : Window
         var row = new StackPanel { Orientation = Orientation.Horizontal };
         foreach (var segment in segments)
         {
-            var item = PlainButton.Create(Rd.Text(segment.Title, 13, FontWeights.Medium, segment.IsOn ? "RdInk" : "RdInk2"),
-                segment.IsOn ? $"{segment.Title}, selected" : segment.Title, segment.OnClick, radius: 6);
+            var item = Rd.Pressable(Rd.Text(segment.Title, 13, FontWeights.Medium, segment.IsOn ? "RdInk" : "RdInk2"),
+                segment.IsOn ? $"{segment.Title}, selected" : segment.Title, segment.OnClick, 6, stretch: true);
             item.Height = 24;
             item.Padding = new Thickness(11, 0, 11, 0);
             item.Margin = new Thickness(row.Children.Count == 0 ? 0 : 2, 0, 0, 0);
@@ -569,7 +568,7 @@ public sealed class SettingsWindow : Window
         d.Margin = new Thickness(0, 2, 0, 0);
         text.Children.Add(d);
         row.Children.Add(text);
-        var box = PlainButton.Create(row, on ? $"{title}, selected" : title, action, radius: 8);
+        var box = Rd.Pressable(row, on ? $"{title}, selected" : title, action, 8, stretch: true);
         box.Padding = new Thickness(10);
         box.Background = on ? Ui.Brush("RdAccentWash") : Brushes.Transparent;
         return box;
