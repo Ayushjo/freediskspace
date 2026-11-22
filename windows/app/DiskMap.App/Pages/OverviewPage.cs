@@ -24,18 +24,23 @@ public sealed class OverviewPage : UserControl
     };
     private bool _hideUnreadable;
     private Rd.WidthClass _class = Rd.WidthClass.Regular;
-    private double _builtWidth = -1;
     private DateTime _lastScanningBuild = DateTime.MinValue;
     private System.Windows.Threading.DispatcherTimer? _scanTick;
+    private ScanningBoard? _board;
+
+    /// <summary>The process never changes its rights while it runs.</summary>
+    private static readonly bool Elevated = Harness.IsElevated();
 
     public OverviewPage()
     {
         Background = Ui.Brush("RdPage");
         Content = _scroll;
         ModelEvents.WhileLoaded(this, Rebuild);
+        // The cards share the width by proportion, so only a new width class needs a new page
+        // (it used to rebuild on every pixel of a window drag).
         SizeChanged += (_, _) =>
         {
-            if (Math.Abs(PageWidth - _builtWidth) >= 1) Rebuild();
+            if (WidthClassChanged(_class, WindowWidth)) Rebuild();
         };
         Loaded += (_, _) => Model.PropertyChanged += OnModelProperty;
         Unloaded += (_, _) =>
@@ -66,17 +71,23 @@ public sealed class OverviewPage : UserControl
         : Window.GetWindow(this)?.Content is FrameworkElement root && root.ActualWidth > 0 ? root.ActualWidth
         : 1280;
 
-    private double PageWidth => ActualWidth > 0 ? ActualWidth : WindowWidth - 221;
+    internal static bool WidthClassChanged(Rd.WidthClass built, double windowWidth) => Rd.ClassFor(windowWidth) != built;
 
     private void Rebuild()
     {
         _class = Rd.ClassFor(WindowWidth);
-        _builtWidth = PageWidth;
         if (Model.Tree is not { } tree || Model.Totals.Length != tree.Count)
         {
             if (Model.IsScanning)
             {
-                _scroll.Content = new ScanningBoard(_class, _scroll.ActualHeight > 0 ? _scroll.ActualHeight : ActualHeight).Build();
+                double height = _scroll.ActualHeight > 0 ? _scroll.ActualHeight : ActualHeight;
+                // The live parts redraw a few times a second; the header with Cancel stays put.
+                if (_board is not null && _board.WidthClass == _class) _board.Refresh(height);
+                else
+                {
+                    _board = new ScanningBoard(_class, height);
+                    _scroll.Content = _board.Build();
+                }
                 // The clock keeps moving between progress reports.
                 _scanTick ??= new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
                 _scanTick.Tick -= OnScanTick;
@@ -86,11 +97,13 @@ public sealed class OverviewPage : UserControl
             else
             {
                 _scanTick?.Stop();
+                _board = null;
                 _scroll.Content = new FirstLaunch(_class).Build();
             }
             return;
         }
         _scanTick?.Stop();
+        _board = null;
         double offset = _scroll.VerticalOffset;
         _scroll.Content = BuildLoaded(tree);
         _scroll.ScrollToVerticalOffset(offset);
@@ -122,21 +135,23 @@ public sealed class OverviewPage : UserControl
         }
 
         if (UnreadableNotice() is { } unreadable) add(unreadable);
-        double inner = Math.Max(0, PageWidth - pad * 2 - Gap);
-        add(Pair(FreeCard(), CanFreeCard(), Math.Max(300, inner * 0.42)));
+        add(Pair(FreeCard(), CanFreeCard(), 0.42));
         add(UsageCard());
-        add(Pair(BiggestPlaces(tree), ReadyToFree(), Math.Max(300, inner * 0.44)));
+        add(Pair(BiggestPlaces(tree), ReadyToFree(), 0.44));
         if (Footer() is { } footer) { add(footer); footer.Margin = new Thickness(0, Gap + 2, 0, 0); }
         return column;
     }
 
-    /// <summary>Two cards side by side, the same height, the right one at a fixed width.</summary>
-    private Grid Pair(FrameworkElement left, FrameworkElement right, double rightWidth)
+    /// <summary>
+    /// Two cards side by side, the same height; the right one takes <paramref name="rightShare"/>
+    /// of the width, at least 300, as the window resizes (no rebuild).
+    /// </summary>
+    private Grid Pair(FrameworkElement left, FrameworkElement right, double rightShare)
     {
         var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1 - rightShare, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Gap) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(rightWidth) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(rightShare, GridUnitType.Star), MinWidth = 300 });
         Grid.SetColumn(right, 2);
         grid.Children.Add(left);
         grid.Children.Add(right);
@@ -769,18 +784,67 @@ public sealed class OverviewPage : UserControl
 
     // ---- Notices and footer ----
 
+    /// <summary>
+    /// The unreadable-folders notice. Already elevated, "run as administrator" is no help:
+    /// Windows refused those folders even to an administrator.
+    /// </summary>
+    internal static (string Title, string Detail) UnreadableWords(int count, bool elevated) =>
+        ($"{count:N0} folder{(count == 1 ? "" : "s")} couldn’t be read.",
+         elevated
+            ? "Windows refused them even to an administrator — usually other people’s private folders. Their sizes aren’t in these totals."
+            : "Run freedisk.space as administrator to see everything, then rescan.");
+
     /// <summary>Say when the totals are short because folders were unreadable.</summary>
     private FrameworkElement? UnreadableNotice()
     {
         int count = Model.DeniedDirectories.Count;
         if (count == 0 || _hideUnreadable) return null;
-        var banner = Rd.Banner($"{count:N0} folder{(count == 1 ? "" : "s")} couldn’t be read.",
-            "Run freedisk.space as administrator to see everything, then rescan.",
+        var (title, detail) = UnreadableWords(count, Elevated);
+        var banner = Rd.Banner(title, detail, "Show folders", ShowUnreadable,
             onDismiss: () => { _hideUnreadable = true; Rebuild(); });
         if (Model.Tree is { } tree && Model.RootPath is { } root)
             banner.ToolTip = string.Join("\n", Model.DeniedDirectories.Take(5).Select(id => tree.PathOf(id, root)));
         System.Windows.Automation.AutomationProperties.SetAutomationId(banner, "unreadable-folders-notice");
         return banner;
+    }
+
+    private const int UnreadableListLimit = 1_000;
+
+    /// <summary>The unreadable folders by full path, in a box that selects and copies.</summary>
+    internal static string UnreadableList(IReadOnlyList<string> paths) =>
+        string.Join(Environment.NewLine, paths.Take(UnreadableListLimit))
+        + (paths.Count > UnreadableListLimit ? $"{Environment.NewLine}… and {paths.Count - UnreadableListLimit:N0} more" : "");
+
+    private void ShowUnreadable()
+    {
+        if (Model.Tree is not { } tree || Model.RootPath is not { } root) return;
+        var paths = Model.DeniedDirectories.Select(id => tree.PathOf(id, root)).ToList();
+        var body = new StackPanel();
+        body.Children.Add(Rd.Text(UnreadableWords(paths.Count, Elevated).Title, 15, FontWeights.SemiBold));
+        var detail = Rd.Text(UnreadableWords(paths.Count, Elevated).Detail, 12, null, "RdInk2", wrap: true);
+        detail.Margin = new Thickness(0, 8, 0, 0);
+        body.Children.Add(detail);
+        var list = new TextBox
+        {
+            Text = UnreadableList(paths), IsReadOnly = true, TextWrapping = TextWrapping.NoWrap,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            MaxHeight = 320, Margin = new Thickness(0, 12, 0, 0), Padding = new Thickness(6, 4, 6, 4),
+            FontFamily = new FontFamily("Cascadia Mono, Consolas"), FontSize = Ui.Scaled(12),
+        };
+        System.Windows.Automation.AutomationProperties.SetName(list, "Folders that couldn’t be read");
+        body.Children.Add(list);
+        Window? window = null;
+        var close = Rd.PrimaryButton("Close", () => window?.Close());
+        close.IsCancel = true;
+        close.IsDefault = true;
+        close.HorizontalAlignment = HorizontalAlignment.Right;
+        close.Margin = new Thickness(0, 12, 0, 0);
+        body.Children.Add(close);
+        window = Dialogs.CardWindow(body, 560);
+        window.Owner = Window.GetWindow(this);
+        window.WindowStartupLocation = window.Owner is null ? WindowStartupLocation.CenterScreen : WindowStartupLocation.CenterOwner;
+        window.Loaded += (_, _) => list.Focus();
+        window.ShowDialog();
     }
 
     private FrameworkElement? Footer()

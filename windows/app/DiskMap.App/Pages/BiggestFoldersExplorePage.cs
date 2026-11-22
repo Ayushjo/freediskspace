@@ -46,6 +46,10 @@ public sealed class BiggestFoldersExplorePage : UserControl
     private readonly Grid _root = new();
     private TextBox? _search;
     private List<int> _shownIds = [];
+    private List<object> _items = [];
+    private LazyRows? _rows;
+    private FrameworkElement? _toolbar;
+    private object? _chromeFor;
 
     public BiggestFoldersExplorePage() : this("Biggest Folders") { }
 
@@ -56,7 +60,7 @@ public sealed class BiggestFoldersExplorePage : UserControl
         Background = Ui.Brush("RdPage");
         Content = _root;
         Focusable = true;
-        ModelEvents.WhileLoaded(this, Rebuild);
+        ModelEvents.WhileLoaded(this, OnModelChanged);
         Loaded += (_, _) => Model.StagedChanged += OnStaged;
         Unloaded += (_, _) => Model.StagedChanged -= OnStaged;
         SizeChanged += (_, _) => { if (Rd.ClassFor(WindowWidth) != _class) Rebuild(); };
@@ -64,6 +68,26 @@ public sealed class BiggestFoldersExplorePage : UserControl
     }
 
     private void OnStaged(object? sender, EventArgs e) => Dispatcher.InvokeAsync(Rebuild);
+
+    /// <summary>What the page around the rows is built from; a change to anything else (a selection) only repaints rows.</summary>
+    private static object ChromeKey() => (Model.Tree, Model.Totals, Model.Reviewables, Model.ZoomedNode, Model.RootPath);
+
+    private void OnModelChanged()
+    {
+        if (_rows is not null && Equals(_chromeFor, ChromeKey())) RefreshSelection();
+        else Rebuild();
+    }
+
+    /// <summary>Repaints the rows whose selection changed and the selection toolbar; <paramref name="reveal"/> takes the keyboard.</summary>
+    private void RefreshSelection(object? reveal = null)
+    {
+        _rows?.Refresh(reveal);
+        if (_toolbar is not null) _root.Children.Remove(_toolbar);
+        _toolbar = ListKit.SelectionToolbar(_pageKey, _shownIds);
+        if (_toolbar is null) return;
+        Grid.SetRow(_toolbar, 2);
+        _root.Children.Add(_toolbar);
+    }
 
     private double WindowWidth =>
         Harness.ContentSize is { } pinned ? pinned.Width
@@ -188,8 +212,13 @@ public sealed class BiggestFoldersExplorePage : UserControl
         _class = Rd.ClassFor(WindowWidth);
         if (Model.Tree is not { } tree || Model.RootPath is not { } root) { Model.ShowPage("Overview"); return; }
         if (!ReferenceEquals(_selectedTree, tree)) { _selected = null; _selectedTree = tree; }   // ids belong to one scan
+        _chromeFor = ChromeKey();
+        _debounce?.Stop();   // this rebuild already has the latest query
         bool searchFocused = _search?.IsKeyboardFocusWithin == true;
+        bool listFocused = _rows?.IsKeyboardFocusWithin == true;
         int caret = _search?.CaretIndex ?? 0;
+        _rows = null;
+        _toolbar = null;
 
         int current = Current(tree);
         var totals = Model.Totals;
@@ -223,18 +252,14 @@ public sealed class BiggestFoldersExplorePage : UserControl
         _shownIds = shown.Take(RowLimit).Select(r => r.Id).ToList();
         Grid.SetRow(body, 1);
         _root.Children.Add(body);
-
-        if (ListKit.SelectionToolbar(_pageKey) is { } bar)
-        {
-            Grid.SetRow(bar, 2);
-            _root.Children.Add(bar);
-        }
+        RefreshSelection();
 
         if (searchFocused && _search is not null)
         {
             _search.Focus();
             _search.CaretIndex = Math.Min(caret, _search.Text.Length);
         }
+        else if (listFocused) Focus();   // the rebuilt list dropped its rows; the page keeps the keys
     }
 
     private FrameworkElement Header(FileTree tree, int current, long parentTotal)
@@ -274,8 +299,7 @@ public sealed class BiggestFoldersExplorePage : UserControl
         left.Children.Add(pageSwitch);
         bool canGoBack = current > 0 && tree.Parent[current] >= 0;
         var up = Rd.IconButton("BsChevronLeft", "Up to the enclosing folder", () => { if (canGoBack) Open(tree, tree.Parent[current]); });
-        up.IsEnabled = canGoBack;
-        up.Opacity = canGoBack ? 1 : 0.35;
+        up.IsEnabled = canGoBack;   // the button dims itself
         up.VerticalAlignment = VerticalAlignment.Center;
         left.Children.Add(up);
         var crumbs = Breadcrumb(tree, current);
@@ -300,11 +324,8 @@ public sealed class BiggestFoldersExplorePage : UserControl
                 row.Children.Add(slash);
             }
             bool isCurrent = id == current;
-            var crumb = Rd.Text(tree.NameOf(id), 13, isCurrent ? FontWeights.Medium : FontWeights.Normal, isCurrent ? "RdInk" : "RdInk2");
-            crumb.Cursor = Cursors.Hand;
-            crumb.MouseLeftButtonUp += (_, _) => Open(tree, id);
-            System.Windows.Automation.AutomationProperties.SetName(crumb, tree.NameOf(id));
-            row.Children.Add(crumb);
+            row.Children.Add(Rd.Link(tree.NameOf(id), () => Open(tree, id), 13, isCurrent ? "RdInk" : "RdInk2",
+                isCurrent ? FontWeights.Medium : FontWeights.Normal));
         }
         return new ScrollViewer
         {
@@ -365,10 +386,19 @@ public sealed class BiggestFoldersExplorePage : UserControl
             "Last changed", "Can be freed");
         grid.Children.Add(header);
 
-        var list = new StackPanel();
         var rows = shown.Take(RowLimit).ToList();
-        foreach (var (id, size) in rows)
+        _items = [.. rows.Cast<object>()];
+        if (shown.Count > rows.Count)
+            _items.Add($"Showing the {rows.Count:N0} biggest of {shown.Count:N0} — search to find the rest.");
+        // Each row's classifying and path work happens only once it scrolls into view.
+        _rows = new LazyRows(_items, item => item is (int id, long) && IsSelected(id), (item, selected) =>
         {
+            if (item is not (int id, long size))
+            {
+                var more = Rd.Text((string)item, 12, null, "RdInk3");
+                more.Margin = new Thickness(12, 10, 0, 10);
+                return more;
+            }
             bool isDir = tree.IsDirectory[id];
             string name = tree.NameOf(id);
             string abs = tree.PathOf(id, root);
@@ -380,29 +410,19 @@ public sealed class BiggestFoldersExplorePage : UserControl
             string place = isDir
                 ? Contents(id < fileCounts.Length ? fileCounts[id] : 0, id < folderCounts.Length ? folderCounts[id] : 0)
                 : BiggestFilesExplorePage.RelativeParent(abs, root);
-            int captured = id;
-            long capturedSize = size;
-            list.Children.Add(ListKit.FileRow(name, place,
+            return ListKit.FileRow(name, place,
                 isDir ? "DIR" : ListKit.Badge(name, kind),
                 isDir ? FolderKind(verdict.Class) : ListKit.KindText(kind, verdict.Class),
                 (double)size / parentTotal, size, ExplorePage.LastUsed(tree.ModifiedDay[id], today),
                 FolderNote(contained, freeBytes, size, verdict),
                 contained || (size > 0 && (double)freeBytes / size >= 0.6),
-                staged.Contains(abs),
-                id == _selected || Model.MultiSelection.Contains(id), columns,
-                select: () => SelectRow(captured),
-                add: isProtected ? null : () => Stage(tree, captured),
-                open: isDir ? () => Open(tree, captured) : null));
-        }
-        if (shown.Count > rows.Count)
-        {
-            var more = Rd.Text($"Showing the {rows.Count:N0} biggest of {shown.Count:N0} — search to find the rest.", 12, null, "RdInk3");
-            more.Margin = new Thickness(12, 10, 0, 10);
-            list.Children.Add(more);
-        }
-        var scroll = _scroll.Wrap(list, $"{Current(tree)}|{_query}");
-        Grid.SetRow(scroll, 1);
-        grid.Children.Add(scroll);
+                staged.Contains(abs), selected, columns,
+                select: () => SelectRow(id, item),
+                add: isProtected ? null : () => Stage(tree, id),
+                open: isDir ? () => Open(tree, id) : null);
+        }, "Folder contents", _scroll, $"{Current(tree)}|{_query}");
+        Grid.SetRow(_rows, 1);
+        grid.Children.Add(_rows);
 
         var footer = Footer(tree, current, parentTotal, shown, index);
         Grid.SetRow(footer, 2);
@@ -450,13 +470,15 @@ public sealed class BiggestFoldersExplorePage : UserControl
 
     // ---- Actions ----
 
-    private void SelectRow(int id)
+    private bool IsSelected(int id) => id == _selected || Model.MultiSelection.Contains(id);
+
+    /// <summary>A click: the row is selected (Ctrl adds it) and keeps the keyboard, so ↑↓ and Delete act from it.</summary>
+    private void SelectRow(int id, object item)
     {
-        Focus();   // a click gives the list the keyboard (the search box kept it, so ↑↓ and Delete did nothing)
         _selected = id;
         if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) Model.ToggleMulti(id);
         else { Model.ClearMulti(); Model.Select(id); }
-        Rebuild();
+        RefreshSelection(item);
     }
 
     private static void Stage(FileTree tree, int id) => Model.Stage(id, "Biggest folder: " + tree.NameOf(id));
@@ -469,8 +491,7 @@ public sealed class BiggestFoldersExplorePage : UserControl
         else Model.DrillTo(id);
         _selected = null;
         Model.Select(id);
-        _query = "";
-        if (_search is not null) _search.Text = "";
+        _query = "";   // the rebuilt field starts empty (clearing the old one queued a second rebuild)
         Rebuild();
     }
 
@@ -503,9 +524,11 @@ public sealed class BiggestFoldersExplorePage : UserControl
                 foreach (int id in ids) Model.ToggleMulti(id);
             }))
         {
+            ListKit.RevealSelection = false;   // the list reveals the row itself
+            bool moved = selected != _selected;
             _selected = selected;
             e.Handled = true;
-            Rebuild();
+            RefreshSelection(moved ? _items.FirstOrDefault(i => i is (int id, long) && id == selected) : null);
         }
     }
 }

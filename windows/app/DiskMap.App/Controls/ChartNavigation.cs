@@ -28,6 +28,9 @@ internal static class ChartNavigation
         return nav;
     }
 
+    /// <summary>The keys that move the selection to another cell (the ones worth announcing).</summary>
+    public static bool IsMove(Key key) => key is Key.Left or Key.Right or Key.Up or Key.Down;
+
     /// <summary>Returns true when the key moved the selection or drilled.</summary>
     public static bool OnKey(KeyEventArgs e, List<(ChartSlice Slice, ChartSlice? Parent)> nav, ScanModel model)
     {

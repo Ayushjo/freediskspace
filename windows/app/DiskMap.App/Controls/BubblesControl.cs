@@ -21,7 +21,13 @@ public sealed class BubblesControl : FrameworkElement
 
     /// <summary>WIN-061: announces itself + its biggest slices to UIA.</summary>
     protected override System.Windows.Automation.Peers.AutomationPeer OnCreateAutomationPeer() =>
-        new ChartPeer(this, "Bubble chart", () => ChartNavigation.AccessibleIds(_nav, ScanModel.Shared));
+        new ChartPeer(this, "Bubble chart", () => ChartNavigation.AccessibleIds(_nav, ScanModel.Shared), BoundsOf);
+
+    private Rect? BoundsOf(int id)
+    {
+        foreach (var (nid, x, y, r) in _circles) if (nid == id) return new Rect(x - r, y - r, 2 * r, 2 * r);
+        return null;
+    }
 
     /// <summary>WIN-061: arrow keys move the selection (siblings/parent/child); Enter drills.</summary>
     protected override void OnKeyDown(KeyEventArgs e)
@@ -30,6 +36,7 @@ public sealed class BubblesControl : FrameworkElement
         {
             e.Handled = true;
             InvalidateVisual();
+            if (ChartNavigation.IsMove(e.Key)) ChartPeer.Announce(this, ScanModel.Shared.SelectedNode);
         }
         base.OnKeyDown(e);
     }
@@ -155,7 +162,7 @@ public sealed class BubblesControl : FrameworkElement
         var reveal = new MenuItem { Header = "Reveal in Explorer" };
         reveal.Click += (_, _) => Explorer.Reveal(model.PathOf(id));
         menu.Items.Add(reveal);
-        var stage = new MenuItem { Header = "Add to Cleanup" };
+        var stage = new MenuItem { Header = "Add to basket" };
         stage.Click += (_, _) => model.Stage(id, "from bubbles");
         menu.Items.Add(stage);
         menu.IsOpen = true;

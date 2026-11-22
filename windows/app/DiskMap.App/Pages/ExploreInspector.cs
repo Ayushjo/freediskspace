@@ -261,25 +261,21 @@ internal static class ExploreInspector
             HorizontalAlignment = HorizontalAlignment.Left,
             Margin = new Thickness(5, 5, 0, 5),
         };
-        var layers = new Grid { Height = 34, Background = Brushes.Transparent, Cursor = Cursors.Hand, Focusable = true };
+        var layers = new Grid();
         layers.Children.Add(bar);
         layers.Children.Add(line);
         layers.SizeChanged += (_, e) =>
             bar.Width = Math.Max(6, (e.NewSize.Width - 10) * 0.86 * Math.Clamp(fraction, 0, 1));
-        layers.MouseLeftButtonUp += (_, _) => Model.Select(kidId);
-        layers.KeyDown += (_, e) =>
+        // A real button: screen readers read the row, Enter and Space inspect it.
+        var row = new ListRow(layers, $"{name}, {ShellFormat.Bytes(size)}{(rebuilds ? ", rebuilds by itself" : "")}",
+            () => Model.Select(kidId), null)
         {
-            if (e.Key is Key.Enter or Key.Space) { Model.Select(kidId); e.Handled = true; }
-        };
-        layers.ToolTip = $"Inspect {name}";
-        System.Windows.Automation.AutomationProperties.SetName(layers,
-            $"{name}, {ShellFormat.Bytes(size)}{(rebuilds ? ", rebuilds by itself" : "")}");
-        return new Border
-        {
+            Height = 34,
+            ToolTip = $"Inspect {name}",
             BorderBrush = Rd.WithOpacity(Ui.Brush("RdLine"), 0.6),
             BorderThickness = new Thickness(0, 0, 0, 1),
-            Child = layers,
         };
+        return row;
     }
 
     /// <summary>"Largest files": label and "View all", then up to four name / size lines (spacing 6).</summary>
@@ -715,17 +711,14 @@ internal static class ExploreInspector
         var chevron = Ui.Glyph(Icons.ChevronDown, 9, Ui.Brush("RdInk2"));
         chevron.Margin = new Thickness(4, 1, 0, 0);
         label.Children.Add(chevron);
-        var button = new Border
-        {
-            Child = label, Background = Brushes.Transparent, Cursor = Cursors.Hand, Focusable = true,
-            HorizontalAlignment = HorizontalAlignment.Right, Padding = new Thickness(4, 2, 0, 2),
-        };
-        button.MouseLeftButtonUp += (_, e) => { OpenMenu(button, items); e.Handled = true; };
+        Button? button = null;
+        button = Rd.Pressable(label, "More actions", () => { if (button is not null) OpenMenu(button, items); }, 4);
+        button.HorizontalAlignment = HorizontalAlignment.Right;
+        button.Padding = new Thickness(4, 2, 0, 2);
         button.KeyDown += (_, e) =>
         {
-            if (e.Key is Key.Enter or Key.Space or Key.Down) { OpenMenu(button, items); e.Handled = true; }
+            if (e.Key == Key.Down) { OpenMenu(button, items); e.Handled = true; }
         };
-        System.Windows.Automation.AutomationProperties.SetName(button, "More");
         return button;
     }
 

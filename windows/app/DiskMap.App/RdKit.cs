@@ -312,12 +312,20 @@ public static class Rd
         VerticalAlignment = VerticalAlignment.Center,
     };
 
-    private static readonly Dictionary<double, ControlTemplate> _plainTemplates = [];
+    private static readonly Dictionary<(double, bool), ControlTemplate> _plainTemplates = [];
 
-    private static ControlTemplate PlainTemplate(double radius)
+    /// <summary>
+    /// The kit's button face. <paramref name="row"/>: a list row's — the content stretches to the
+    /// full width and pressing doesn't dim it (the selection shows instead).
+    /// </summary>
+    internal static ControlTemplate PlainTemplate(double radius, bool row = false)
     {
-        if (_plainTemplates.TryGetValue(radius, out var cached)) return cached;
+        if (_plainTemplates.TryGetValue((radius, row), out var cached)) return cached;
         // Pressed: 82% (Mac: ink @ 0.82 / ink @ 8% wash); disabled: 30%.
+        string pressed = row ? "" : @"
+    <Trigger Property=""IsPressed"" Value=""True"">
+      <Setter TargetName=""Face"" Property=""Opacity"" Value=""0.82""/>
+    </Trigger>";
         string xaml = $@"
 <ControlTemplate TargetType=""Button""
     xmlns=""http://schemas.microsoft.com/winfx/2006/xaml/presentation""
@@ -325,21 +333,55 @@ public static class Rd
   <Border x:Name=""Face"" CornerRadius=""{radius}"" Background=""{{TemplateBinding Background}}""
           BorderBrush=""{{TemplateBinding BorderBrush}}"" BorderThickness=""{{TemplateBinding BorderThickness}}""
           Padding=""{{TemplateBinding Padding}}"" SnapsToDevicePixels=""True"">
-    <ContentPresenter HorizontalAlignment=""Center"" VerticalAlignment=""Center""
+    <ContentPresenter HorizontalAlignment=""{(row ? "Stretch" : "Center")}"" VerticalAlignment=""{(row ? "Stretch" : "Center")}""
                       TextElement.Foreground=""{{TemplateBinding Foreground}}""/>
   </Border>
-  <ControlTemplate.Triggers>
-    <Trigger Property=""IsPressed"" Value=""True"">
-      <Setter TargetName=""Face"" Property=""Opacity"" Value=""0.82""/>
-    </Trigger>
+  <ControlTemplate.Triggers>{pressed}
     <Trigger Property=""IsEnabled"" Value=""False"">
       <Setter TargetName=""Face"" Property=""Opacity"" Value=""0.3""/>
     </Trigger>
   </ControlTemplate.Triggers>
 </ControlTemplate>";
         var template = (ControlTemplate)XamlReader.Parse(xaml);
-        _plainTemplates[radius] = template;
+        _plainTemplates[(radius, row)] = template;
         return template;
+    }
+
+    /// <summary>
+    /// A kit control's face as a real Button on <see cref="PlainTemplate"/>: Tab reaches it,
+    /// Enter and Space press it, it draws the focus ring and screen readers read
+    /// <paramref name="name"/>. These used to be Borders with mouse handlers, which have none of that.
+    /// </summary>
+    internal static Button Pressable(UIElement content, string name, Action onClick, double radius)
+    {
+        var button = new Button
+        {
+            Content = content,
+            Padding = new Thickness(0),
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Cursor = Cursors.Hand,
+            Template = PlainTemplate(radius),
+        };
+        System.Windows.Automation.AutomationProperties.SetName(button, name);
+        button.Click += (_, _) => onClick();
+        return button;
+    }
+
+    /// <summary>
+    /// The Border the Border-typed kit controls hand back, holding their Button. Pages size,
+    /// enable, tip and name that Border, so the Button reads its accessible name from it.
+    /// </summary>
+    internal static Border ButtonHost(Button button)
+    {
+        var host = new Border { Child = button };
+        System.Windows.Automation.AutomationProperties.SetName(host, System.Windows.Automation.AutomationProperties.GetName(button));
+        button.SetBinding(System.Windows.Automation.AutomationProperties.NameProperty, new System.Windows.Data.Binding
+        {
+            Source = host,
+            Path = new PropertyPath(System.Windows.Automation.AutomationProperties.NameProperty),
+        });
+        return host;
     }
 
     private static readonly Dictionary<(bool, bool), ControlTemplate> _accentTemplates = [];
@@ -400,23 +442,16 @@ public static class Rd
         foreach (var segment in segments)
         {
             var label = Text(segment.Title, 13, FontWeights.Medium, segment.IsOn ? "RdInk" : "RdInk2");
-            var item = new Border
-            {
-                Height = 24,
-                Padding = new Thickness(11, 0, 11, 0),
-                CornerRadius = new CornerRadius(6),
-                Background = segment.IsOn ? B("RdSegmentOn") : Brushes.Transparent,
-                Margin = new Thickness(first ? 0 : 2, 0, 0, 0),
-                Cursor = Cursors.Hand,
-                Child = label,
-                Effect = segment.IsOn
-                    ? new System.Windows.Media.Effects.DropShadowEffect
-                    { Color = Colors.Black, Opacity = 0.06, BlurRadius = 2, ShadowDepth = 1, Direction = 270 }
-                    : null,
-            };
-            var action = segment.OnClick;
-            item.MouseLeftButtonUp += (_, _) => action();
-            System.Windows.Automation.AutomationProperties.SetName(item, segment.Title);
+            var item = Pressable(label, segment.Title, segment.OnClick, 6);
+            item.Height = 24;
+            item.Padding = new Thickness(11, 0, 11, 0);
+            item.Background = segment.IsOn ? B("RdSegmentOn") : Brushes.Transparent;
+            item.Margin = new Thickness(first ? 0 : 2, 0, 0, 0);
+            item.Effect = segment.IsOn
+                ? new System.Windows.Media.Effects.DropShadowEffect
+                { Color = Colors.Black, Opacity = 0.06, BlurRadius = 2, ShadowDepth = 1, Direction = 270 }
+                : null;
+            if (segment.IsOn) System.Windows.Automation.AutomationProperties.SetItemStatus(item, "Selected");
             row.Children.Add(item);
             first = false;
         }
@@ -630,22 +665,23 @@ public static class Rd
         return link;
     }
 
-    /// <summary>IconButtonStyle: a square glyph button with a hover fill.</summary>
+    /// <summary>
+    /// IconButtonStyle: a square glyph button with a hover fill. A Button inside the Border pages
+    /// get back (they tip, enable and name that); disabled, it draws itself at 30%.
+    /// </summary>
     public static Border IconButton(string icon, string label, Action onClick, double size = 28)
     {
         var glyph = Ui.Glyph(icon, 12, B("RdInk2"));
         glyph.HorizontalAlignment = HorizontalAlignment.Center;
         glyph.VerticalAlignment = VerticalAlignment.Center;
-        var button = new Border
-        {
-            Width = size, Height = size, CornerRadius = new CornerRadius(6),
-            Background = Brushes.Transparent, Child = glyph, Cursor = Cursors.Hand, ToolTip = label,
-        };
+        var button = Pressable(glyph, label, onClick, 6);
+        button.Width = size;
+        button.Height = size;
         button.MouseEnter += (_, _) => button.Background = B("RdHover");
         button.MouseLeave += (_, _) => button.Background = Brushes.Transparent;
-        button.MouseLeftButtonUp += (_, e) => { onClick(); e.Handled = true; };
-        System.Windows.Automation.AutomationProperties.SetName(button, label);
-        return button;
+        var host = ButtonHost(button);
+        host.ToolTip = label;
+        return host;
     }
 
     /// <summary>A rounded surface with a fill and an optional hairline, clipped to its corners.</summary>
