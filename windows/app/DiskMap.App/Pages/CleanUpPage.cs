@@ -531,7 +531,9 @@ public sealed class CleanUpPage : UserControl
     /// A violet tick box: off, on, or mixed (some of a group). 16 pt, radius 4. Clean up itself uses
     /// real check boxes. Name the Border it comes back in; the toggle inside reads its name from it.
     /// </summary>
-    public static Border TickBox(TickState state, Action action)
+    /// <param name="focusKey">Names this box across rebuilds (a path, an id): the page rebuilds when it
+    /// flips, and the new box with the same key takes the keyboard focus back.</param>
+    public static Border TickBox(TickState state, Action action, string? focusKey = null)
     {
         var mark = new Grid();
         if (state == TickState.On)
@@ -554,15 +556,18 @@ public sealed class CleanUpPage : UserControl
             Child = mark,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        return TickToggle(box, state, action);
+        return TickToggle(box, state, action, focusKey);
     }
+
+    /// <summary>The key of the tick box that had the keyboard focus when it flipped, until its page's rebuild has run.</summary>
+    private static string? _refocusKey;
 
     /// <summary>
     /// The tick box's control: a real toggle button around <paramref name="face"/>, so Tab reaches
     /// it, Space flips it and a screen reader reads its state; <paramref name="action"/> runs on a
     /// click, Space or the screen reader's toggle. It used to be a Border only a mouse could use.
     /// </summary>
-    internal static Border TickToggle(UIElement face, TickState state, Action action)
+    internal static Border TickToggle(UIElement face, TickState state, Action action, string? focusKey = null)
     {
         var toggle = new System.Windows.Controls.Primitives.ToggleButton
         {
@@ -577,9 +582,27 @@ public sealed class CleanUpPage : UserControl
             MinHeight = 0,   // the box's own size, whatever the theme's ToggleButton style says
             Cursor = Cursors.Hand,
         };
+        // The page rebuilds on a flip, so the box that had focus is replaced: its successor takes it
+        // back (Loaded runs before the idle reset), or Space would drop the keyboard user to the window.
+        if (focusKey is not null)
+            toggle.Loaded += (_, _) =>
+            {
+                if (_refocusKey != focusKey) return;
+                _refocusKey = null;
+                toggle.Focus();
+            };
+        void flip()
+        {
+            if (focusKey is not null && toggle.IsKeyboardFocused)
+            {
+                _refocusKey = focusKey;
+                toggle.Dispatcher.InvokeAsync(() => _refocusKey = null, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+            }
+            action();
+        }
         // Set after IsChecked: only a flip runs the action, however it was asked for.
-        toggle.Checked += (_, _) => action();
-        toggle.Unchecked += (_, _) => action();
+        toggle.Checked += (_, _) => flip();
+        toggle.Unchecked += (_, _) => flip();
         var host = Rd.ButtonHost(toggle);
         host.Margin = new Thickness(-6);
         return host;

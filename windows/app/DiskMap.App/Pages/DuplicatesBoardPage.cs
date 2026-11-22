@@ -604,7 +604,7 @@ public sealed class DuplicatesBoardPage : UserControl
         else
         {
             var box = CleanUpPage.TickBox(isOn ? CleanUpPage.TickState.On : CleanUpPage.TickState.Off,
-                () => Toggle(tree, id, group, isKeeper));
+                () => Toggle(tree, id, group, isKeeper), "copy:" + path);
             box.HorizontalAlignment = HorizontalAlignment.Center;
             box.ToolTip = isKeeper ? "Tick to remove this one and keep another copy instead"
                 : isOn ? "Untick to keep this copy too" : "Tick to remove this copy";

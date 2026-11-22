@@ -361,7 +361,7 @@ public sealed class AppsBoardPage : UserControl
         var stale = _apps.Where(a => a.IsNotRecentlyUsed(now)).ToList();
         void flip() { _onlyStale = !_onlyStale; Rebuild(); }
         var row = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-        var box = CleanUpPage.TickBox(_onlyStale ? CleanUpPage.TickState.On : CleanUpPage.TickState.Off, flip);
+        var box = CleanUpPage.TickBox(_onlyStale ? CleanUpPage.TickState.On : CleanUpPage.TickState.Off, flip, "apps-only-stale");
         System.Windows.Automation.AutomationProperties.SetName(box, "Not opened in 6 months");
         row.Children.Add(box);
         var title = Rd.Text("Not opened in 6 months", 13);
@@ -882,7 +882,7 @@ public sealed class AppsBoardPage : UserControl
             bool on = IsTicked(item);
             string path = item.Path;
             void toggle() { _leftoverChoice[path] = !on; Rebuild(); }
-            var box = CleanUpPage.TickBox(on ? CleanUpPage.TickState.On : CleanUpPage.TickState.Off, toggle);
+            var box = CleanUpPage.TickBox(on ? CleanUpPage.TickState.On : CleanUpPage.TickState.Off, toggle, "app-data:" + path);
             box.VerticalAlignment = VerticalAlignment.Top;
             box.Margin = new Thickness(-6, 2 - 6, 10 - 6, -6);
             System.Windows.Automation.AutomationProperties.SetName(box, $"{ApplicationsCatalog.KindTitle(item.Kind)}: {(on ? "ticked" : "not ticked")}");
