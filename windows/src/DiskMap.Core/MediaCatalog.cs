@@ -415,6 +415,8 @@ public static class MediaCatalog
             bool isDir = tree.IsDirectory[i];
             long bytes = totals[i];
             if (bytes < ListingFloorBytes || held[i]) continue;
+            // Online-only (OneDrive): nothing to free here, and recycling it deletes it from the cloud.
+            if ((tree.Flags[i] & NodeFlags.NotDownloaded) != 0) continue;
             string name = tree.NameOf(i);
             var classified = Classify(name, isDirectory: isDir);
             if (classified is null && isDir && finalCut[i]) classified = MediaKind.Project;
@@ -479,20 +481,11 @@ public static class MediaCatalog
         };
     }
 
-    public static MediaStatus ClassifyStatus(MediaKind kind, int ageDays, string name)
-    {
-        string n = name.ToLowerInvariant();
-        // Never mark personal video/photos as disposable from age alone.
-        if (kind is MediaKind.Video or MediaKind.Image or MediaKind.Project)
-            return MediaStatus.ReviewFirst;
-        // Screen recordings / scratch audio mixes sometimes disposable when old.
-        if (kind == MediaKind.Audio && ageDays >= 365
-            && (n.Contains("mix") || n.Contains("bounce") || n.Contains("render") || n.Contains("scratch")))
-        {
-            return MediaStatus.LikelyDisposable;
-        }
-        return MediaStatus.ReviewFirst;
-    }
+    /// <summary>
+    /// Always Review first: personal media is never disposable from its age, nor from its name —
+    /// "Song (Remix).mp3" and "Mixtape 2.mp3" read like scratch mixes to a name rule.
+    /// </summary>
+    public static MediaStatus ClassifyStatus(MediaKind kind, int ageDays, string name) => MediaStatus.ReviewFirst;
 
     public static string WhyHere(MediaKind kind, long bytes, int ageDays, MediaLocationBucket location)
     {

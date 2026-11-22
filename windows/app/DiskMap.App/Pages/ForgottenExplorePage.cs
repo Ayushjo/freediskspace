@@ -48,7 +48,8 @@ public sealed class ForgottenExplorePage : UserControl
     private ForgottenSummary _summary = ForgottenSummary.Empty;
     private object? _builtFor;
     private bool _preparing = true;
-    private List<ForgottenCandidate> _visible = [];
+    /// <summary>Every match, and the ones drawn: at most <see cref="CleanDetail.RowLimit"/>, all the bulk adds ever take.</summary>
+    private List<ForgottenCandidate> _visible = [], _shown = [];
 
     private Rd.WidthClass _class = Rd.WidthClass.Regular;
     private readonly Grid _root = new();
@@ -165,13 +166,14 @@ public sealed class ForgottenExplorePage : UserControl
         if (_preparing)
         {
             // The catalog gate covers the page until the candidates are ready.
-            _visible = [];
+            _visible = _shown = [];
             _root.Children.Add(ListKit.LoadingState("Finding forgotten files…",
                 "Working from the scan you already ran — nothing is read from disk again."));
             return;
         }
 
         _visible = Filter(_all, _tab, _age, _onlyLarge, _onlyDownloads, _onlyMedia, _query, _sort);
+        _shown = _visible.Take(CleanDetail.RowLimit).ToList();
         double pad = _class.PagePadding();
         _root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         _root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
@@ -187,7 +189,7 @@ public sealed class ForgottenExplorePage : UserControl
         top.Children.Add(search);
         _root.Children.Add(top);
 
-        var body = _visible.Count == 0 ? EmptyState() : Table(root, pad);
+        var body = _shown.Count == 0 ? EmptyState() : Table(root, pad);
         Grid.SetRow(body, 1);
         _root.Children.Add(body);
 
@@ -277,9 +279,9 @@ public sealed class ForgottenExplorePage : UserControl
     private FrameworkElement Table(string root, double pad)
     {
         var columns = ListKit.Columns.For(_class);
-        var items = _visible;
+        var items = _shown;
         long largest = Math.Max(1, items.Count == 0 ? 1 : items.Max(c => c.Bytes));
-        var staged = Model.StagedItems.Select(s => System.IO.Path.GetFullPath(s.Path)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var staged = items.Where(c => Model.IsStaged(c.AbsolutePath)).Select(c => c.Id).ToHashSet();
 
         var grid = new Grid { Margin = new Thickness(pad, 0, pad, 0) };
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -298,32 +300,43 @@ public sealed class ForgottenExplorePage : UserControl
                 (double)c.Bytes / largest, c.Bytes, AgeText(c.AgeDays),
                 new ListKit.Note(ListKit.NoteKind.Plain, Why(c.Reasons)),
                 c.Confidence == ForgottenConfidence.LikelyForgotten,
-                staged.Contains(c.AbsolutePath),
+                staged.Contains(c.Id),
                 c.Id == _selected || Model.MultiSelection.Contains(c.Id), columns,
                 select: () => SelectRow(candidate.Id),
                 add: stageable ? () => StageOne(candidate) : null));
         }
-        var scroll = _scroll.Wrap(list, $"{_query}|{_onlyLarge}|{_onlyDownloads}|{_onlyMedia}");
+        var scroll = _scroll.Wrap(list, $"{_query}|{_tab}|{_age}|{_sort}|{_onlyLarge}|{_onlyDownloads}|{_onlyMedia}");
         Grid.SetRow(scroll, 1);
         grid.Children.Add(scroll);
 
-        var footer = Footer();
+        var footer = Footer(staged);
         Grid.SetRow(footer, 2);
         grid.Children.Add(footer);
         return grid;
     }
 
-    private FrameworkElement Footer()
+    /// <summary>
+    /// "5 shown · 22.9 GB", or past the row limit how to see the rest, and the bulk adds: the rows
+    /// drawn that can go, minus what's already in the basket — never one the page didn't list.
+    /// </summary>
+    public static (string Line, List<ForgottenCandidate> Likely, List<ForgottenCandidate> Shown) FooterParts(
+        IReadOnlyList<ForgottenCandidate> shown, int matches, Func<ForgottenCandidate, bool> staged)
     {
-        // What the filters show and can go, minus what's already in the basket.
-        var staged = Model.StagedItems.Select(s => System.IO.Path.GetFullPath(s.Path)).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var shown = _visible.Where(c => c.IsReviewable && c.Safety.Level != SafetyLevel.Protected && !staged.Contains(c.AbsolutePath)).ToList();
-        var likely = shown.Where(c => c.Confidence == ForgottenConfidence.LikelyForgotten).ToList();
+        var free = shown.Where(c => c.IsReviewable && c.Safety.Level != SafetyLevel.Protected && !staged(c)).ToList();
+        string line = matches > shown.Count
+            ? $"First {shown.Count:N0} of {matches:N0} shown — narrow the filters for the rest"
+            : $"{shown.Count:N0} shown · {ShellFormat.HeroBytes(shown.Sum(c => c.Bytes))}";
+        return (line, free.Where(c => c.Confidence == ForgottenConfidence.LikelyForgotten).ToList(), free);
+    }
+
+    private FrameworkElement Footer(HashSet<int> staged)
+    {
+        var (line, likely, shown) = FooterParts(_shown, _visible.Count, c => staged.Contains(c.Id));
         long likelyBytes = likely.Sum(c => c.Bytes);
-        var text = ListKit.FooterText(($"{_visible.Count:N0} shown · {ShellFormat.HeroBytes(_visible.Sum(c => c.Bytes))}", "RdInk2"));
+        var text = ListKit.FooterText((line, "RdInk2"));
         var trailing = new List<FrameworkElement>();
         if (_class != Rd.WidthClass.Compact)
-            trailing.Add(Rd.Text("By last-modified date: a file you only open may still look old.", 12, null, "RdInk3"));
+            trailing.Add(Rd.Text("By when a file was last modified or saved here: one you only open may still look old.", 12, null, "RdInk3"));
         if (likely.Count > 0)
             trailing.Add(Rd.SecondaryButton($"Add {likely.Count} likely forgotten · {ShellFormat.HeroBytes(likelyBytes)}", () =>
                 Model.ConfirmStageMany(likely.Select(c => c.Id), "Forgotten: " + ForgottenConfidence.LikelyForgotten.Title(), "Forgotten files")));
@@ -350,9 +363,12 @@ public sealed class ForgottenExplorePage : UserControl
     {
         Focus();   // a click gives the list the keyboard (the search box kept it, so ↑↓ and Delete did nothing)
         _selected = id;
-        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) Model.ToggleMulti(id);
-        else { Model.ClearMulti(); Model.Select(id); }
-        Rebuild();
+        if (!CleanDetailPage.ModelRedraws(() =>
+            {
+                if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) Model.ToggleMulti(id);
+                else { Model.ClearMulti(); Model.Select(id); }
+            }))
+            Rebuild();
     }
 
     private static void StageOne(ForgottenCandidate c)
@@ -384,21 +400,21 @@ public sealed class ForgottenExplorePage : UserControl
 
     private void OnKey(object sender, KeyEventArgs e)
     {
-        var items = _visible;
+        var items = _shown;
         var ids = items.Select(c => c.Id).ToList();
         int? selected = _selected;
-        if (ListKit.ListKey(e, ids, ref selected,
-                id => { if (items.FirstOrDefault(c => c.Id == id) is { } c) StageOne(c); },
-                id => items.FirstOrDefault(c => c.Id == id)?.AbsolutePath,
-                () =>
-                {
-                    Model.ClearMulti();
-                    foreach (var c in items.Where(c => c.IsReviewable)) Model.ToggleMulti(c.Id);
-                }))
-        {
-            _selected = selected;
-            e.Handled = true;
-            Rebuild();
-        }
+        bool handled = false;
+        bool redraws = CleanDetailPage.ModelRedraws(() => handled = ListKit.ListKey(e, ids, ref selected,
+            id => { if (items.FirstOrDefault(c => c.Id == id) is { } c) StageOne(c); },
+            id => items.FirstOrDefault(c => c.Id == id)?.AbsolutePath,
+            () =>
+            {
+                Model.ClearMulti();
+                foreach (var c in items.Where(c => c.IsReviewable)) Model.ToggleMulti(c.Id);
+            }));
+        if (!handled) return;
+        _selected = selected;
+        e.Handled = true;
+        if (!redraws) Rebuild();
     }
 }

@@ -18,6 +18,7 @@ public abstract class CleanDetailPage : UserControl
     protected static ScanModel Model => ScanModel.Shared;
 
     private readonly Grid _root = new();
+    private readonly ScrollMemory _scroll = new();
     private TextBox? _search;
     private string? _selectedId;
     private List<CleanDetailRow> _shown = [];
@@ -53,8 +54,13 @@ public abstract class CleanDetailPage : UserControl
     protected abstract string LoadingTitle { get; }
     protected abstract bool CatalogReady { get; }
 
-    /// <summary>Rows after every filter; the header's count and size before them.</summary>
-    protected abstract (List<CleanDetailRow> Rows, int TotalCount, long TotalBytes, bool NothingAtAll) Compute();
+    /// <summary>
+    /// Rows after every filter, made lazily so only the drawn ones are built, and how many there
+    /// are; the header's count and size before them.
+    /// </summary>
+    protected abstract (IEnumerable<CleanDetailRow> Rows, int Matches, int TotalCount, long TotalBytes, bool NothingAtAll) Compute();
+    /// <summary>The filters besides the search: a change starts the list at the top, anything else keeps its place.</summary>
+    protected abstract string FilterKey { get; }
     protected abstract (string Title, string Message) EmptyText(bool nothingAtAll);
     protected abstract string BulkTitle(int count, long bytes);
     protected abstract bool BulkFilter(CleanDetailRow row);
@@ -100,7 +106,7 @@ public abstract class CleanDetailPage : UserControl
             return;
         }
 
-        var (rows, totalCount, totalBytes, nothingAtAll) = Compute();
+        var (rows, matches, totalCount, totalBytes, nothingAtAll) = Compute();
         _shown = rows.Take(CleanDetail.RowLimit).ToList();
         if (_selectedId is { } sel && !_shown.Any(r => r.Id == sel)) _selectedId = null;
 
@@ -109,18 +115,18 @@ public abstract class CleanDetailPage : UserControl
         var filters = FilterRow();
         filters.Margin = new Thickness(0, 12, 0, 0);
         top.Children.Add(filters);
-        var search = SearchRow(rows.Count);
+        var search = SearchRow(matches);
         search.Margin = new Thickness(0, 12, 0, 0);
         top.Children.Add(search);
         _root.Children.Add(top);
 
         FrameworkElement body;
-        if (rows.Count == 0)
+        if (_shown.Count == 0)
         {
             var (title, message) = EmptyText(nothingAtAll);
             body = ListKit.EmptyState(Icons.Check, title, message);
         }
-        else body = Table(rows, pad);
+        else body = Table(matches, pad);
         Grid.SetRow(body, 1);
         _root.Children.Add(body);
 
@@ -206,10 +212,10 @@ public abstract class CleanDetailPage : UserControl
         return BiggestFoldersExplorePage.FieldRow(field, Compact ? null : 520, 12, [.. SearchTrailing()]);
     }
 
-    private FrameworkElement Table(List<CleanDetailRow> rows, double pad)
+    private FrameworkElement Table(int matches, double pad)
     {
         var columns = ListKit.Columns.For(WidthClass);
-        var staged = StagedSet();
+        var inBasket = _shown.Where(r => CleanDetail.InBasket(r, Model.IsStaged)).Select(r => r.Id).ToHashSet();
         long largest = Math.Max(1, _shown.Count == 0 ? 1 : _shown.Max(r => r.Bytes));
 
         var grid = new Grid { Margin = new Thickness(pad, 0, pad, 0) };
@@ -225,29 +231,28 @@ public abstract class CleanDetailPage : UserControl
             bool canAdd = row.Requests.Count > 0;
             var element = ListKit.FileRow(row.Name, row.Place, row.Badge, row.Kind, (double)row.Bytes / largest, row.Bytes,
                 row.Changed, new ListKit.Note(ListKit.NoteKind.Plain, row.Note), row.Accent,
-                CleanDetail.InBasket(row, p => staged.Contains(Normalize(p))),
+                inBasket.Contains(row.Id),
                 row.Id == _selectedId || row.NodeId is { } n && Model.MultiSelection.Contains(n), columns,
                 select: () => SelectRow(row),
                 add: canAdd ? () => Add([row]) : null);
             element.ToolTip = row.Path;
-            element.ContextMenu = RowMenu(row);
+            element.ContextMenu = RowMenu(row, inBasket.Contains(row.Id));
             list.Children.Add(element);
         }
-        var scroll = new ScrollViewer { Content = list, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false };
+        var scroll = _scroll.Wrap(list, $"{Query}|{FilterKey}");
         Grid.SetRow(scroll, 1);
         grid.Children.Add(scroll);
 
-        var footer = Footer(rows);
+        var footer = Footer(matches, inBasket);
         Grid.SetRow(footer, 2);
         grid.Children.Add(footer);
         return grid;
     }
 
-    private ContextMenu RowMenu(CleanDetailRow row)
+    private ContextMenu RowMenu(CleanDetailRow row, bool inBasket)
     {
         var menu = new ContextMenu();
-        var staged = StagedSet();
-        if (CleanDetail.InBasket(row, p => staged.Contains(Normalize(p))))
+        if (inBasket)
         {
             var remove = new MenuItem { Header = "Take Out of the Basket" };
             remove.Click += (_, _) => Model.UnstagePaths(row.StagePaths);
@@ -267,23 +272,22 @@ public abstract class CleanDetailPage : UserControl
 
     /// <summary>
     /// "5 shown · 22.9 GB", the page's suggested add (what rebuilds, what's likely done with) and
-    /// an add for everything the filters show — pick Videos and that adds only the videos.
+    /// an add for every row drawn — pick Videos and that adds only the videos; past the row limit,
+    /// only the rows on the page, never ones the confirm sheet couldn't list.
     /// Rows already in the basket are left out of both.
     /// </summary>
-    private FrameworkElement Footer(List<CleanDetailRow> rows)
+    private FrameworkElement Footer(int matches, HashSet<string> inBasket)
     {
-        var staged = StagedSet();
-        bool fresh(CleanDetailRow r) => !CleanDetail.InBasket(r, p => staged.Contains(Normalize(p)));
-        var shown = CleanDetail.Bulk(rows, fresh);
-        var suggested = CleanDetail.Bulk(rows, r => fresh(r) && BulkFilter(r));
-        var text = ListKit.FooterText((CleanDetail.FooterLine(rows), "RdInk2"));
+        var shown = CleanDetail.Bulk(_shown, r => !inBasket.Contains(r.Id));
+        var suggested = shown.Where(BulkFilter).ToList();
+        var text = ListKit.FooterText((CleanDetail.FooterLine(_shown, matches), "RdInk2"));
         var buttons = new List<FrameworkElement>();
         if (suggested.Count > 0 && suggested.Count < shown.Count)
             buttons.Add(Rd.SecondaryButton(BulkTitle(suggested.Count, suggested.Sum(b => b.Bytes)), () => Add(suggested)));
         if (shown.Count > 0)
         {
             var all = Rd.SecondaryButton(CleanDetail.ShownBulkTitle(shown.Count, shown.Sum(b => b.Bytes)), () => Add(shown));
-            all.ToolTip = "Everything the filters above show — you'll see the list first";
+            all.ToolTip = "Every row listed above — you'll see the list first";
             buttons.Add(all);
         }
         return ListKit.FooterBar(text, [.. buttons]);
@@ -291,14 +295,19 @@ public abstract class CleanDetailPage : UserControl
 
     // ---- Actions ----
 
-    private static string Normalize(string path)
+    /// <summary>
+    /// Runs <paramref name="change"/>; true when it raised the model's StateChanged, which already
+    /// queues the page's rebuild (ModelEvents.WhileLoaded) — rebuilding here too would draw it twice.
+    /// </summary>
+    public static bool ModelRedraws(Action change)
     {
-        try { return System.IO.Path.GetFullPath(path).TrimEnd('\\'); }
-        catch (Exception) { return path.TrimEnd('\\'); }
+        bool fired = false;
+        EventHandler mark = (_, _) => fired = true;
+        Model.StateChanged += mark;
+        try { change(); }
+        finally { Model.StateChanged -= mark; }
+        return fired;
     }
-
-    private static HashSet<string> StagedSet() =>
-        Model.StagedItems.Select(s => Normalize(s.Path)).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>One row goes through the single-item checks; several through the confirm sheet.</summary>
     private void Add(IReadOnlyList<CleanDetailRow> picked)
@@ -313,12 +322,13 @@ public abstract class CleanDetailPage : UserControl
     {
         Focus();   // a click gives the list the keyboard (the search box kept it, so ↑↓ and Delete did nothing)
         _selectedId = row.Id;
-        if (row.NodeId is { } id)
-        {
-            if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) Model.ToggleMulti(id);
-            else { Model.ClearMulti(); Model.Select(id); }
-        }
-        Rebuild();
+        if (!ModelRedraws(() =>
+            {
+                if (row.NodeId is not { } id) return;
+                if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) Model.ToggleMulti(id);
+                else { Model.ClearMulti(); Model.Select(id); }
+            }))
+            Rebuild();
     }
 
     /// <summary>Typing refilters after a short pause, not on every key.</summary>
@@ -357,14 +367,13 @@ public abstract class CleanDetailPage : UserControl
             case Key.Enter when index >= 0:
                 Explorer.Reveal(_shown[index].Path);
                 break;
+            // Both only change the model, whose StateChanged rebuilds the page.
             case Key.A when Keyboard.Modifiers == ModifierKeys.Control:
                 Model.ClearMulti();
                 foreach (var r in _shown) if (r.NodeId is { } id) Model.ToggleMulti(id);
-                Rebuild();
                 break;
             case Key.Escape:
                 Model.ClearMulti();
-                Rebuild();
                 break;
             default:
                 return;
@@ -375,8 +384,8 @@ public abstract class CleanDetailPage : UserControl
     private void Move(CleanDetailRow row)
     {
         _selectedId = row.Id;
-        if (row.NodeId is { } id) Model.Select(id);
-        Rebuild();
+        ListKit.RevealSelection = true;   // the list keeps its scroll place, so bring the row into view
+        if (!ModelRedraws(() => { if (row.NodeId is { } id) Model.Select(id); })) Rebuild();
     }
 }
 
@@ -405,11 +414,14 @@ public sealed class CleanCachesPage : CleanDetailPage
 
     private List<CleanDetailRow> All() => Rows(Model.Reviewables ?? [], Model.RootPath);
 
-    protected override (List<CleanDetailRow> Rows, int TotalCount, long TotalBytes, bool NothingAtAll) Compute()
+    protected override (IEnumerable<CleanDetailRow> Rows, int Matches, int TotalCount, long TotalBytes, bool NothingAtAll) Compute()
     {
         var all = All();
-        return (CleanDetail.FilterCaches(all, Query, _onlySafe), all.Count, all.Sum(r => r.Bytes), all.Count == 0);
+        var rows = CleanDetail.FilterCaches(all, Query, _onlySafe);
+        return (rows, rows.Count, all.Count, all.Sum(r => r.Bytes), all.Count == 0);
     }
+
+    protected override string FilterKey => _onlySafe.ToString();
 
     protected override (string Title, string Message) EmptyText(bool nothingAtAll) => nothingAtAll
         ? ("No caches worth clearing", "Nothing here is big enough to bother with.")
@@ -434,7 +446,7 @@ public sealed class CleanDownloadsPage : CleanDetailPage
     private OldDownloadsSort _sort = OldDownloadsSort.Largest;
 
     protected override string Title => "Old downloads";
-    protected override string Subtitle => "Large or older files in Downloads. Age is the last-modified date.";
+    protected override string Subtitle => "Large or older files in Downloads. Age counts from when a file was last modified or saved here.";
     protected override string PageKey => "Old Downloads";
     protected override string KindTitle => "Suggestion";
     protected override string ChangedTitle => "Last changed";
@@ -452,14 +464,16 @@ public sealed class CleanDownloadsPage : CleanDetailPage
         CleanDetail.DownloadSuggestion(c.Status), c.Bytes, ExplorePage.LastUsed(c.ModifiedDay, today), c.WhyHere,
         c.Status == OldDownloadsStatus.LikelyDisposable, CleanDetail.DownloadRequests(c), [c.AbsolutePath]);
 
-    protected override (List<CleanDetailRow> Rows, int TotalCount, long TotalBytes, bool NothingAtAll) Compute()
+    protected override (IEnumerable<CleanDetailRow> Rows, int Matches, int TotalCount, long TotalBytes, bool NothingAtAll) Compute()
     {
         var catalog = Catalog;
         int today = AgeMap.Today();
         var filtered = OldDownloadsCatalog.Sorted(OldDownloadsCatalog.Filter(catalog.Candidates, _age, _size, _type, Query), _sort);
-        return (filtered.Select(c => Row(c, Model.RootPath, today)).ToList(),
+        return (filtered.Select(c => Row(c, Model.RootPath, today)), filtered.Count,
             catalog.Summary.TotalCount, catalog.Summary.TotalBytes, catalog.Candidates.Count == 0);
     }
+
+    protected override string FilterKey => $"{_age}|{_size}|{_type}|{_sort}";
 
     protected override (string Title, string Message) EmptyText(bool nothingAtAll) => nothingAtAll
         ? ("Nothing old enough to review", "Downloads has nothing matching this view. That’s a good thing.")
@@ -524,14 +538,16 @@ public sealed class CleanMediaPage : CleanDetailPage
         CleanDetail.MediaKindText(c.Kind), c.Bytes, ExplorePage.LastUsed(c.ModifiedDay, today), CleanDetail.MediaNote(c),
         c.Status == MediaStatus.LikelyDisposable, CleanDetail.MediaRequests(c), [c.AbsolutePath]);
 
-    protected override (List<CleanDetailRow> Rows, int TotalCount, long TotalBytes, bool NothingAtAll) Compute()
+    protected override (IEnumerable<CleanDetailRow> Rows, int Matches, int TotalCount, long TotalBytes, bool NothingAtAll) Compute()
     {
         var catalog = Catalog;
         int today = AgeMap.Today();
         var filtered = MediaCatalog.Sorted(MediaCatalog.Filter(catalog.Candidates, _type, _size, _age, _location, Query), _sort);
-        return (filtered.Select(c => Row(c, Model.RootPath, today)).ToList(),
+        return (filtered.Select(c => Row(c, Model.RootPath, today)), filtered.Count,
             catalog.Candidates.Count, catalog.Candidates.Sum(c => c.Bytes), catalog.Candidates.Count == 0);
     }
+
+    protected override string FilterKey => $"{_type}|{_size}|{_age}|{_location}|{_sort}";
 
     protected override (string Title, string Message) EmptyText(bool nothingAtAll) => nothingAtAll
         ? ("No large media found", "Nothing here is big enough to bother with.")

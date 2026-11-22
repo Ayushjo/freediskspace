@@ -93,6 +93,7 @@ public static class OldDownloadsFilterExtensions
     };
 }
 
+/// <param name="ModifiedDay">The later of modified and created: when the file last changed or arrived.</param>
 public sealed record OldDownloadsCandidate(
     int NodeID,
     string Name,
@@ -169,11 +170,10 @@ public static class OldDownloadsCatalog
         if (totals.Length != tree.Count) return OldDownloadsCatalogResult.Empty;
         if (today == 0) today = AgeMap.Today();
 
-        // `IsUnderDownloads(path)` is "some path component starts with
-        // downloads". Answer it per folder in one pass and build a path only
+        // `IsUnderDownloads(path)` is "some path component is a Downloads
+        // name". Answer it per folder in one pass and build a path only
         // for files that pass (Mac TASK-042).
-        var underDownloads = CatalogTree.FolderChainFlags(tree, IsUnderDownloads(root),
-            name => name.StartsWith("downloads", StringComparison.OrdinalIgnoreCase));
+        var underDownloads = CatalogTree.FolderChainFlags(tree, IsUnderDownloads(root), IsDownloadsName);
         // A "Downloads" folder inside a Library is a tool's own cache
         // (~/Library/Caches/Homebrew/downloads), not the user's Downloads.
         // Windows: the Library's role is played by AppData and ProgramData
@@ -187,16 +187,19 @@ public static class OldDownloadsCatalog
         for (int i = 0; i < tree.Count; i++)
         {
             if (tree.IsDirectory[i]) continue;
+            // Online-only (OneDrive): nothing to free here, and recycling it deletes it from the cloud.
+            if ((tree.Flags[i] & NodeFlags.NotDownloaded) != 0) continue;
             long bytes = totals[i];
             if (bytes < ListingFloorBytes) continue;
             string name = tree.NameOf(i);
             int parentID = tree.Parent[i];
             bool inFolder = parentID >= 0 && parentID < underDownloads.Length && underDownloads[parentID];
-            if (!(inFolder || name.StartsWith("downloads", StringComparison.OrdinalIgnoreCase))) continue;
+            if (!(inFolder || IsDownloadsName(name))) continue;
             if (parentID >= 0 && parentID < underLibrary.Length && underLibrary[parentID]) continue;
             if (held[i]) continue;
             string abs = tree.PathOf(i, root);
-            int day = tree.ModifiedDay[i];
+            // A copied or extracted file keeps its old modified date; its created date is when it arrived.
+            int day = Math.Max(tree.ModifiedDay[i], tree.CreatedDay[i]);
             int age = day > 0 ? Math.Max(0, today - day) : 0;
             var kind = FileKinds.Classify(name, abs);
             var safety = SafetyClassifier.Assess(abs, name, false);
@@ -231,13 +234,14 @@ public static class OldDownloadsCatalog
         return new OldDownloadsCatalogResult(sorted, summary);
     }
 
-    /// <summary>Mac rule on a '/'-separated copy of the path, so Windows separators match too.</summary>
-    public static bool IsUnderDownloads(string path)
-    {
-        string lower = path.Replace('\\', '/').ToLowerInvariant();
-        return lower.Contains("/downloads/") || lower.EndsWith("/downloads")
-            || lower.Contains("/downloads");
-    }
+    /// <summary>Some component of the path, either separator, is a <see cref="IsDownloadsName">Downloads name</see>.</summary>
+    public static bool IsUnderDownloads(string path) =>
+        path.Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries).Any(IsDownloadsName);
+
+    /// <summary>"Downloads", or it followed by a non-letter ("Downloads (2)", "Downloads-old") — never "DownloadService".</summary>
+    public static bool IsDownloadsName(string name) =>
+        name.StartsWith("downloads", StringComparison.OrdinalIgnoreCase)
+        && (name.Length == "downloads".Length || !char.IsLetter(name["downloads".Length]));
 
     /// <summary>Windows stand-in for the Mac's root.path.contains("/library").</summary>
     private static bool IsUnderAppData(string path)

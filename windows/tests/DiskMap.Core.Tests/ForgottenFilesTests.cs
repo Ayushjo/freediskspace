@@ -28,14 +28,15 @@ public class ForgottenFilesTests
 
     // ---- Ported from the Mac suite ----
 
+    /// <summary>Mac: likely forgotten. Windows: a video keeps the date it was made, so worth a look at most.</summary>
     [Fact]
-    public void DownloadsOldVideoIsLikelyForgotten()
+    public void DownloadsOldVideoIsWorthReviewing()
     {
         var (tree, user) = UsersTree();
         int downloads = tree.AddNode("Downloads", user, true, 0, 0, 0);
         int file = tree.AddNode("old-movie.mkv", downloads, false, 8 * GB, 8 * GB, Today - 800);
         var hit = Assert.Single(Run(tree), c => c.Id == file);
-        Assert.Equal(ForgottenConfidence.LikelyForgotten, hit.Confidence);
+        Assert.Equal(ForgottenConfidence.WorthReviewing, hit.Confidence);
         Assert.True(hit.IsReviewable);
         Assert.Equal(800, hit.AgeDays);
         Assert.Equal(@"~\Downloads\old-movie.mkv", Win(hit.DisplayPath));
@@ -156,7 +157,7 @@ public class ForgottenFilesTests
         int worth = tree.AddNode("notes.bin", user, false, 30 * MB, 30 * MB, Today - 700);
         var candidates = Run(tree);
         var trip = Assert.Single(candidates, c => c.Id == clip);
-        Assert.Equal(ForgottenConfidence.LikelyForgotten, trip.Confidence);
+        Assert.Equal(ForgottenConfidence.WorthReviewing, trip.Confidence);   // a video: worth a look at most
         Assert.Contains("Located in Videos", trip.Reasons);
         Assert.Equal(ForgottenConfidence.LikelyForgotten, Assert.Single(candidates, c => c.Id == loose).Confidence);
         Assert.Equal(ForgottenConfidence.WorthReviewing, Assert.Single(candidates, c => c.Id == worth).Confidence);
