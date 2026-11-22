@@ -26,6 +26,7 @@ public class ReviewableCatalogTests
         (@"Projects\ml-experiments\.venv\Lib\site-packages\torch\lib\torch_cpu.dll", 4_100 * MB),
         (@"Projects\ml-experiments\.venv\pyvenv.cfg", 200),   // what makes .venv a virtualenv
         (@".gradle\caches\transforms-4\objects.bin", 14_800 * MB),
+        (@".gradle\gradle.properties", 2_000),   // credentials: never part of the Gradle cache
         (@"AppData\Local\Android\Sdk\system-images\android-35\google_apis\x86_64\system.img", 4_100 * MB),
         (@"AppData\Local\Android\Sdk\system-images\android-33\google_apis\x86_64\system.img", 3_600 * MB),
         (@"AppData\Local\NuGet\v3-cache\packages.bin", 2_900 * MB),
@@ -79,7 +80,7 @@ public class ReviewableCatalogTests
 
         Assert.Equal(new Dictionary<string, long>
         {
-            ["Gradle cache"] = 14_800 * MB,
+            ["Gradle cache"] = 14_800 * MB,   // .gradle\caches alone, not the whole .gradle
             ["npm cache"] = 5_600 * MB,
             ["Yarn"] = 3_200 * MB,
             ["NuGet cache"] = 2_900 * MB,
@@ -189,7 +190,9 @@ public class ReviewableCatalogTests
             (@"AppData\Local\JetBrains\Rider2026.1\Cache\c.bin", 30 * MB),
         ]);
         Assert.Equal(["Rider2026.1", "Edge", "Acme Tools"], targets.Select(t => t.DisplayName));
-        Assert.All(targets, t => Assert.True(t.IsGenerallySafe));
+        // Only an app Clean up knows rebuilds by itself; the rest wait for a look.
+        Assert.Equal(["Edge"], targets.Where(t => t.IsGenerallySafe).Select(t => t.DisplayName));
+        Assert.All(targets.Where(t => t.DisplayName != "Edge"), t => Assert.True(t.IsReviewFirst));
     }
 
     [Fact]
@@ -237,9 +240,12 @@ public class SafetyClassifierTests
     [InlineData(@"C:\Users\you\AppData\Local\pnpm\cache", "cache", true, SafetyLevel.Safe)]
     [InlineData(@"C:\Users\you\AppData\Local\NuGet\v3-cache", "v3-cache", true, SafetyLevel.Safe)]
     [InlineData(@"C:\Users\you\AppData\Local\Google\Chrome\User Data\Default\Cache", "Cache", true, SafetyLevel.Safe)]
-    [InlineData(@"C:\Users\you\AppData\Local\Microsoft\Windows\INetCache", "INetCache", true, SafetyLevel.Safe)]
+    // Windows' own web cache: the queue never stages AppData\Local\Microsoft\Windows.
+    [InlineData(@"C:\Users\you\AppData\Local\Microsoft\Windows\INetCache", "INetCache", true, SafetyLevel.Review)]
     [InlineData(@"C:\Users\you\AppData\Local\Spotify\Data", "Data", true, SafetyLevel.Safe)]
-    [InlineData(@"C:\Users\you\.gradle", ".gradle", true, SafetyLevel.Safe)]
+    // The Gradle home holds gradle.properties: only its caches rebuild.
+    [InlineData(@"C:\Users\you\.gradle", ".gradle", true, SafetyLevel.Review)]
+    [InlineData(@"C:\Users\you\.gradle\caches", "caches", true, SafetyLevel.Safe)]
     [InlineData(@"C:\Users\you\.cargo\registry", "registry", true, SafetyLevel.Safe)]
     [InlineData(@"C:\Users\you\code\app\node_modules", "node_modules", true, SafetyLevel.Review)]
     [InlineData(@"C:\Users\you\code\tool\target", "target", true, SafetyLevel.Review)]
