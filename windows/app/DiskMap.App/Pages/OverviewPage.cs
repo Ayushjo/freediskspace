@@ -382,7 +382,7 @@ public sealed class OverviewPage : UserControl
         bool ready = Model.Reviewables is not null;
         long bytes = Model.SafeReclaimableBytes;
         double hero = HeroSize;
-        var white = (double o) => (Brush)new SolidColorBrush(Color.FromArgb((byte)Math.Round(o * 255), 255, 255, 255));
+        Brush white(double o) => Rd.Faded("RdOnNight", o);
 
         var body = new DockPanel { LastChildFill = true };
         var button = Rd.AccentButton(bytes > 0 ? $"Review {ShellFormat.HeroBytes(bytes)}" : "Open Clean up",
@@ -416,7 +416,7 @@ public sealed class OverviewPage : UserControl
         bool compact = _class == Rd.WidthClass.Compact;
         body.Margin = compact ? new Thickness(24, 22, 24, 22) : new Thickness(32, 30, 32, 30);
         var layers = new Grid { MinHeight = TopCardMinHeight };
-        layers.Children.Add(new Border { Background = Rd.Grid24(white(0.05)) });
+        layers.Children.Add(new Border { Background = Rd.Grid24(Rd.WithOpacity(Ui.Brush("RdOnNight"), 0.05)) });   // stays faint
         layers.Children.Add(body);
         return Rd.Surface(layers, "RdNight", 14, stroke: null);
     }

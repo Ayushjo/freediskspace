@@ -496,12 +496,12 @@ public sealed class BasketWindow : Window
             HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 14, 0, 0),
         });
         var look = new Grid();
-        look.Children.Add(new Border { CornerRadius = new CornerRadius(14), Background = new SolidColorBrush(Color.FromArgb(224, 0, 0, 0)), Margin = new Thickness(5, 5, -5, -5) });
+        look.Children.Add(new Border { CornerRadius = new CornerRadius(14), Background = Rd.WithOpacity(Ui.Brush("RdShadow"), 224 / 255.0), Margin = new Thickness(5, 5, -5, -5) });
         look.Children.Add(new Border
         {
             CornerRadius = new CornerRadius(14),
             Background = waiting ? Ui.Brush("RdSoft") : disabled ? Rd.WithOpacity(Ui.Brush("AppAccent"), 0.45) : Ui.Brush("AppAccent"),
-            BorderBrush = new SolidColorBrush(Color.FromArgb(217, 0, 0, 0)), BorderThickness = new Thickness(1),
+            BorderBrush = Rd.WithOpacity(Ui.Brush("RdShadow"), 217 / 255.0), BorderThickness = new Thickness(1),
             Child = content,
         });
         // A real button around the drawn face: Tab reaches it, Enter and Space press it, a screen
@@ -550,18 +550,17 @@ public sealed class BasketWindow : Window
         return stack;
     }
 
-    /// <summary>Put Back the last cleanup; what came back is on disk again, so the scan catches up.</summary>
+    /// <summary>Put Back the last cleanup; the model rescans itself when anything came back.</summary>
     private async void PutBackLast()
     {
         if (_busy) return;
-        var report = await Model.PutBackLastCleanupAsync();
+        await Model.PutBackLastCleanupAsync();
         _lastRecord = CleanupRecord.Load();
         _success = null;
-        if (report is { Restored.Count: > 0 }) Rescan();
         Rebuild();
     }
 
-    /// <summary>What moved is gone and what came back is here again: rescan so every page, and "You can free", agree.</summary>
+    /// <summary>After a move, what moved is gone: rescan so every page, and "You can free", agree.</summary>
     private static void Rescan()
     {
         if (Model.RootPath is not null && !Model.IsScanning) _ = Model.RescanAsync();
@@ -919,9 +918,11 @@ public sealed class BasketWindow : Window
             "duplicate" => "Duplicates",
             "caches" => "Caches",
             "developer storage" => "Developer storage",
+            // Applications stages an app's own data as "Application: <name>"; older items said "leftover of <name>".
+            "Application" => "App data",
+            _ when head.StartsWith("leftover of ", StringComparison.Ordinal) => "App data",
             _ => head,
         };
-        if (head.StartsWith("leftover of ", StringComparison.Ordinal)) head = "App leftovers";
         return char.ToUpperInvariant(head[0]) + head[1..];
     }
 

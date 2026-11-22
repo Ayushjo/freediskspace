@@ -39,7 +39,8 @@ public sealed class WhatChangedPage : UserControl
     {
         Background = Ui.Brush("RdPage");
         Content = _scroll;
-        ModelEvents.WhileLoaded(this, Reload);
+        // Every time it's shown: saved scans live on disk, not in the model, and can come and go meanwhile.
+        ModelEvents.WhileLoaded(this, Reload, everyShow: true);
         Unloaded += (_, _) =>
         {
             _compareCts?.Cancel();

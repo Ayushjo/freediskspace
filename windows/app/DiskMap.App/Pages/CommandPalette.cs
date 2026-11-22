@@ -56,7 +56,7 @@ internal sealed class CommandPalette : Grid
     {
         _close = close;
         // The dim backdrop: a click outside closes.
-        var scrim = new Border { Background = new SolidColorBrush(Color.FromArgb(64, 0, 0, 0)) };
+        var scrim = new Border { Background = Rd.WithOpacity(Ui.Brush("RdShadow"), 64 / 255.0) };
         scrim.MouseLeftButtonDown += (_, _) => _close();
         System.Windows.Automation.AutomationProperties.SetName(scrim, "Dismiss command palette");
         Children.Add(scrim);
@@ -135,7 +135,7 @@ internal sealed class CommandPalette : Grid
         };
         face.SizeChanged += (_, e) => body.Clip = new RectangleGeometry(new Rect(0, 0, e.NewSize.Width - 2, e.NewSize.Height - 2), 13, 13);
         var card = new Grid { Width = 760, Height = 560, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-        card.Children.Add(new Border { Background = Brushes.Black, CornerRadius = new CornerRadius(14), Margin = new Thickness(6, 6, -6, -6) });
+        card.Children.Add(new Border { Background = Ui.Brush("RdShadow"), CornerRadius = new CornerRadius(14), Margin = new Thickness(6, 6, -6, -6) });
         card.Children.Add(face);
         System.Windows.Automation.AutomationProperties.SetName(card, "Find anything");
         Children.Add(card);

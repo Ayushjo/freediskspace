@@ -368,7 +368,7 @@ internal static class ListKit
             Height = 34, CornerRadius = new CornerRadius(8), Background = Ui.Brush("RdCard"),
             BorderBrush = Ui.Brush("RdInk"), BorderThickness = new Thickness(1), Child = row,
         };
-        var shadow = new Border { CornerRadius = new CornerRadius(8), Background = Brushes.Black, Margin = new Thickness(2, 2, -2, -2) };
+        var shadow = new Border { CornerRadius = new CornerRadius(8), Background = Ui.Brush("RdShadow"), Margin = new Thickness(2, 2, -2, -2) };
         var stack = new Grid();
         stack.Children.Add(shadow);
         stack.Children.Add(face);

@@ -116,4 +116,93 @@ public static class AgeMap
         }
         return sizes;
     }
+
+    /// <summary>
+    /// The bucket holding the most file bytes inside a node — what an age-coloured chart slice
+    /// shows; a file is its own bucket. Null for a folder whose files hold no bytes; a tie goes
+    /// to the newer bucket. Charts ask this for every slice on every paint, so the answer for
+    /// every folder comes from one pass over the tree, made the first time it is asked for this
+    /// totals array and day.
+    /// </summary>
+    public static AgeBucket? DominantBucket(FileTree tree, long[] totals, int nodeId, int today)
+    {
+        if (nodeId < 0 || nodeId >= tree.Count) return null;
+        if (!tree.IsDirectory[nodeId]) return Bucket(tree.ModifiedDay[nodeId], today);
+        if (totals.Length != tree.Count) return null;
+        byte bucket = DominantBucketsOf(tree, totals, today).Buckets[nodeId];
+        return bucket == NoBytes ? null : (AgeBucket)bucket;
+    }
+
+    private const byte NoBytes = byte.MaxValue;
+
+    /// <summary>Each node's dominant bucket, or <see cref="NoBytes"/>, for one tree and day.</summary>
+    private sealed record DominantBuckets(FileTree Tree, int Today, byte[] Buckets);
+
+    /// <summary>
+    /// Keyed by the totals array — a new one comes with every scan and size basis — and weak,
+    /// so the cache never keeps a finished scan's tree alive. A new day builds it again.
+    /// </summary>
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<long[], DominantBuckets> DominantByTotals = new();
+
+    private static DominantBuckets DominantBucketsOf(FileTree tree, long[] totals, int today)
+    {
+        if (DominantByTotals.TryGetValue(totals, out var cached) && Fits(cached)) return cached;
+        lock (DominantByTotals)
+        {
+            if (DominantByTotals.TryGetValue(totals, out cached) && Fits(cached)) return cached;
+            var built = new DominantBuckets(tree, today, BuildDominantBuckets(tree, totals, today));
+            DominantByTotals.AddOrUpdate(totals, built);
+            return built;
+        }
+
+        bool Fits(DominantBuckets c) => ReferenceEquals(c.Tree, tree) && c.Today == today && c.Buckets.Length == tree.Count;
+    }
+
+    /// <summary>
+    /// One depth-first pass: running byte totals per bucket, snapshotted as each folder is
+    /// entered; when it is left, what the totals gained is that folder's breakdown.
+    /// </summary>
+    private static byte[] BuildDominantBuckets(FileTree tree, long[] totals, int today)
+    {
+        const int k = (int)AgeBucket.Unknown + 1;
+        var buckets = new byte[tree.Count];
+        var running = new long[k];
+        var entered = new List<long>();   // k running totals per open folder
+        var stack = new Stack<int>();
+        for (int root = 0; root < tree.Count; root++)
+        {
+            if (tree.Parent[root] >= 0) continue;
+            stack.Push(root);
+            while (stack.TryPop(out int id))
+            {
+                if (id < 0)
+                {
+                    int at = entered.Count - k;
+                    byte best = NoBytes;
+                    long bestBytes = 0;
+                    for (int i = 0; i < k; i++)
+                    {
+                        long bytes = running[i] - entered[at + i];
+                        if (bytes > bestBytes) { bestBytes = bytes; best = (byte)i; }
+                    }
+                    entered.RemoveRange(at, k);
+                    buckets[~id] = best;
+                }
+                else if (tree.IsDirectory[id])
+                {
+                    entered.AddRange(running);
+                    stack.Push(~id);   // leave it after its children
+                    for (int child = tree.FirstChild[id]; child != -1; child = tree.NextSibling[child])
+                        stack.Push(child);
+                }
+                else
+                {
+                    var bucket = Bucket(tree.ModifiedDay[id], today);
+                    buckets[id] = (byte)bucket;
+                    running[(int)bucket] += Math.Max(0, totals[id]);
+                }
+            }
+        }
+        return buckets;
+    }
 }

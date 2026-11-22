@@ -312,28 +312,30 @@ public static class Rd
         VerticalAlignment = VerticalAlignment.Center,
     };
 
-    private static readonly Dictionary<(double, bool), ControlTemplate> _plainTemplates = [];
+    private static readonly Dictionary<(double, bool, bool), ControlTemplate> _plainTemplates = [];
 
     /// <summary>
-    /// The kit's button face. <paramref name="row"/>: a list row's — the content stretches to the
-    /// full width and pressing doesn't dim it (the selection shows instead).
+    /// The kit's button face, for a Button or a ToggleButton. <paramref name="row"/>: a list row's —
+    /// the content stretches to the full width and pressing doesn't dim it (the selection shows
+    /// instead). <paramref name="stretch"/>: the content stretches to the face, pressing still dims.
     /// </summary>
-    internal static ControlTemplate PlainTemplate(double radius, bool row = false)
+    internal static ControlTemplate PlainTemplate(double radius, bool row = false, bool stretch = false)
     {
-        if (_plainTemplates.TryGetValue((radius, row), out var cached)) return cached;
+        if (_plainTemplates.TryGetValue((radius, row, stretch), out var cached)) return cached;
         // Pressed: 82% (Mac: ink @ 0.82 / ink @ 8% wash); disabled: 30%.
         string pressed = row ? "" : @"
     <Trigger Property=""IsPressed"" Value=""True"">
       <Setter TargetName=""Face"" Property=""Opacity"" Value=""0.82""/>
     </Trigger>";
+        string align = row || stretch ? "Stretch" : "Center";
         string xaml = $@"
-<ControlTemplate TargetType=""Button""
+<ControlTemplate TargetType=""ButtonBase""
     xmlns=""http://schemas.microsoft.com/winfx/2006/xaml/presentation""
     xmlns:x=""http://schemas.microsoft.com/winfx/2006/xaml"">
-  <Border x:Name=""Face"" CornerRadius=""{radius}"" Background=""{{TemplateBinding Background}}""
+  <Border x:Name=""Face"" CornerRadius=""{radius.ToString(System.Globalization.CultureInfo.InvariantCulture)}"" Background=""{{TemplateBinding Background}}""
           BorderBrush=""{{TemplateBinding BorderBrush}}"" BorderThickness=""{{TemplateBinding BorderThickness}}""
           Padding=""{{TemplateBinding Padding}}"" SnapsToDevicePixels=""True"">
-    <ContentPresenter HorizontalAlignment=""{(row ? "Stretch" : "Center")}"" VerticalAlignment=""{(row ? "Stretch" : "Center")}""
+    <ContentPresenter HorizontalAlignment=""{align}"" VerticalAlignment=""{align}""
                       TextElement.Foreground=""{{TemplateBinding Foreground}}""/>
   </Border>
   <ControlTemplate.Triggers>{pressed}
@@ -343,7 +345,7 @@ public static class Rd
   </ControlTemplate.Triggers>
 </ControlTemplate>";
         var template = (ControlTemplate)XamlReader.Parse(xaml);
-        _plainTemplates[(radius, row)] = template;
+        _plainTemplates[(radius, row, stretch)] = template;
         return template;
     }
 
@@ -351,8 +353,10 @@ public static class Rd
     /// A kit control's face as a real Button on <see cref="PlainTemplate"/>: Tab reaches it,
     /// Enter and Space press it, it draws the focus ring and screen readers read
     /// <paramref name="name"/>. These used to be Borders with mouse handlers, which have none of that.
+    /// <paramref name="stretch"/>: laid out like the Border it replaces (a nav row, a picker chip, a
+    /// swatch) — the button and its content fill the space they're given, whatever the theme says.
     /// </summary>
-    internal static Button Pressable(UIElement content, string name, Action onClick, double radius)
+    internal static Button Pressable(UIElement content, string name, Action? onClick, double radius, bool stretch = false)
     {
         var button = new Button
         {
@@ -361,10 +365,17 @@ public static class Rd
             Background = Brushes.Transparent,
             BorderThickness = new Thickness(0),
             Cursor = Cursors.Hand,
-            Template = PlainTemplate(radius),
+            Template = PlainTemplate(radius, stretch: stretch),
         };
+        if (stretch)
+        {
+            button.HorizontalAlignment = HorizontalAlignment.Stretch;
+            button.VerticalAlignment = VerticalAlignment.Stretch;
+            button.MinWidth = 0;
+            button.MinHeight = 0;
+        }
         System.Windows.Automation.AutomationProperties.SetName(button, name);
-        button.Click += (_, _) => onClick();
+        if (onClick is not null) button.Click += (_, _) => onClick();
         return button;
     }
 
@@ -372,7 +383,7 @@ public static class Rd
     /// The Border the Border-typed kit controls hand back, holding their Button. Pages size,
     /// enable, tip and name that Border, so the Button reads its accessible name from it.
     /// </summary>
-    internal static Border ButtonHost(Button button)
+    internal static Border ButtonHost(System.Windows.Controls.Primitives.ButtonBase button)
     {
         var host = new Border { Child = button };
         System.Windows.Automation.AutomationProperties.SetName(host, System.Windows.Automation.AutomationProperties.GetName(button));
@@ -389,16 +400,16 @@ public static class Rd
     /// <summary>
     /// <paramref name="hard"/>: black outline, black 3,3 shadow and a 2,2 press nudge (the first
     /// launch's Scan button). <paramref name="withShadow"/> alone: just the black 3,3 block
-    /// behind the button (Overview's Review button).
+    /// behind the button (Overview's Review button). Black is RdShadow, so high contrast recolours it.
     /// </summary>
     private static ControlTemplate AccentTemplate(bool hard, bool withShadow)
     {
         if (_accentTemplates.TryGetValue((hard, withShadow), out var cached)) return cached;
         // Pressed: 85% fill (and a 2,2 nudge for the hard style); disabled: 40% fill.
         string shadow = withShadow
-            ? "<Border CornerRadius=\"8\" Background=\"Black\" Margin=\"3,3,-3,-3\"/>"
+            ? "<Border CornerRadius=\"8\" Background=\"{DynamicResource RdShadow}\" Margin=\"3,3,-3,-3\"/>"
             : "";
-        string outline = hard ? "BorderBrush=\"Black\" BorderThickness=\"1\"" : "";
+        string outline = hard ? "BorderBrush=\"{DynamicResource RdShadow}\" BorderThickness=\"1\"" : "";
         string pressedNudge = hard
             ? "<Setter TargetName=\"Face\" Property=\"RenderTransform\"><Setter.Value><TranslateTransform X=\"2\" Y=\"2\"/></Setter.Value></Setter>"
             : "";
@@ -707,6 +718,13 @@ public static class Rd
 
     /// <summary>A nav figure's compact size, "31.6G" / "640M" (AppShellView.compactBytes).</summary>
     public static string CompactBytes(long bytes) => DiskMap.Core.ShellFormat.CompactBytes(bytes);
+
+    /// <summary>
+    /// Text or a line in <paramref name="key"/> at <paramref name="opacity"/> — at full strength under
+    /// high contrast, where the key is already a Windows colour and a fade only takes contrast away.
+    /// </summary>
+    public static Brush Faded(string key, double opacity) =>
+        WithOpacity(B(key), SystemParameters.HighContrast ? 1 : opacity);
 
     public static Brush WithOpacity(Brush brush, double opacity)
     {

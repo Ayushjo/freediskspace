@@ -1,6 +1,5 @@
 using System.IO;
 using System.Windows;
-using System.Windows.Controls;
 using System.Windows.Media;
 using DiskMap.Core;
 using DiskMap.Core.Native;
@@ -57,27 +56,9 @@ public static class NodeColors
         return Ui.Data((int)((uint)hash % Ui.DataPalette.Length));
     }
 
-    private static Brush DominantAgeBrush(FileTree tree, long[] totals, int node)
-    {
-        var buckets = new Dictionary<AgeBucket, long>();
-        var stack = new Stack<int>([node]);
-        while (stack.TryPop(out int id))
-        {
-            if (tree.IsDirectory[id])
-            {
-                int child = tree.FirstChild[id];
-                while (child != -1) { stack.Push(child); child = tree.NextSibling[child]; }
-            }
-            else
-            {
-                var bucket = Core.AgeMap.Bucket(tree.ModifiedDay[id], Core.AgeMap.Today());
-                buckets[bucket] = buckets.GetValueOrDefault(bucket) + totals[id];
-            }
-        }
-        return buckets.Count == 0
-            ? OtherBrush
-            : AgeBucket(buckets.OrderByDescending(pair => pair.Value).First().Key);
-    }
+    /// <summary>The slice's bucket from AgeMap's per-scan cache (it used to walk the subtree on every paint).</summary>
+    private static Brush DominantAgeBrush(FileTree tree, long[] totals, int node) =>
+        Core.AgeMap.DominantBucket(tree, totals, node, Core.AgeMap.Today()) is { } bucket ? AgeBucket(bucket) : OtherBrush;
 
     private static Color Hsv(double h, double s, double v)
     {
@@ -105,19 +86,34 @@ public static class NodeColors
     /// <summary>Focused-cell ring — the white stroke the treemap draws (WIN-061).</summary>
     public static readonly Pen SelectionPen = Freeze(new Pen(Brushes.White, 2.5));
 
-    /// <summary>Multi-select ring — the accent pen; resolved per render so theme swaps follow.</summary>
-    public static Pen MultiPen() => new(Ui.Brush("AppAccent"), 2);
+    private static Brush? _multiAccent;
+    private static Pen? _multiPen;
 
-    /// <summary>Age-map bucket colors — ported from macOS AgeMapView.</summary>
-    public static Brush AgeBucket(AgeBucket bucket) => Freeze(new SolidColorBrush(bucket switch
+    /// <summary>Multi-select ring — the accent pen, made again only when a theme swap replaces the accent brush.</summary>
+    public static Pen MultiPen()
     {
-        Core.AgeBucket.Under30 => Hsv(0.42 * 360, 0.45, 0.72),
-        Core.AgeBucket.Days30To90 => Hsv(0.38 * 360, 0.5, 0.62),
-        Core.AgeBucket.Days90To365 => Hsv(0.12 * 360, 0.55, 0.78),
-        Core.AgeBucket.OneToTwoYears => Hsv(0.06 * 360, 0.65, 0.72),
-        Core.AgeBucket.OverTwoYears => Hsv(0.02 * 360, 0.7, 0.55),
-        _ => Hsv(0, 0, 0.6),
-    }));
+        var accent = Ui.Brush("AppAccent");
+        if (_multiPen is null || !ReferenceEquals(_multiAccent, accent))
+        {
+            _multiAccent = accent;
+            _multiPen = Freeze(new Pen(accent.CloneCurrentValue(), 2));   // a copy: freezing must not freeze the palette's brush
+        }
+        return _multiPen;
+    }
+
+    /// <summary>Age-map bucket colors — ported from macOS AgeMapView; one frozen brush per bucket.</summary>
+    private static readonly Brush[] AgeBrushes = Enum.GetValues<Core.AgeBucket>()
+        .Select(bucket => (Brush)Freeze(new SolidColorBrush(bucket switch
+        {
+            Core.AgeBucket.Under30 => Hsv(0.42 * 360, 0.45, 0.72),
+            Core.AgeBucket.Days30To90 => Hsv(0.38 * 360, 0.5, 0.62),
+            Core.AgeBucket.Days90To365 => Hsv(0.12 * 360, 0.55, 0.78),
+            Core.AgeBucket.OneToTwoYears => Hsv(0.06 * 360, 0.65, 0.72),
+            Core.AgeBucket.OverTwoYears => Hsv(0.02 * 360, 0.7, 0.55),
+            _ => Hsv(0, 0, 0.6),
+        }))).ToArray();
+
+    public static Brush AgeBucket(AgeBucket bucket) => AgeBrushes[(int)bucket];
 
     private static T Freeze<T>(T freezable) where T : Freezable { freezable.Freeze(); return freezable; }
 }
@@ -131,7 +127,11 @@ public static class NodeColors
 /// </summary>
 public static class ModelEvents
 {
-    public static void WhileLoaded(FrameworkElement element, Action onChange)
+    /// <param name="everyShow">
+    /// Run on every Loaded too, model moved or not: for a page that shows state the model doesn't
+    /// hold (what's still in the Recycle Bin, saved scans on disk). Still one queued callback.
+    /// </param>
+    public static void WhileLoaded(FrameworkElement element, Action onChange, bool everyShow = false)
     {
         bool queued = false;
         int builtFor = -1;   // the model version the last callback saw
@@ -151,68 +151,9 @@ public static class ModelEvents
         {
             ScanModel.Shared.StateChanged += handler;
             // A cached page shown again rebuilt in full on every sidebar click, changed or not.
-            if (builtFor != ScanModel.Shared.Version) Queue();
+            if (everyShow || builtFor != ScanModel.Shared.Version) Queue();
         };
         element.Unloaded += (_, _) => ScanModel.Shared.StateChanged -= handler;
-    }
-}
-
-/// <summary>
-/// A button around content the caller draws (a nav row, a picker chip, a swatch): Tab reaches
-/// it, Enter and Space click it, and it has a name for screen readers. Rd's PlainTemplate
-/// pattern, with the content stretched to the face and no label of its own.
-/// </summary>
-public static class PlainButton
-{
-    private static readonly Dictionary<double, ControlTemplate> Templates = [];
-
-    public static Button Create(UIElement content, string name, Action? onClick, double radius = 0)
-    {
-        var button = new Button
-        {
-            Content = content,
-            Template = Template(radius),
-            Padding = new Thickness(0),
-            Background = Brushes.Transparent,
-            BorderThickness = new Thickness(0),
-            // Laid out like the Border it replaces, whatever the theme's Button style says.
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment = VerticalAlignment.Stretch,
-            MinWidth = 0,
-            MinHeight = 0,
-            HorizontalContentAlignment = HorizontalAlignment.Stretch,
-            VerticalContentAlignment = VerticalAlignment.Stretch,
-            Cursor = System.Windows.Input.Cursors.Hand,
-        };
-        System.Windows.Automation.AutomationProperties.SetName(button, name);
-        if (onClick is not null) button.Click += (_, _) => onClick();
-        return button;
-    }
-
-    private static ControlTemplate Template(double radius)
-    {
-        if (Templates.TryGetValue(radius, out var cached)) return cached;
-        // Pressed: 82%, as Rd's buttons.
-        string xaml = $@"
-<ControlTemplate TargetType=""Button""
-    xmlns=""http://schemas.microsoft.com/winfx/2006/xaml/presentation""
-    xmlns:x=""http://schemas.microsoft.com/winfx/2006/xaml"">
-  <Border x:Name=""Face"" CornerRadius=""{radius.ToString(System.Globalization.CultureInfo.InvariantCulture)}""
-          Background=""{{TemplateBinding Background}}"" BorderBrush=""{{TemplateBinding BorderBrush}}""
-          BorderThickness=""{{TemplateBinding BorderThickness}}"" Padding=""{{TemplateBinding Padding}}""
-          SnapsToDevicePixels=""True"">
-    <ContentPresenter HorizontalAlignment=""{{TemplateBinding HorizontalContentAlignment}}""
-                      VerticalAlignment=""{{TemplateBinding VerticalContentAlignment}}""/>
-  </Border>
-  <ControlTemplate.Triggers>
-    <Trigger Property=""IsPressed"" Value=""True"">
-      <Setter TargetName=""Face"" Property=""Opacity"" Value=""0.82""/>
-    </Trigger>
-  </ControlTemplate.Triggers>
-</ControlTemplate>";
-        var template = (ControlTemplate)System.Windows.Markup.XamlReader.Parse(xaml);
-        Templates[radius] = template;
-        return template;
     }
 }
 

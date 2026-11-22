@@ -146,7 +146,7 @@ public sealed class ExplorePage : UserControl
         _root.Children.Add(stack);
         if (_drawerOpen)
         {
-            var scrim = new Border { Background = new SolidColorBrush(Color.FromArgb(31, 0, 0, 0)) };
+            var scrim = new Border { Background = Rd.WithOpacity(Ui.Brush("RdShadow"), 31 / 255.0) };
             scrim.MouseLeftButtonUp += (_, _) => { _drawerOpen = false; Rebuild(); };
             _root.Children.Add(scrim);
             inspector.Width = Math.Min(320, Math.Max(280, WindowWidth * 0.34));

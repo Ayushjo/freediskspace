@@ -1006,9 +1006,34 @@ public sealed class DeveloperBoardPage : UserControl
         return Scroll(stack);
     }
 
-    /// <summary>Same reason prefix as the other tabs, so the basket groups them together.</summary>
-    private static void StageTools(IReadOnlyList<int> ids, string category, bool confirm)
+    /// <summary>
+    /// What a By-tool add puts in the basket: what Clean up stages for each folder. One it offers
+    /// as its entries (Temp: one file an app holds open would fail the whole folder, and %TEMP%
+    /// itself must stay) goes in as those same entries; a folder holding no bytes adds nothing.
+    /// </summary>
+    internal static List<int> ToolTargets(IEnumerable<int> hits, IReadOnlyList<ReviewableTarget> reviewables,
+        FileTree tree, long[] totals)
     {
+        var ids = new List<int>();
+        foreach (int id in hits)
+        {
+            if (id <= 0 || id >= tree.Count || id >= totals.Length || totals[id] <= 0) continue;
+            // A target that stages the folder itself wins over one made of what's inside it (an app's cache group in there).
+            var entries = reviewables.Any(t => t.NodeIds.Contains(id)) ? null
+                : reviewables.FirstOrDefault(t => t.NodeIds.Count > 0
+                    && t.NodeIds.All(n => n > 0 && n < tree.Count && tree.Parent[n] == id));
+            if (entries is null) ids.Add(id);
+            else ids.AddRange(entries.NodeIds);
+        }
+        return ids;
+    }
+
+    /// <summary>Same reason prefix as the other tabs, so the basket groups them together.</summary>
+    private static void StageTools(IReadOnlyList<int> hits, string category, bool confirm)
+    {
+        if (Model.Tree is not { } tree) return;
+        var ids = ToolTargets(hits, Model.Reviewables ?? [], tree, Model.Totals);
+        if (ids.Count == 0) return;
         if (ids.Count == 1 && !confirm)
         {
             Model.Stage(ids[0], "Developer: " + category);

@@ -527,20 +527,23 @@ public sealed class CleanUpPage : UserControl
 
     public enum TickState { Off, On, Mixed }
 
-    /// <summary>A violet tick box: off, on, or mixed (some of a group). 16 pt, radius 4. Clean up itself uses real check boxes.</summary>
+    /// <summary>
+    /// A violet tick box: off, on, or mixed (some of a group). 16 pt, radius 4. Clean up itself uses
+    /// real check boxes. Name the Border it comes back in; the toggle inside reads its name from it.
+    /// </summary>
     public static Border TickBox(TickState state, Action action)
     {
         var mark = new Grid();
         if (state == TickState.On)
         {
-            var check = Ui.Glyph("BsCheckLg", 9.5, Brushes.White);
+            var check = Ui.Glyph("BsCheckLg", 9.5, Ui.Brush("RdOnAccent"));
             check.HorizontalAlignment = HorizontalAlignment.Center;
             check.VerticalAlignment = VerticalAlignment.Center;
             mark.Children.Add(check);
         }
         else if (state == TickState.Mixed)
         {
-            mark.Children.Add(new Rectangle { Width = 7, Height = 1.6, Fill = Brushes.White });
+            mark.Children.Add(new Rectangle { Width = 7, Height = 1.6, Fill = Ui.Brush("RdOnAccent") });
         }
         var box = new Border
         {
@@ -551,10 +554,35 @@ public sealed class CleanUpPage : UserControl
             Child = mark,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        // A 6 pt larger hit area, like the Mac's contentShape inset.
-        var hit = new Border { Padding = new Thickness(6), Margin = new Thickness(-6), Background = Brushes.Transparent, Child = box, Cursor = Cursors.Hand };
-        hit.MouseLeftButtonUp += (_, e) => { action(); e.Handled = true; };
-        return hit;
+        return TickToggle(box, state, action);
+    }
+
+    /// <summary>
+    /// The tick box's control: a real toggle button around <paramref name="face"/>, so Tab reaches
+    /// it, Space flips it and a screen reader reads its state; <paramref name="action"/> runs on a
+    /// click, Space or the screen reader's toggle. It used to be a Border only a mouse could use.
+    /// </summary>
+    internal static Border TickToggle(UIElement face, TickState state, Action action)
+    {
+        var toggle = new System.Windows.Controls.Primitives.ToggleButton
+        {
+            Content = face,
+            IsChecked = state switch { TickState.On => true, TickState.Off => false, _ => null },
+            Template = Rd.PlainTemplate(0),
+            // A 6 pt larger hit area, like the Mac's contentShape inset.
+            Padding = new Thickness(6),
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            MinWidth = 0,
+            MinHeight = 0,   // the box's own size, whatever the theme's ToggleButton style says
+            Cursor = Cursors.Hand,
+        };
+        // Set after IsChecked: only a flip runs the action, however it was asked for.
+        toggle.Checked += (_, _) => action();
+        toggle.Unchecked += (_, _) => action();
+        var host = Rd.ButtonHost(toggle);
+        host.Margin = new Thickness(-6);
+        return host;
     }
 
     // ---- Receipt ----
@@ -684,8 +712,8 @@ public sealed class CleanUpPage : UserControl
 /// <summary>The paper receipt: what moves, what you get back, where it goes, the undo (Mac: Receipt).</summary>
 public sealed class ReceiptView : Border
 {
-    private static readonly Brush Paper = Brushes.White;
-    private static Brush Black(double opacity) => new SolidColorBrush(Color.FromArgb((byte)Math.Round(opacity * 255), 0, 0, 0));
+    /// <summary>The print: black on the white paper, the window text colour under high contrast.</summary>
+    private static Brush Black(double opacity) => Rd.Faded("RdOnPaper", opacity);
 
     /// <summary>
     /// The fine print, in order. Recycling frees nothing by itself: the space comes back once the
@@ -717,7 +745,7 @@ public sealed class ReceiptView : Border
         DockPanel.SetDock(tag, Dock.Right);
         head.Children.Add(tag);
         var brand = Rd.Text("freedisk.space", 15, FontWeights.SemiBold);
-        brand.Foreground = Brushes.Black;
+        brand.Foreground = Black(1);
         head.Children.Add(brand);
         stack.Children.Add(head);
         var when = Rd.Text($"{DateTime.Now:h:mm tt} · {volumeName}", 12);
@@ -744,7 +772,7 @@ public sealed class ReceiptView : Border
         }
         stack.Children.Add(Dashed());
         var back = Leader(Rd.Text("You get back", 16, FontWeights.SemiBold), Rd.Figure(ByteFormat.Format(total), 16, FontWeights.SemiBold, "AppAccent"));
-        ((TextBlock)back.Children[0]).Foreground = Brushes.Black;
+        ((TextBlock)back.Children[0]).Foreground = Black(1);
         back.Margin = new Thickness(0, 6, 0, 6);
         stack.Children.Add(back);
         foreach (var (label, value, mono) in Terms(freeBefore, total)) stack.Children.Add(Dotted(label, value, mono: mono));
@@ -757,7 +785,7 @@ public sealed class ReceiptView : Border
         // The paper is drawn on a Canvas, which measures as zero: the torn teeth hang 7 pt below
         // the text, and a Path that took part in layout grew the box by 7 pt on every pass
         // (it pushed the Move button millions of pixels down).
-        var paper = new System.Windows.Shapes.Path { Fill = Paper, Stroke = Black(0.1), StrokeThickness = 1 };
+        var paper = new System.Windows.Shapes.Path { Fill = Ui.Brush("RdPaper"), Stroke = Black(0.1), StrokeThickness = 1 };
         var paperHost = new Canvas { ClipToBounds = false };
         paperHost.Children.Add(paper);
         var layers = new Grid();
