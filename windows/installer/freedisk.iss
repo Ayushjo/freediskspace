@@ -16,6 +16,9 @@ DefaultGroupName=freedisk.space
 DisableProgramGroupPage=yes
 ; The app itself is requireAdministrator (WIN-072), so a machine-wide install costs nothing extra.
 PrivilegesRequired=admin
+; [UninstallDelete] names {localappdata} on purpose: the elevated app keeps its scan cache under
+; the elevated account's profile, which is the one this elevated uninstaller sees.
+UsedUserAreasWarning=no
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir={#PublishDir}\..
@@ -38,3 +41,8 @@ Name: "{autodesktop}\freedisk.space"; Filename: "{app}\Freedisk.exe"; Tasks: des
 
 [Run]
 Filename: "{app}\Freedisk.exe"; Description: "{cm:LaunchProgram,freedisk.space}"; Flags: nowait postinstall skipifsilent shellexec
+
+[UninstallDelete]
+; The scan cache indexes every file on each scanned drive (ScanCache.DirectoryPath) — don't
+; leave it behind. Settings, history and snapshots beside it in DiskMap\ are the user's and stay.
+Type: filesandordirs; Name: "{localappdata}\DiskMap\ScanCache"

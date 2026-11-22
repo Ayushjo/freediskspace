@@ -172,8 +172,15 @@ public static class SnapshotCodec
         public int I32() => BinaryPrimitives.ReadInt32LittleEndian(Bytes(4).Span);
         public long I64() => BinaryPrimitives.ReadInt64LittleEndian(Bytes(8).Span);
 
+        /// <summary>Untrusted counts: a 30-byte file must not allocate a 50M-element array before failing.</summary>
+        private readonly void Need(long bytes)
+        {
+            if (bytes > _data.Length - _offset) throw new SnapshotException(SnapshotError.Corrupt);
+        }
+
         public int[] I32s(int count)
         {
+            Need((long)count * sizeof(int));
             var result = new int[count];
             for (int i = 0; i < count; i++) result[i] = I32();
             return result;
@@ -181,6 +188,7 @@ public static class SnapshotCodec
 
         public long[] I64s(int count)
         {
+            Need((long)count * sizeof(long));
             var result = new long[count];
             for (int i = 0; i < count; i++) result[i] = I64();
             return result;

@@ -16,13 +16,16 @@ namespace DiskMap.Core;
 /// Fallbacks: journal id changed (recreated), the window after the
 /// marker was overwritten before we read it, more than <see cref=
 /// "ChangeFlood"/> records, a baseline without file ids (walk backend),
-/// or a spot-check disagreement. All are silent wins for correctness.
+/// a changed record that can't be read, or a spot check that disagreed
+/// or verified too few folders. All are silent wins for correctness.
 /// </summary>
 internal static class IncrementalScan
 {
     /// <summary>Beyond this many touched records a replay costs more than a walk.</summary>
     private const int ChangeFlood = 100_000;
     private const int SpotCheckFolders = 64;
+    /// <summary>Fewer verified folders than this (or than the tree has) and the replay isn't trusted.</summary>
+    private const int SpotCheckMinimum = 16;
 
     public static WalkResult? TryRescan(
         string root, IProgress<ScanEngine.ScanProgress>? progress,
@@ -37,6 +40,9 @@ internal static class IncrementalScan
         whyNot = "not a local drive";
         if (volumeRoot is null || volumeRoot.Length < 3 || volumeRoot[1] != ':') return null;
         string volumePath = @"\\?\" + char.ToUpperInvariant(volumeRoot[0]) + ":";
+        // Same rule as the MFT scan: this volume's records can't describe a folder behind a link.
+        whyNot = "scan root is, or is under, a link or mount point";
+        if (MftScanner.CrossesLink(root)) return null;
 
         whyNot = "needs administrator";
         if (!Win32.EnableBackupPrivileges()) return null;
@@ -50,8 +56,10 @@ internal static class IncrementalScan
 
         whyNot = "not NTFS";
         if (!MftScanner.GetVolumeData(volume, out var data)) return null;
-        int recordSize = (int)data.BytesPerFileRecordSegment;
-        long clusterSize = data.BytesPerCluster;
+        whyNot = "unsupported MFT geometry";
+        if (MftScanner.GeometryOf(data) is not { } geometry) return null;
+        int recordSize = geometry.RecordSize;
+        long clusterSize = geometry.ClusterSize;
         whyNot = "$MFT layout unreadable";
         var extents = MftScanner.ReadMftExtents(
             volume, recordSize, clusterSize, data.MftStartLcn, data.MftValidDataLength);
@@ -84,19 +92,23 @@ internal static class IncrementalScan
         long FrnOf(int node) => node == 0 ? rootFrn : baseTree.FileId[node] & Win32.UsnRecordMask;
 
         // Re-read every touched record: parses live → its current state is
-        // authoritative; a dead slot means delete. USN reasons only say
-        // which FRNs to look at.
+        // authoritative; a free or reused slot means delete. USN reasons
+        // only say which FRNs to look at.
         var updates = new Dictionary<long, MftScanner.EntryInfo>();
         var dead = new HashSet<long>();
         foreach (long frn in changedFrns)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (frn == rootFrn) continue;
+            // Torn, unreadable, past the $MFT extents read above, or live
+            // but unparseable: the journal says it changed, so calling it
+            // deleted would be a guess — and the marker would move past it.
+            whyNot = $"changed record {frn} unreadable";
             var rec = MftScanner.ReadRecordAt(volume, extents, recordSize, clusterSize, frn);
-            if (rec is not null && MftScanner.ParseEntry(rec, recordSize, out var info))
-                updates[frn] = info;
-            else
-                dead.Add(frn);
+            if (rec is null) return null;
+            if (MftScanner.ParseEntry(rec, geometry, out var info)) updates[frn] = info;
+            else if (MftScanner.IsUnused(rec)) dead.Add(frn);
+            else return null;
         }
 
         // frn → baseline nodes, only for the FRNs this replay asks about:
@@ -150,7 +162,8 @@ internal static class IncrementalScan
         var childrenOf = new Dictionary<long, List<ChildSpec>>();
         void Emit(long parentFrn, ChildSpec spec)
         {
-            if (!Resolved(parentFrn)) return;
+            // Same rule as a scan: a name that wouldn't join to its own path never enters the tree.
+            if (!Resolved(parentFrn) || !FileTree.IsSafeName(spec.Name)) return;
             (childrenOf.TryGetValue(parentFrn, out var l) ? l : childrenOf[parentFrn] = []).Add(spec);
         }
         foreach (var (frn, info) in updates)
@@ -236,53 +249,9 @@ internal static class IncrementalScan
             }
         }
 
-        // Spot check: untouched folders must have the children the tree
-        // claims — a miss means the journal lost something. Random baseline
-        // directories, expected names built for just those.
-        var rng = new Random(0);
-        var checkedDirs = new HashSet<int>();
-        for (int tries = 0; checkedDirs.Count < SpotCheckFolders && tries < SpotCheckFolders * 64; tries++)
-        {
-            int node = rng.Next(1, Math.Max(2, baseTree.Count));
-            if (node >= baseTree.Count || !baseTree.IsDirectory[node]) continue;
-            long frn = baseTree.FileId[node] & Win32.UsnRecordMask;
-            if (frn == rootFrn || changedFrns.Contains(frn) || !Unchanged(frn)
-                || (baseTree.Flags[node] & NodeFlags.NotDownloaded) != 0
-                || !checkedDirs.Add(node))
-                continue;
-            var expected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            for (int c = baseTree.FirstChild[node]; c != -1; c = baseTree.NextSibling[c])
-                if (Unchanged(baseTree.FileId[c] & Win32.UsnRecordMask)) expected.Add(baseTree.NameOf(c));
-            foreach (var spec in childrenOf.GetValueOrDefault(frn) ?? [])
-                expected.Add(spec.Name);
-
-            string path = baseTree.PathOf(node, root);
-            HashSet<string> onDisk;
-            try
-            {
-                onDisk = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                // Attributes from the listing itself, as the Win32 scanner
-                // reads them (File.GetAttributes never reports
-                // RECALL_ON_OPEN), so both apply the same cloud test.
-                foreach (var entry in new DirectoryInfo(path).EnumerateFileSystemInfos())
-                {
-                    // Filter like the scanner does: non-cloud reparse
-                    // points never enter the tree, so they can't be
-                    // evidence either.
-                    uint attrs = (uint)entry.Attributes;
-                    if ((attrs & Win32.FILE_ATTRIBUTE_REPARSE_POINT) != 0
-                        && !ScanEngine.IsCloudPlaceholder(attrs, fromDirectoryEnumeration: true))
-                        continue;
-                    onDisk.Add(entry.Name);
-                }
-            }
-            catch { continue; }   // a folder we can't list isn't evidence
-            if (!onDisk.SetEquals(expected))
-            {
-                whyNot = $"spot check disagreed at {path}";
-                return null;
-            }
-        }
+        if (!SpotCheck(baseTree, root, rootFrn, frn => !changedFrns.Contains(frn) && Unchanged(frn),
+                Unchanged, frn => childrenOf.GetValueOrDefault(frn)?.Select(s => s.Name) ?? [], out whyNot))
+            return null;
 
         progress?.Report(new ScanEngine.ScanProgress(itemCount, 0, 0, "", []));
         // The rescan's own tree + end-of-replay cursor are the next baseline
@@ -300,6 +269,72 @@ internal static class IncrementalScan
             // number would be a lie about the new tree; leave empty and let
             // the next full walk recount.
         };
+    }
+
+    /// <summary>
+    /// Untouched folders must still have the children the rebuilt tree
+    /// claims — a miss means the journal lost something. Folders are
+    /// sampled with a fresh seed (a fixed one let a planted baseline know
+    /// which get looked at). One that can't be listed isn't evidence, and
+    /// it isn't a pass either: too few verified folders fail the replay.
+    /// </summary>
+    /// <param name="checkable">Whether a baseline folder (by frn) is untouched, so its listing must match.</param>
+    /// <param name="childStays">Whether a baseline child (by frn) is copied into the rebuilt tree.</param>
+    /// <param name="addedNames">Names the replay adds under a folder (by frn).</param>
+    internal static bool SpotCheck(
+        FileTree baseTree, string root, long rootFrn,
+        Func<long, bool> checkable, Func<long, bool> childStays,
+        Func<long, IEnumerable<string>> addedNames, out string? whyNot)
+    {
+        whyNot = null;
+        var sampled = new HashSet<int>();
+        int eligible = 0, verified = 0;
+        for (int tries = 0; verified < SpotCheckFolders && tries < SpotCheckFolders * 64; tries++)
+        {
+            int node = Random.Shared.Next(1, Math.Max(2, baseTree.Count));
+            if (node >= baseTree.Count || !baseTree.IsDirectory[node]) continue;
+            long frn = baseTree.FileId[node] & Win32.UsnRecordMask;
+            if (frn == rootFrn || !checkable(frn)
+                || (baseTree.Flags[node] & NodeFlags.NotDownloaded) != 0
+                || !sampled.Add(node))
+                continue;
+            eligible++;
+            var expected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            for (int c = baseTree.FirstChild[node]; c != -1; c = baseTree.NextSibling[c])
+                if (childStays(baseTree.FileId[c] & Win32.UsnRecordMask)) expected.Add(baseTree.NameOf(c));
+            expected.UnionWith(addedNames(frn));
+
+            string path = baseTree.PathOf(node, root);
+            var onDisk = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                // Attributes from the listing itself, as the Win32 scanner
+                // reads them (File.GetAttributes never reports
+                // RECALL_ON_OPEN), so both apply the same cloud test.
+                foreach (var entry in new DirectoryInfo(path).EnumerateFileSystemInfos())
+                {
+                    // Filter like the scanner does: non-cloud reparse
+                    // points never enter the tree, so they can't be
+                    // evidence either.
+                    uint attrs = (uint)entry.Attributes;
+                    if ((attrs & Win32.FILE_ATTRIBUTE_REPARSE_POINT) != 0
+                        && !ScanEngine.IsCloudPlaceholder(attrs, fromDirectoryEnumeration: true))
+                        continue;
+                    onDisk.Add(entry.Name);
+                }
+            }
+            catch { continue; }
+            if (!onDisk.SetEquals(expected))
+            {
+                whyNot = $"spot check disagreed at {path}";
+                return false;
+            }
+            verified++;
+        }
+        // At least one, and every folder there was when there were few.
+        if (verified >= Math.Max(1, Math.Min(SpotCheckMinimum, eligible))) return true;
+        whyNot = $"spot check verified {verified} of {eligible} folders";
+        return false;
     }
 
     /// <summary>

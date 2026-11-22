@@ -37,6 +37,10 @@ namespace DiskMap.Core;
 /// 33,389 items against the FindFirstFileExW walk's 33,404 (files created
 /// between the two scans); remaining size gaps are links charged once and
 /// logs being written. Run decoding and fixups also have unit tests.
+/// The 2026-11-22 hardening (geometry caps, size clamps, the root link and
+/// volume-serial checks) was checked unelevated against this machine's
+/// real volume data, a real junction and crafted records — not yet re-run
+/// elevated end to end.
 ///
 /// Layout notes (little-endian; FILE_RECORD_SEGMENT_HEADER and
 /// ATTRIBUTE_RECORD_HEADER):
@@ -110,14 +114,18 @@ internal static class MftScanner
 
         whyNot = "not NTFS";
         if (!GetVolumeData(volume, out var data)) return null;
-        int recordSize = (int)data.BytesPerFileRecordSegment;
-        long clusterSize = data.BytesPerCluster;
-        long recordCount = data.MftValidDataLength / Math.Max(1, recordSize);
         whyNot = "unsupported MFT geometry";
-        if (recordSize < 512 || clusterSize < 512 || recordCount <= FirstUserRecord || recordCount > 500_000_000)
+        if (GeometryOf(data) is not { } geometry) return null;
+        int recordSize = geometry.RecordSize;
+        long clusterSize = geometry.ClusterSize;
+        long recordCount = geometry.RecordCount;
+        if (recordCount <= FirstUserRecord || recordCount > 500_000_000) return null;
+        whyNot = "scan root is, or is under, a link or mount point";
+        if (CrossesLink(root)) return null;
+        whyNot = "scan root not found on this volume";
+        // NTFS reports a 64-bit serial; Win32 handles carry its low 32 bits.
+        if (!TryGetFileRecordIndex(root, (uint)data.VolumeSerialNumber, out long rootFrn) || rootFrn >= recordCount)
             return null;
-        whyNot = "scan root not found";
-        if (!TryGetFileRecordIndex(root, out long rootFrn) || rootFrn >= recordCount) return null;
         whyNot = "$MFT layout unreadable";
         var extents = ReadMftExtents(volume, recordSize, clusterSize, data.MftStartLcn, data.MftValidDataLength);
         if (extents is null) return null;
@@ -132,7 +140,58 @@ internal static class MftScanner
             return null;
 
         whyNot = null;
-        return BuildTree(root, (int)rootFrn, records, pools, links, extensionSizes, progress, cancellationToken);
+        return BuildTree(root, (int)rootFrn, records, pools, links, extensionSizes, geometry, progress, cancellationToken);
+    }
+
+    /// <summary>
+    /// The volume's shape, checked against NTFS's own limits (512 B–4 KiB
+    /// records, at most 2 MiB clusters): every allocation and size bound
+    /// derives from it, so a corrupt or hostile volume must not size one.
+    /// </summary>
+    internal readonly record struct Geometry(int RecordSize, long ClusterSize, long VolumeBytes, long RecordCount)
+    {
+        /// <summary>
+        /// Sizes a record claims, held to what the volume allows: on-disk
+        /// bytes to the volume's size, logical bytes to NTFS's largest file
+        /// (2^32 clusters) — a sparse file may be bigger than its volume.
+        /// </summary>
+        public (long Logical, long Allocated) Clamp(long logical, long allocated) =>
+            (Math.Clamp(logical, 0, ClusterSize << 32), Math.Clamp(allocated, 0, VolumeBytes));
+    }
+
+    internal static Geometry? GeometryOf(in Win32.NTFS_VOLUME_DATA_BUFFER data)
+    {
+        uint recordSize = data.BytesPerFileRecordSegment;
+        long clusterSize = data.BytesPerCluster;
+        if (recordSize is < 512 or > 4096 || clusterSize is < 512 or > 2 * 1024 * 1024
+            || data.TotalClusters <= 0 || data.TotalClusters > long.MaxValue / clusterSize)
+            return null;
+        long volumeBytes = data.TotalClusters * clusterSize;
+        // The $MFT can't outgrow its volume, so a corrupt length can't size the record table.
+        return new Geometry((int)recordSize, clusterSize, volumeBytes,
+            Math.Min(data.MftValidDataLength, volumeBytes) / recordSize);
+    }
+
+    /// <summary>
+    /// True when the scan root, or a folder between it and the volume
+    /// root, is a reparse point (junction, symlink, mount point…): the
+    /// record behind that path may sit on another volume or be another
+    /// folder of this one, which only the walk resolves. GetAttributes on
+    /// each prefix reports that component itself, link or not.
+    /// </summary>
+    internal static bool CrossesLink(string path)
+    {
+        string full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        int rootLength = Path.GetPathRoot(full)?.Length ?? 0;
+        for (string? p = full; p is not null && p.Length > rootLength; p = Path.GetDirectoryName(p))
+        {
+            try
+            {
+                if ((File.GetAttributes(p) & FileAttributes.ReparsePoint) != 0) return true;
+            }
+            catch (Exception) { return true; }   // can't rule a link out
+        }
+        return false;
     }
 
     internal static SafeFileHandle OpenVolume(string volumePath) => Win32.CreateFileW(
@@ -151,15 +210,23 @@ internal static class MftScanner
         }
     }
 
-    private static bool TryGetFileRecordIndex(string path, out long frn)
+    /// <summary>
+    /// The scan root's record number, from a handle on the root itself —
+    /// never through a link — and only when that handle is on the volume
+    /// being read: a record number means nothing on another volume.
+    /// </summary>
+    internal static bool TryGetFileRecordIndex(string path, uint volumeSerial, out long frn)
     {
         frn = -1;
         using var handle = Win32.CreateFileW(
             Win32.ExtendedPath(Path.GetFullPath(path)), Win32.FILE_READ_ATTRIBUTES,
             Win32.FILE_SHARE_READ | Win32.FILE_SHARE_WRITE | Win32.FILE_SHARE_DELETE,
-            IntPtr.Zero, Win32.OPEN_EXISTING, Win32.FILE_FLAG_BACKUP_SEMANTICS, IntPtr.Zero);
-        if (handle.IsInvalid) return false;
-        if (!Win32.GetFileInformationByHandle(handle, out var info)) return false;
+            IntPtr.Zero, Win32.OPEN_EXISTING,
+            Win32.FILE_FLAG_BACKUP_SEMANTICS | Win32.FILE_FLAG_OPEN_REPARSE_POINT, IntPtr.Zero);
+        if (handle.IsInvalid || !Win32.GetFileInformationByHandle(handle, out var info)
+            || (info.dwFileAttributes & Win32.FILE_ATTRIBUTE_REPARSE_POINT) != 0
+            || info.dwVolumeSerialNumber != volumeSerial)
+            return false;
         frn = (((long)info.nFileIndexHigh << 32) | info.nFileIndexLow) & RecordMask;
         return true;
     }
@@ -230,11 +297,19 @@ internal static class MftScanner
         List<(long ParentFrn, string Name)> Links);
 
     /// <summary>
-    /// Parses a prepared record into <see cref="EntryInfo"/>. False for a
-    /// free slot (in-use bit clear) or a non-base record — a changed FRN
-    /// that no longer parses means the file is gone.
+    /// A prepared record that no longer holds a file of its own: a free
+    /// slot, or one reused as another file's extension record. Only these
+    /// mean a changed FRN's file is gone.
     /// </summary>
-    internal static bool ParseEntry(Span<byte> rec, int recordSize, out EntryInfo info)
+    internal static bool IsUnused(ReadOnlySpan<byte> rec) =>
+        (U16(rec, 22) & 1) == 0 || (I64(rec, 32) & RecordMask) != 0;
+
+    /// <summary>
+    /// Parses a prepared record into <see cref="EntryInfo"/>. False for a
+    /// free slot, a non-base record (see <see cref="IsUnused"/>), or a live
+    /// record with no usable name. Sizes are clamped to the volume.
+    /// </summary>
+    internal static bool ParseEntry(Span<byte> rec, Geometry geometry, out EntryInfo info)
     {
         info = default;
         if (rec.Length < 66 || U32(rec, 0) != FileSignature) return false;
@@ -297,6 +372,7 @@ internal static class MftScanner
         if (!hasInfo) { attributes = U32(rec, fileName + 56); modified = I64(rec, fileName + 16); }
         if (!hasData) { allocated = I64(rec, fileName + 40); logical = I64(rec, fileName + 48); }
         if (isDirectory) attributes |= Win32.FILE_ATTRIBUTE_DIRECTORY;
+        (logical, allocated) = geometry.Clamp(logical, allocated);
 
         List<(long, string)>? links = null;
         for (int i = 0; i < fileNames.Count; i++)
@@ -676,7 +752,7 @@ internal static class MftScanner
     /// </summary>
     private static WalkResult BuildTree(
         string rootPath, int rootFrn, Record[] records, char[][] pools, Link[][] linkChunks,
-        ConcurrentDictionary<int, (long Logical, long Allocated)> extensionSizes,
+        ConcurrentDictionary<int, (long Logical, long Allocated)> extensionSizes, Geometry geometry,
         IProgress<ScanEngine.ScanProgress>? progress, CancellationToken cancellationToken)
     {
         int n = records.Length;
@@ -736,9 +812,15 @@ internal static class MftScanner
                 int entry = children[i];
                 int frn = entry >= 0 ? entry : links[~entry].Frn;
                 ref readonly var rec = ref records[frn];
+                var name = entry >= 0
+                    ? pools[frn / RecordsPerChunk].AsSpan(rec.NameOffset, rec.NameLength)
+                    : pools[links[~entry].Pool].AsSpan(links[~entry].NameOffset, links[~entry].NameLength);
+                // Raw names from a hostile volume: one that wouldn't join to its own path never shows.
+                if (!FileTree.IsSafeName(name)) continue;
                 long logical = rec.Logical, allocated = rec.Allocated;
                 if (!rec.HasData && extensionSizes.TryGetValue(frn, out var moved))
                     (logical, allocated) = moved;
+                (logical, allocated) = geometry.Clamp(logical, allocated);
                 // On-disk flags: 0x40000 here means "has extended attributes".
                 var decision = ScanEngine.DecideFromAttributes(rec.Attributes, logical, allocated,
                                                                fromDirectoryEnumeration: false);
@@ -754,9 +836,6 @@ internal static class MftScanner
                 }
                 if (linkState[frn] != 0) flags |= NodeFlags.HardLink;
 
-                var name = entry >= 0
-                    ? pools[frn / RecordsPerChunk].AsSpan(rec.NameOffset, rec.NameLength)
-                    : pools[links[~entry].Pool].AsSpan(links[~entry].NameOffset, links[~entry].NameLength);
                 int id = tree.AddNode(
                     name, parentId: dir.Node,
                     isDirectory: isDirectory,
