@@ -159,8 +159,18 @@ internal static class Win32Scanner
         {
             if (cancellationToken.IsCancellationRequested) break;
             // The deadline wins over an already-finished queue: a caller
-            // that asked for a head start gets null, not a result.
-            if (headStart is { } budget && DateTime.UtcNow - runStart > budget) return null;
+            // that asked for a head start gets null, not a result — and the
+            // workers stop at their next folder, rather than finishing the
+            // whole walk in the background against the MFT read that follows.
+            if (headStart is { } budget && DateTime.UtcNow - runStart > budget)
+            {
+                lock (state.Jobs)
+                {
+                    state.Finished = true;
+                    Monitor.PulseAll(state.Jobs);
+                }
+                return null;
+            }
             bool done;
             lock (state.Jobs) done = state.Finished;
             if (done) break;

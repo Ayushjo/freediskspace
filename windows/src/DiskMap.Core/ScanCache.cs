@@ -47,9 +47,10 @@ public static class ScanCache
 
     /// <summary>
     /// An elevated run keeps its cache admin-only: the tree indexes every
-    /// file on the volume, and code running as the plain user must not
-    /// read it. Unelevated runs (tests, the render harness) keep the
-    /// default inherited ACL, as before.
+    /// file on the volume, so code running as the plain user must not read
+    /// it — nor write one the elevated app would then trust. Unelevated
+    /// runs (tests, the render harness) keep the default inherited ACL and
+    /// read any cache file, as before.
     /// </summary>
     private static readonly bool AdminOnly = IsElevated();
 
@@ -85,14 +86,14 @@ public static class ScanCache
         try
         {
             var marker = JsonSerializer.Deserialize<MarkerFile>(
-                File.ReadAllText(MarkerPath(rootPath)),
+                ReadTrusted(MarkerPath(rootPath), AdminOnly),
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
             // Any scan backend's baseline works — what matters is that the
             // tree carries file ids (a non-NTFS walk's marker simply won't
             // exist, since the journal query fails there first).
             if (marker is null || marker.RootPath != rootPath)
                 return null;
-            var snapshot = SnapshotStore.Load(TreePath(rootPath));
+            var snapshot = SnapshotCodec.Decode(ReadTrusted(TreePath(rootPath), AdminOnly));
             // A tree with no file ids can't map journal FRNs — treat as absent.
             if (snapshot.Tree.Count == 0 || snapshot.Tree.FileId.All(id => id == 0))
                 return null;
@@ -138,18 +139,25 @@ public static class ScanCache
     }
 
     /// <summary>
-    /// A new file. With <paramref name="adminOnly"/> its ACL is protected
-    /// and grants only SYSTEM and Administrators, set at creation so the
-    /// bytes are never readable by anyone else.
+    /// A new file. With <paramref name="adminOnly"/> its security is set at
+    /// creation (see <see cref="AdminOnlySecurity"/>), so the bytes are
+    /// never readable by anyone else.
     /// </summary>
     internal static FileStream CreateNew(string path, bool adminOnly) => adminOnly
         ? new FileInfo(path).Create(FileMode.CreateNew, FileSystemRights.Write, FileShare.None,
             4096, FileOptions.None, AdminOnlySecurity())
         : new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
 
-    private static FileSecurity AdminOnlySecurity()
+    /// <summary>
+    /// Owned by Administrators, with a protected DACL granting only SYSTEM
+    /// and Administrators. The owner is set, not left to the default: an
+    /// owner may always rewrite the DACL, and a machine whose policy makes
+    /// the creator the owner would hand that to the plain user.
+    /// </summary>
+    internal static FileSecurity AdminOnlySecurity()
     {
         var security = new FileSecurity();
+        security.SetOwner(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null));
         security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
         foreach (var sid in new[] { WellKnownSidType.LocalSystemSid, WellKnownSidType.BuiltinAdministratorsSid })
         {
@@ -157,6 +165,37 @@ public static class ScanCache
                 new SecurityIdentifier(sid, null), FileSystemRights.FullControl, AccessControlType.Allow));
         }
         return security;
+    }
+
+    /// <summary>
+    /// True when nobody but SYSTEM and Administrators could have written
+    /// the file: both own it, and every allowing ACE is theirs (.NET reads
+    /// a missing DACL as Everyone: full control, so that fails too).
+    /// </summary>
+    internal static bool IsAdminOnly(FileSystemSecurity security)
+    {
+        static bool Trusted(IdentityReference? identity) => identity is SecurityIdentifier sid
+            && (sid.IsWellKnown(WellKnownSidType.LocalSystemSid) || sid.IsWellKnown(WellKnownSidType.BuiltinAdministratorsSid));
+        return Trusted(security.GetOwner(typeof(SecurityIdentifier)))
+            && security.GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier))
+                .Cast<FileSystemAccessRule>()
+                .All(rule => rule.AccessControlType == AccessControlType.Deny || Trusted(rule.IdentityReference));
+    }
+
+    /// <summary>
+    /// A cache file's bytes. With <paramref name="adminOnly"/> only from a
+    /// file <see cref="IsAdminOnly"/> accepts — checked on the handle the
+    /// bytes are read from, so a file a plain-user process wrote, or swapped
+    /// in after the check, is never trusted by the elevated app.
+    /// </summary>
+    internal static byte[] ReadTrusted(string path, bool adminOnly)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        if (adminOnly && !IsAdminOnly(stream.GetAccessControl()))
+            throw new UnauthorizedAccessException($"{path} could have been written without elevation");
+        var bytes = new byte[stream.Length];
+        stream.ReadExactly(bytes);
+        return bytes;
     }
 
     /// <summary>

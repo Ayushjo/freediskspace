@@ -310,40 +310,74 @@ public class ScanRobustnessTests : IDisposable
 
     // ---- 5. Admin-only cache files ----
 
+    private static bool IsWellKnown(IdentityReference? identity, WellKnownSidType type) =>
+        identity is SecurityIdentifier sid && sid.IsWellKnown(type);
+
     [Fact]
-    public void AdminOnlyCacheFilesGrantOnlySystemAndAdministrators()
+    public void AdminOnlyCacheFilesAreAdminOwnedAndGrantOnlySystemAndAdministrators()
     {
-        // Creation only: moving an admin-only file needs the elevation the
-        // app has and this test may not (Save does that move).
+        var security = ScanCache.AdminOnlySecurity();
+        Assert.True(IsWellKnown(security.GetOwner(typeof(SecurityIdentifier)), WellKnownSidType.BuiltinAdministratorsSid));
+        Assert.True(security.AreAccessRulesProtected);
+        var rules = security.GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier))
+            .Cast<FileSystemAccessRule>().ToList();
+        Assert.Equal(2, rules.Count);
+        Assert.All(rules, r => Assert.Equal(AccessControlType.Allow, r.AccessControlType));
+        Assert.Contains(rules, r => IsWellKnown(r.IdentityReference, WellKnownSidType.LocalSystemSid));
+        Assert.Contains(rules, r => IsWellKnown(r.IdentityReference, WellKnownSidType.BuiltinAdministratorsSid));
+        Assert.True(ScanCache.IsAdminOnly(security));
+
         string path = Path.Combine(_dir, "cache.bin");
         using var identity = WindowsIdentity.GetCurrent();
-        using (var stream = ScanCache.CreateNew(path, adminOnly: true)) stream.Write([1, 2, 3]);
-        try
+        if (new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
         {
-            var acl = new FileInfo(path).GetAccessControl();
-            Assert.True(acl.AreAccessRulesProtected);
-            var rules = acl.GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier))
-                .Cast<FileSystemAccessRule>().ToList();
-            Assert.Equal(2, rules.Count);
-            Assert.All(rules, r => Assert.Equal(AccessControlType.Allow, r.AccessControlType));
-            Assert.Contains(rules, r => ((SecurityIdentifier)r.IdentityReference).IsWellKnown(WellKnownSidType.LocalSystemSid));
-            Assert.Contains(rules, r => ((SecurityIdentifier)r.IdentityReference).IsWellKnown(WellKnownSidType.BuiltinAdministratorsSid));
-            if (!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
-                Assert.Throws<UnauthorizedAccessException>(() => File.ReadAllBytes(path));
-        }
-        finally
-        {
-            // This test created the file, so it owns it and may hand itself access to clean up.
-            var mine = new FileSecurity();
-            mine.AddAccessRule(new FileSystemAccessRule(identity.User!, FileSystemRights.FullControl, AccessControlType.Allow));
-            new FileInfo(path).SetAccessControl(mine);
+            using (var stream = ScanCache.CreateNew(path, adminOnly: true)) stream.Write([1, 2, 3]);
+            Assert.Equal([1, 2, 3], ScanCache.ReadTrusted(path, adminOnly: true));
             File.Delete(path);
+        }
+        else
+        {
+            // Unelevated, Administrators can't be named owner, so creation
+            // refuses outright — the owner really is part of what's applied.
+            Assert.ThrowsAny<Exception>(() => ScanCache.CreateNew(path, adminOnly: true).Dispose());
+            Assert.False(File.Exists(path));
         }
 
         string plain = Path.Combine(_dir, "plain.bin");
         using (var stream = ScanCache.CreateNew(plain, adminOnly: false)) stream.Write([7]);
         Assert.Equal([7], File.ReadAllBytes(plain));
         Assert.False(new FileInfo(plain).GetAccessControl().AreAccessRulesProtected);
+    }
+
+    [Fact]
+    public void ElevatedLoadsTrustOnlyCacheFilesNoPlainUserCouldHaveWritten()
+    {
+        using var identity = WindowsIdentity.GetCurrent();
+        var userOwned = ScanCache.AdminOnlySecurity();
+        userOwned.SetOwner(identity.User!);   // an owner can always rewrite the DACL
+        var userWritable = ScanCache.AdminOnlySecurity();
+        userWritable.AddAccessRule(new FileSystemAccessRule(
+            new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null), FileSystemRights.Write, AccessControlType.Allow));
+        var denyOnly = ScanCache.AdminOnlySecurity();
+        denyOnly.AddAccessRule(new FileSystemAccessRule(
+            new SecurityIdentifier(WellKnownSidType.WorldSid, null), FileSystemRights.Write, AccessControlType.Deny));
+        var raw = new RawSecurityDescriptor(ControlFlags.SelfRelative,
+            new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null), null, null, null);
+        var form = new byte[raw.BinaryLength];
+        raw.GetBinaryForm(form, 0);
+        var noDacl = new FileSecurity();
+        noDacl.SetSecurityDescriptorBinaryForm(form);
+
+        Assert.False(ScanCache.IsAdminOnly(userOwned));
+        Assert.False(ScanCache.IsAdminOnly(userWritable));
+        Assert.True(ScanCache.IsAdminOnly(denyOnly));
+        Assert.False(ScanCache.IsAdminOnly(noDacl));   // no DACL: everyone may write
+
+        // A cache file this test wrote: an unelevated run reads it, an elevated one refuses it.
+        string planted = Path.Combine(_dir, "planted.dmap");
+        File.WriteAllBytes(planted, [1, 2, 3]);
+        Assert.Equal([1, 2, 3], ScanCache.ReadTrusted(planted, adminOnly: false));
+        Assert.Throws<UnauthorizedAccessException>(() => ScanCache.ReadTrusted(planted, adminOnly: true));
     }
 
     // ---- 6. MFT reader on hostile or odd volumes ----
@@ -521,6 +555,36 @@ public class ScanRobustnessTests : IDisposable
         Assert.NotNull(result);
         Assert.True(calls >= 2, "the throwing report ran, then the final one");
         Assert.Contains("f.txt", Names(result.Tree));
+    }
+
+    [Fact]
+    public void AnExpiredHeadStartStopsTheWorkersToo()
+    {
+        // A chain lists one folder at a time and every open walks the whole
+        // path, so left alone this walk runs on for seconds past its deadline.
+        const int depth = 1500;
+        string deepest = _dir + string.Concat(Enumerable.Repeat(@"\d", depth));
+        Directory.CreateDirectory(deepest);
+        try
+        {
+            var returned = new ManualResetEventSlim();   // not disposed: a stray late report may still read it
+            int reportsAfter = 0;
+            var progress = new Reporter(_ =>
+            {
+                if (returned.IsSet) Interlocked.Increment(ref reportsAfter);
+            });
+            Assert.Null(Win32Scanner.Walk(_dir, progress, TimeSpan.FromMilliseconds(100)));
+            returned.Set();
+            Thread.Sleep(1500);
+            // Only the folder in hand at the deadline may still settle (and report once).
+            Assert.True(reportsAfter <= 1, $"{reportsAfter} progress reports after the head start ran out");
+        }
+        finally
+        {
+            // Deepest first, one at a time: a recursive delete this deep could run out of stack.
+            for (string? p = deepest; p is not null && p.Length > _dir.Length; p = Path.GetDirectoryName(p))
+                try { Directory.Delete(p); } catch { }
+        }
     }
 
     // ---- 9. Exports ----
