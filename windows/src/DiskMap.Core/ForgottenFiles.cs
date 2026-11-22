@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+
 namespace DiskMap.Core;
 
 // Forgotten files: the user's own big files, untouched for a year or more, with how sure we
@@ -47,6 +49,7 @@ public static class ForgottenText
     }
 }
 
+/// <param name="ModifiedDay">The later of modified and created: when the file last changed or arrived.</param>
 public sealed record ForgottenCandidate(
     int Id,
     string Name,
@@ -94,29 +97,38 @@ public static class ForgottenFiles
     /// Files older than a year and at least 1 MB, scored and capped, best first.
     /// <paramref name="today"/>: days since 1970; 0 means <see cref="AgeMap.Today"/>.
     /// <paramref name="home"/> is the profile shown as "~"; null means <see cref="UserFolders.Home"/>.
+    /// <paramref name="knownFolders"/>: where the profile's Desktop, Documents … are; null means
+    /// <see cref="KnownFolders"/>.
     /// </summary>
     public static List<ForgottenCandidate> Candidates(
-        FileTree tree, string root, long[] totals, int today = 0, int limit = 500, string? home = null)
+        FileTree tree, string root, long[] totals, int today = 0, int limit = 500, string? home = null,
+        IReadOnlyList<(string Folder, string Path)>? knownFolders = null)
     {
         if (tree.Count != totals.Length || limit <= 0) return [];
         if (today == 0) today = AgeMap.Today();
+        var known = Fold(knownFolders ?? KnownFolders());
         var held = CatalogTree.SystemHoldingFlags(tree, root);
         var output = new List<ForgottenCandidate>();
         for (int id = 1; id < tree.Count; id++)
         {
             if (tree.IsDirectory[id] || held[id]) continue;
+            // Online-only (OneDrive): nothing to free here, and recycling it deletes it from the cloud.
+            if ((tree.Flags[id] & NodeFlags.NotDownloaded) != 0) continue;
             long bytes = totals[id];
             if (bytes < MinBytes) continue;
-            int day = tree.ModifiedDay[id];
+            // A copied or extracted file keeps its old modified date; its created date is when it arrived.
+            int day = Math.Max(tree.ModifiedDay[id], tree.CreatedDay[id]);
             if (day <= 0) continue;
             int age = today - day;
             if (age <= MinAgeDays) continue;
 
             string name = tree.NameOf(id);
             string abs = tree.PathOf(id, root);
+            string lower = Folded(abs);
+            string? folder = PersonalFolder(lower, known);
             var safety = SafetyClassifier.Assess(abs, name, false);
             var kind = FileKinds.Classify(name, abs);
-            var confidence = ClassifyConfidence(abs, name, kind, safety, bytes);
+            var confidence = Classify(lower, name, kind, safety, bytes, folder);
             output.Add(new ForgottenCandidate(
                 Id: id,
                 Name: name,
@@ -129,7 +141,7 @@ public static class ForgottenFiles
                 Kind: kind,
                 Confidence: confidence,
                 Safety: safety,
-                Reasons: BuildReasons(age, bytes, abs, kind, confidence, safety),
+                Reasons: BuildReasons(age, bytes, folder, kind, confidence, safety),
                 Score: ReviewScore(age, bytes, confidence, kind, safety)));
         }
         return output
@@ -161,13 +173,62 @@ public static class ForgottenFiles
 
     // ---- Classification ----
 
-    /// <summary>The path, lowercased, with '\' folded to '/' so one rule set reads both.</summary>
-    private static string Folded(string path) => path.Replace('\\', '/').ToLowerInvariant();
+    /// <summary>
+    /// The path, lowercased, with '\' folded to '/' so one rule set reads both. The demo PC's home
+    /// (DISKMAP_HOME) reads as C:\Users\demo, as in StorageClassifier's segments, so its folders count.
+    /// </summary>
+    private static string Folded(string path)
+    {
+        if (UserFolders.Override is { } home && path.StartsWith(home, StringComparison.OrdinalIgnoreCase)
+            && (path.Length == home.Length || path[home.Length] is '\\' or '/'))
+            path = @"C:\Users\demo" + path[home.Length..];
+        return path.Replace('\\', '/').ToLowerInvariant();
+    }
 
+    private static List<(string Folder, string Path)> Fold(IReadOnlyList<(string Folder, string Path)> known) =>
+        known.Where(k => !string.IsNullOrEmpty(k.Path)).Select(k => (k.Folder, Folded(k.Path).TrimEnd('/'))).ToList();
+
+    /// <summary>
+    /// The profile's Desktop, Documents, Downloads, Music, Pictures and Videos wherever Windows keeps
+    /// them (moved to another drive, or into OneDrive). None on the demo PC (DISKMAP_HOME): nothing
+    /// from this PC's own setup.
+    /// </summary>
+    public static IReadOnlyList<(string Folder, string Path)> KnownFolders()
+    {
+        if (UserFolders.Override is not null || !OperatingSystem.IsWindows()) return [];
+        return
+        [
+            ("desktop", Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory)),
+            ("documents", Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)),
+            ("downloads", DownloadsFolder()),
+            ("music", Environment.GetFolderPath(Environment.SpecialFolder.MyMusic)),
+            ("pictures", Environment.GetFolderPath(Environment.SpecialFolder.MyPictures)),
+            ("videos", Environment.GetFolderPath(Environment.SpecialFolder.MyVideos)),
+        ];
+    }
+
+    private static readonly Guid DownloadsId = new("374DE290-123F-4565-9164-39C4925E467B");
+
+    /// <summary>FOLDERID_Downloads, which .NET's SpecialFolder lacks; "" when the shell has none.</summary>
+    private static string DownloadsFolder() =>
+        SHGetKnownFolderPath(DownloadsId, 0, IntPtr.Zero, out string? path) == 0 ? path ?? "" : "";
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    private static extern int SHGetKnownFolderPath(
+        [MarshalAs(UnmanagedType.LPStruct)] Guid id, uint flags, IntPtr token, out string? path);
+
+    /// <summary><paramref name="knownFolders"/>: as in <see cref="Candidates"/>.</summary>
     public static ForgottenConfidence ClassifyConfidence(string path, string name, FileKind kind,
-        SafetyAssessment safety, long bytes)
+        SafetyAssessment safety, long bytes, IReadOnlyList<(string Folder, string Path)>? knownFolders = null)
     {
         string lower = Folded(path);
+        return Classify(lower, name, kind, safety, bytes, PersonalFolder(lower, Fold(knownFolders ?? KnownFolders())));
+    }
+
+    /// <summary><paramref name="folder"/>: the path's <see cref="PersonalFolder"/>.</summary>
+    private static ForgottenConfidence Classify(string lower, string name, FileKind kind,
+        SafetyAssessment safety, long bytes, string? folder)
+    {
         if (safety.Level == SafetyLevel.Protected) return ForgottenConfidence.OldImportant;
         if (kind == FileKind.VirtualDisk || name.EndsWith(".raw", StringComparison.OrdinalIgnoreCase))
             return ForgottenConfidence.OldImportant;
@@ -175,11 +236,14 @@ public static class ForgottenFiles
         if (IsDeveloperOrToolchain(lower)) return ForgottenConfidence.OldImportant;
         if (IsManagedData(lower, name.ToLowerInvariant())) return ForgottenConfidence.OldImportant;
 
-        bool personal = IsPersonalLocation(lower);
-        bool highType = IsHighSignalType(kind);
-        if (personal && highType) return ForgottenConfidence.LikelyForgotten;
-        if (personal && bytes >= 50_000_000) return ForgottenConfidence.LikelyForgotten;
-        if (personal) return bytes >= WorthMinBytes ? ForgottenConfidence.WorthReviewing : ForgottenConfidence.OldImportant;
+        if (folder is not null)
+        {
+            // A video or a device backup keeps the date it was made, so an old one is no sign it's
+            // forgotten (Large media won't infer it either): worth a look at most.
+            bool keepsItsDate = kind is FileKind.Video or FileKind.DeviceBackup;
+            if (!keepsItsDate && (IsHighSignalType(kind) || bytes >= 50_000_000)) return ForgottenConfidence.LikelyForgotten;
+            return bytes >= WorthMinBytes ? ForgottenConfidence.WorthReviewing : ForgottenConfidence.OldImportant;
+        }
         // Regenerable caches (npm, etc.) are cleaned via Clean up — not Forgotten recommendations.
         if (safety.Level == SafetyLevel.Safe) return ForgottenConfidence.OldImportant;
         // Mac: outside /Library/. Windows: outside AppData and ProgramData, the same role.
@@ -221,34 +285,30 @@ public static class ForgottenFiles
     }
 
     private static readonly string[] PersonalMarkers =
-        ["/downloads/", "/movies/", "/videos/", "/desktop/", "/documents/", "/pictures/", "/music/", "/public/"];
+        ["downloads", "movies", "videos", "desktop", "documents", "pictures", "music", "public"];
 
-    private static bool IsPersonalLocation(string lower)
+    /// <summary>
+    /// The user's own folder a path is in ("downloads", "videos" …; "" for a loose file in the
+    /// profile itself), or null. A folder name counts only right under a profile — Users\name\Videos,
+    /// never a game's Data\Videos or a site's public — or as one of the profile's known folders.
+    /// </summary>
+    private static string? PersonalFolder(string lower, IReadOnlyList<(string Folder, string Path)> known)
     {
-        // ~/Library and /Library hold app data even when a folder inside is called
-        // "downloads"; on Windows AppData and ProgramData play that role.
-        if (lower.StartsWith("/library/") || lower.StartsWith("/system/volumes/data/library/")) return false;
-        if (lower.Contains("/appdata/") || lower.Contains("/programdata/")) return false;
+        // App data even when a folder inside is called "downloads" (the Mac's ~/Library).
+        if (lower.Contains("/appdata/") || lower.Contains("/programdata/")) return null;
+        foreach (var (folder, path) in known)
+            if (lower.StartsWith(path + "/", StringComparison.Ordinal)) return folder;
         int users = lower.IndexOf("/users/", StringComparison.Ordinal);
-        if (users >= 0)
-        {
-            var parts = lower[(users + "/users/".Length)..].Split('/', 3);
-            if (parts.Length > 2 && parts[1] is "library" or "appdata") return false;
-        }
-        if (PersonalMarkers.Any(lower.Contains)) return true;
-        // Loose files in the profile itself: \Users\name\file.
-        if (users >= 0)
-        {
-            var parts = lower[(users + "/users/".Length)..].Split('/', StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length == 2) return true;
-        }
-        return false;
+        if (users < 0) return null;
+        var parts = lower[(users + "/users/".Length)..].Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 2) return "";
+        return parts.Length > 2 && PersonalMarkers.Contains(parts[1]) ? parts[1] : null;
     }
 
     private static bool IsHighSignalType(FileKind kind) =>
         kind is FileKind.Video or FileKind.DiskImage or FileKind.Archive or FileKind.DeviceBackup;
 
-    private static List<string> BuildReasons(int ageDays, long bytes, string path, FileKind kind,
+    private static List<string> BuildReasons(int ageDays, long bytes, string? folder, FileKind kind,
         ForgottenConfidence confidence, SafetyAssessment safety)
     {
         var reasons = new List<string>();
@@ -258,12 +318,12 @@ public static class ForgottenFiles
         else reasons.Add($"Not modified in {years} years");
         if (bytes >= 1_000_000_000) reasons.Add("Very large file");
         else if (bytes >= 100_000_000) reasons.Add("Large file");
-        string lower = Folded(path);
-        if (lower.Contains("/downloads/")) reasons.Add("Located in Downloads");
-        else if (lower.Contains("/movies/")) reasons.Add("Located in Movies");
-        else if (lower.Contains("/videos/")) reasons.Add("Located in Videos");
-        else if (lower.Contains("/desktop/")) reasons.Add("Located in Desktop");
-        else if (lower.Contains("/documents/")) reasons.Add("Located in Documents");
+        string? place = folder switch
+        {
+            "downloads" => "Downloads", "movies" => "Movies", "videos" => "Videos",
+            "desktop" => "Desktop", "documents" => "Documents", _ => null,
+        };
+        if (place is not null) reasons.Add("Located in " + place);
         switch (kind)
         {
             case FileKind.Video: reasons.Add("Personal media file"); break;

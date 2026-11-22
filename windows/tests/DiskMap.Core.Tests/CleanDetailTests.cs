@@ -93,8 +93,8 @@ public class CleanDetailTests
             Row("Spotify", 1_900 * MB, true), Row("Swiftpm", 600 * MB, true),
         ];
         Assert.Equal("5 · 22.9 GB", CleanDetail.HeaderFigure(5, rows.Sum(r => r.Bytes)));
-        Assert.Equal("5 shown · 22.9 GB", CleanDetail.FooterLine(rows));
-        Assert.Equal("Largest 3 of 5 shown — narrow the filters for the rest", CleanDetail.FooterLine(rows, limit: 3));
+        Assert.Equal("5 shown · 22.9 GB", CleanDetail.FooterLine(rows, 5));
+        Assert.Equal("Largest 3 of 5 shown — narrow the filters for the rest", CleanDetail.FooterLine(rows[..3], 5));
         Assert.Equal(300, CleanDetail.RowLimit);
     }
 

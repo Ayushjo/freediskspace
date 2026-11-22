@@ -103,7 +103,7 @@ public class OldDownloadsCatalogTests
     [InlineData("/Users/a/Documents/x.mkv", false)]
     [InlineData(@"C:\Users\a\Downloads\x.mkv", true)]
     [InlineData(@"C:\Users\a\Downloads", true)]
-    [InlineData(@"D:\downloads-old\x.zip", true)]   // Mac rule: any component starting "downloads"
+    [InlineData(@"D:\downloads-old\x.zip", true)]   // "Downloads" and then a non-letter
     [InlineData(@"C:\Users\a\Documents\x.mkv", false)]
     public void IsUnderDownloads(string path, bool expected) =>
         Assert.Equal(expected, OldDownloadsCatalog.IsUnderDownloads(path));

@@ -188,9 +188,9 @@ public class MediaCatalogTests
             weddingRow.Recommendation);
 
         var mixRow = built.Candidates[1];
-        Assert.Equal(MediaStatus.LikelyDisposable, mixRow.Status);
+        Assert.Equal(MediaStatus.ReviewFirst, mixRow.Status);   // a name like "mix" is no sign it's scratch
         Assert.Equal("Audio file (600 MB) in Music, last modified 2y 5m ago.", mixRow.WhyHere);
-        Assert.Equal("Looks like scratch/export media that may be safe to review, but confirm before removing.",
+        Assert.Equal("Personal media. freedisk.space can’t determine whether you still need it — review first.",
             mixRow.Recommendation);
         Assert.False(built.IsTruncated);
         // At least one item over 1 GB: opportunities are only those.

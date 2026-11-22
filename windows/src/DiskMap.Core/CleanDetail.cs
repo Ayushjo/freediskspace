@@ -113,13 +113,13 @@ public static class CleanDetail
     /// <summary>The header's figure: "5 · 22.9 GB".</summary>
     public static string HeaderFigure(int count, long bytes) => $"{count:N0} · {ShellFormat.HeroBytes(bytes)}";
 
-    /// <summary>"5 shown · 22.9 GB", or past the row limit, how to see the rest.</summary>
-    public static string FooterLine(IReadOnlyCollection<CleanDetailRow> rows, int limit = RowLimit) =>
-        rows.Count > limit
-            ? $"Largest {limit:N0} of {rows.Count:N0} shown — narrow the filters for the rest"
-            : $"{rows.Count:N0} shown · {ShellFormat.HeroBytes(rows.Sum(r => r.Bytes))}";
+    /// <summary>"5 shown · 22.9 GB", or when fewer than all <paramref name="matches"/> are drawn, how to see the rest.</summary>
+    public static string FooterLine(IReadOnlyCollection<CleanDetailRow> shown, int matches) =>
+        matches > shown.Count
+            ? $"Largest {shown.Count:N0} of {matches:N0} shown — narrow the filters for the rest"
+            : $"{shown.Count:N0} shown · {ShellFormat.HeroBytes(shown.Sum(r => r.Bytes))}";
 
-    /// <summary>What the footer's button adds: the rows shown that can go in the basket and pass the page's filter.</summary>
+    /// <summary>What the footer's button adds: the rows drawn that can go in the basket and pass the page's filter.</summary>
     public static List<CleanDetailRow> Bulk(IEnumerable<CleanDetailRow> shown, Func<CleanDetailRow, bool> filter) =>
         shown.Where(r => r.Requests.Count > 0 && filter(r)).ToList();
 
