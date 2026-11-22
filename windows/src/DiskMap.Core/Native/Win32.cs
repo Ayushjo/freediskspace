@@ -377,6 +377,34 @@ internal static partial class Win32
         return @"\\?\" + path;
     }
 
+    // ---- Final paths ----
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetFinalPathNameByHandleW(
+        SafeFileHandle hFile, [Out] char[] lpszFilePath, uint cchFilePath, uint dwFlags);
+
+    /// <summary>
+    /// Where <paramref name="path"/> really is, \\?\-prefixed: 8.3 names expanded and every
+    /// junction, mount point and subst drive above it resolved. The item itself is not followed.
+    /// Null when it can't be opened.
+    /// </summary>
+    public static string? FinalPath(string path)
+    {
+        using var handle = CreateFileW(ExtendedPath(Path.GetFullPath(path)), FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, IntPtr.Zero, OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, IntPtr.Zero);
+        if (handle.IsInvalid) return null;
+        var buffer = new char[512];
+        // Flags 0: FILE_NAME_NORMALIZED | VOLUME_NAME_DOS. Too small a buffer returns the size it needs.
+        uint length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Length, 0);
+        if (length >= buffer.Length)
+        {
+            buffer = new char[length];
+            length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Length, 0);
+        }
+        return length == 0 || length >= buffer.Length ? null : new string(buffer, 0, (int)length);
+    }
+
     // ---- Known folders ----
 
     private static readonly Guid FOLDERID_Downloads = new("374DE290-123F-4565-9164-39C4925E467B");

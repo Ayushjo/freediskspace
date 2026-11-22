@@ -379,10 +379,11 @@ public sealed class CleanupQueue
     }
 
     /// <summary>
-    /// True when <paramref name="path"/> is never stageable (the exact test
-    /// <see cref="Stage"/> applies). Catalogs use this to demote hits to
-    /// "keep" — and skip them entirely — instead of offering a location the
-    /// queue would refuse anyway.
+    /// True when <paramref name="path"/>, as spelled, is never stageable —
+    /// the test <see cref="Stage"/> applies first, before
+    /// <see cref="LandsInExcludedPlace"/> checks where the item really is.
+    /// Catalogs use this to demote hits to "keep" — and skip them entirely —
+    /// instead of offering a location the queue would refuse anyway.
     /// </summary>
     public static bool IsExcludedPath(string path) => IsExcludedPath(path, KnownFolders);
 
@@ -451,6 +452,27 @@ public sealed class CleanupQueue
         Path.GetPathRoot(normalized) is { } root && root.Equals(normalized, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
+    /// True when <paramref name="path"/> really lives somewhere other than its
+    /// spelling says, and that place is on the never-stage list: a junction or
+    /// mount point above it, or a subst drive. (8.3 names never get this far:
+    /// GetFullPath expands them.) The item itself isn't followed — a staged
+    /// link goes as the link.
+    /// </summary>
+    internal static bool LandsInExcludedPlace(string path)
+    {
+        // shortcut: network paths skip this — the server resolves its own links, and a
+        // user-level program can't map drives into the elevated session; revisit if the
+        // app ever maps drives itself.
+        if (path.StartsWith(@"\\") || Path.GetPathRoot(path) is not { Length: > 0 } root
+            || new DriveInfo(root).DriveType == DriveType.Network)
+            return false;
+        // Fails open when it can't be opened (gone): its spelling was checked already.
+        if (Win32.FinalPath(path) is not { } real) return false;
+        return !string.Equals(ComparablePath(real), ComparablePath(path), StringComparison.OrdinalIgnoreCase)
+            && IsExcludedPath(real);
+    }
+
+    /// <summary>
     /// Full path without a trailing separator — except on a root, which keeps
     /// it. A bare "C:" is a trimmed drive root to every caller here; left
     /// alone, GetFullPath would read it as the working folder on C:.
@@ -503,7 +525,7 @@ public sealed class CleanupQueue
         if (input.StartsWith(@"\\?\") || input.StartsWith(@"\\.\")) return false;
         string normalized = NormalizePath(path);
         if (!normalized.Equals(Path.TrimEndingDirectorySeparator(input), StringComparison.Ordinal)) return false;
-        if (IsExcludedPath(normalized)) return false;
+        if (IsExcludedPath(normalized) || LandsInExcludedPlace(normalized)) return false;
         StagedItem item;
         lock (_gate)
         {
@@ -781,9 +803,13 @@ public sealed class CleanupQueue
             if (top.Count == 0) break;
             // Clock slack: $I creation times are what ResolveAll filters on.
             var roundStartedUtc = DateTime.UtcNow.AddSeconds(-5);
+            // Checked again right before the move: a folder above an item may
+            // have been swapped for a junction into a protected place since it
+            // was staged.
+            var nowProtected = top.Where(LandsInExcludedPlace).ToHashSet(StringComparer.OrdinalIgnoreCase);
             // Only paths that exist go in the batch — "gone afterwards" is
             // how batch success is read, so a vanished path must not count.
-            var batch = top.Where(k => File.Exists(k) || Directory.Exists(k)).ToList();
+            var batch = top.Where(k => !nowProtected.Contains(k) && (File.Exists(k) || Directory.Exists(k))).ToList();
             var refused = Shell32.RecycleItemsParallel(batch, n =>
                 progress?.Report(new CommitProgress("Moving to the Recycle Bin",
                     Interlocked.Add(ref movedCount, n), snapshot.Length)));
@@ -794,7 +820,9 @@ public sealed class CleanupQueue
                 pending.Remove(key);
                 Exception? error = null;
                 bool gone = inBatch.Contains(key) && !File.Exists(key) && !Directory.Exists(key);
-                if (refused.Contains(key))
+                if (nowProtected.Contains(key))
+                    error = new IOException($"It now leads into a protected location — nothing was moved: {item.Path}");
+                else if (refused.Contains(key))
                     error = new RecycleRefusedException(item.Path);   // the bin wouldn't take it — untouched
                 else if (!gone)
                     error = Shell32.RecycleItem(item.Path);  // real per-item error, or a retry that works
@@ -855,7 +883,7 @@ public sealed class CleanupQueue
     /// </summary>
     public static bool IsRegenerable(string path)
     {
-        if (IsExcludedPath(path)) return false;
+        if (IsExcludedPath(path) || LandsInExcludedPlace(path)) return false;
         var verdict = StorageClassifier.Classify(path, Directory.Exists(path));
         var c = verdict.Class;
         return verdict.Advice == CleanupAdvice.Fine

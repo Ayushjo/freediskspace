@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using DiskMap.Core;
 using DiskMap.Core.Native;
 
@@ -248,6 +249,79 @@ public class DeletePathSafetyTests : IDisposable
 
         Assert.True(queue.Stage(cache + @"\", 1, "real"));   // one trailing separator is the same item
         Assert.Equal(cache, queue.AllItems().Single().Path);
+    }
+
+    // ---- Where a path really lands: junctions (and 8.3 names) ----
+    // (subst drives resolve the same way; not tested: one would show up in the owner's session)
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern uint GetShortPathNameW(string longPath, [Out] char[] shortPath, uint size);
+
+    [Fact]
+    public void AnEightDotThreeNameIsRefusedLikeItsLongName()
+    {
+        // GetFullPath expands 8.3 names, so the spelling check already sees
+        // Program Files; this pins that down.
+        string commonFiles = Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFiles);
+        var buffer = new char[1024];
+        uint length = GetShortPathNameW(commonFiles, buffer, (uint)buffer.Length);
+        string alias = length is > 0 and < 1024 ? new string(buffer, 0, (int)length) : commonFiles;
+        if (alias.Equals(commonFiles, StringComparison.OrdinalIgnoreCase)) return;   // no 8.3 names on this drive
+
+        Assert.True(CleanupQueue.IsExcludedPath(alias));   // C:\PROGRA~1\COMMON~1
+        Assert.False(new CleanupQueue().Stage(alias, 1, "short-name alias"));
+    }
+
+    [Fact]
+    public void APathThroughAJunctionIsCheckedWhereItLands()
+    {
+        string intoWindows = Path.Combine(_root, "into-windows");
+        Junction(intoWindows, Environment.GetFolderPath(Environment.SpecialFolder.Windows));
+        string alias = Path.Combine(_root, "alias");
+        Junction(alias, Dir("real"));
+        Dir(@"real\cache");
+        try
+        {
+            var queue = new CleanupQueue();
+            Assert.False(queue.Stage(Path.Combine(intoWindows, "System32"), 1, "junction bypass"));
+            Assert.True(queue.Stage(Path.Combine(alias, "cache"), 1, "an ordinary alias"));   // only protected landings are refused
+        }
+        finally
+        {
+            Directory.Delete(intoWindows);   // the links alone
+            Directory.Delete(alias);
+        }
+    }
+
+    [Fact]
+    public async Task AFolderSwappedForAJunctionAfterStagingIsNotMoved()
+    {
+        // Where the junction leads must be excluded, yet ours to lose should the
+        // check ever fail: a folder of our own inside Windows\Temp.
+        string landing = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Temp", $"dm-landing-{Guid.NewGuid():N}");
+        try { Directory.CreateDirectory(Path.Combine(landing, "item")); }
+        catch (UnauthorizedAccessException) { return; }   // this account can't write there
+        string proj = Dir("proj");
+        string item = Dir(@"proj\item");
+        try
+        {
+            var queue = new CleanupQueue();
+            Assert.True(queue.Stage(item, 1, "test"));
+            await queue.WaitForMeasurements();
+            Directory.Move(proj, proj + "-old");
+            Junction(proj, landing);
+
+            var report = queue.Commit();
+
+            Assert.Contains("protected", report.Entries.Single().Error?.Message);
+            Assert.True(Directory.Exists(Path.Combine(landing, "item")), "nothing in the protected place moved");
+            Assert.Single(queue.AllItems());   // stays staged
+        }
+        finally
+        {
+            try { Directory.Delete(proj); } catch { }   // the junction alone
+            Directory.Delete(landing, recursive: true);
+        }
     }
 
     // ---- 5. A commit keeps what was staged while it ran ----
