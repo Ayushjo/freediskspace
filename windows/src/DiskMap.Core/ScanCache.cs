@@ -1,3 +1,5 @@
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -29,9 +31,9 @@ public static class ScanCache
     public static string DirectoryPath => Path.Combine(UserFolders.StateDirectory, "ScanCache");
 
     private static string Key(string rootPath) => StorageHistory.Hash(rootPath);
-    private static string TreePath(string rootPath) =>
+    internal static string TreePath(string rootPath) =>
         Path.Combine(DirectoryPath, Key(rootPath) + ".dmap");
-    private static string MarkerPath(string rootPath) =>
+    internal static string MarkerPath(string rootPath) =>
         Path.Combine(DirectoryPath, Key(rootPath) + ".marker.json");
 
     // Saves run in the background, one after another: the 500 MB encode +
@@ -40,6 +42,22 @@ public static class ScanCache
     // and a forced full rescan (Remove) can't be undone by a late save.
     private static readonly object PendingGate = new();
     private static Task _pending = Task.CompletedTask;
+    /// <summary>Roots whose baseline Remove dropped: never loaded again until a Save replaces it, even if a file couldn't be deleted.</summary>
+    private static readonly HashSet<string> Dropped = [];
+
+    /// <summary>
+    /// An elevated run keeps its cache admin-only: the tree indexes every
+    /// file on the volume, and code running as the plain user must not
+    /// read it. Unelevated runs (tests, the render harness) keep the
+    /// default inherited ACL, as before.
+    /// </summary>
+    private static readonly bool AdminOnly = IsElevated();
+
+    private static bool IsElevated()
+    {
+        using var identity = WindowsIdentity.GetCurrent();
+        return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
+    }
 
     /// <summary>
     /// Queues <see cref="Save"/> off the caller's thread. The tree must not
@@ -62,6 +80,8 @@ public static class ScanCache
     public static Baseline? Load(string rootPath)
     {
         WaitForPendingSaves();
+        lock (PendingGate)
+            if (Dropped.Contains(rootPath)) return null;
         try
         {
             var marker = JsonSerializer.Deserialize<MarkerFile>(
@@ -91,11 +111,8 @@ public static class ScanCache
         try
         {
             Directory.CreateDirectory(DirectoryPath);
-            string treePath = TreePath(rootPath);
-            string tmp = treePath + ".tmp";
-            File.WriteAllBytes(tmp, SnapshotCodec.Encode(
-                new DiskSnapshot(rootPath, DateTimeOffset.Now, tree)));
-            File.Move(tmp, treePath, overwrite: true);
+            WriteReplacing(TreePath(rootPath), SnapshotCodec.Encode(
+                new DiskSnapshot(rootPath, DateTimeOffset.Now, tree)), AdminOnly);
             var file = new MarkerFile
             {
                 RootPath = rootPath,
@@ -104,23 +121,55 @@ public static class ScanCache
                 Usn = marker.NextUsn,
                 SavedUtc = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
             };
-            string markerPath = MarkerPath(rootPath);
-            string markerTmp = markerPath + ".tmp";
-            File.WriteAllText(markerTmp, JsonSerializer.Serialize(file));
-            File.Move(markerTmp, markerPath, overwrite: true);
+            WriteReplacing(MarkerPath(rootPath), JsonSerializer.SerializeToUtf8Bytes(file), AdminOnly);
+            lock (PendingGate) Dropped.Remove(rootPath);
         }
         catch { /* a cache write failure only costs the next scan's speed */ }
     }
 
-    /// <summary>Drops the baseline — the "full rescan" guarantee (Ctrl+Shift+R).</summary>
+    /// <summary>Writes a temp file beside <paramref name="path"/>, then moves it over — a same-volume move keeps the temp file's own ACL.</summary>
+    private static void WriteReplacing(string path, byte[] bytes, bool adminOnly)
+    {
+        string tmp = path + ".tmp";
+        // CreateNew below: an existing file would keep whatever ACL it has.
+        File.Delete(tmp);
+        using (var stream = CreateNew(tmp, adminOnly)) stream.Write(bytes);
+        File.Move(tmp, path, overwrite: true);
+    }
+
+    /// <summary>
+    /// A new file. With <paramref name="adminOnly"/> its ACL is protected
+    /// and grants only SYSTEM and Administrators, set at creation so the
+    /// bytes are never readable by anyone else.
+    /// </summary>
+    internal static FileStream CreateNew(string path, bool adminOnly) => adminOnly
+        ? new FileInfo(path).Create(FileMode.CreateNew, FileSystemRights.Write, FileShare.None,
+            4096, FileOptions.None, AdminOnlySecurity())
+        : new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+
+    private static FileSecurity AdminOnlySecurity()
+    {
+        var security = new FileSecurity();
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        foreach (var sid in new[] { WellKnownSidType.LocalSystemSid, WellKnownSidType.BuiltinAdministratorsSid })
+        {
+            security.AddAccessRule(new FileSystemAccessRule(
+                new SecurityIdentifier(sid, null), FileSystemRights.FullControl, AccessControlType.Allow));
+        }
+        return security;
+    }
+
+    /// <summary>
+    /// Drops the baseline — the "full rescan" guarantee (Ctrl+Shift+R).
+    /// Fails safe: Load ignores this root until the next Save even when a
+    /// file is held open and won't delete, and the marker goes first
+    /// (Load needs both files) so a later process can't replay it either.
+    /// </summary>
     public static void Remove(string rootPath)
     {
         WaitForPendingSaves();
-        try
-        {
-            File.Delete(TreePath(rootPath));
-            File.Delete(MarkerPath(rootPath));
-        }
-        catch { }
+        lock (PendingGate) Dropped.Add(rootPath);
+        try { File.Delete(MarkerPath(rootPath)); } catch { }
+        try { File.Delete(TreePath(rootPath)); } catch { }
     }
 }

@@ -156,8 +156,10 @@ public sealed class ScanEngine
     {
         string? whyNot = null;
         // WIN-031: a saved baseline + USN journal replay beats re-walking.
-        // Falls through on any doubt — the journal only accelerates.
-        if (IncrementalScan.TryRescan(root, progress, ct, out var rescanWhy) is { } incremental)
+        // Falls through on any doubt — the journal only accelerates, so a
+        // bad baseline must cost one rescan, not every scan of this root.
+        if (Guarded((out string? why) => IncrementalScan.TryRescan(root, progress, ct, out why),
+                out var rescanWhy) is { } incremental)
             return incremental;
         // The marker is recorded BEFORE the walk, whichever backend wins:
         // changes that land mid-scan replay on the next rescan.
@@ -190,11 +192,17 @@ public sealed class ScanEngine
         return walked;
     }
 
-    private static WalkResult? TryMft(string root, IProgress<ScanProgress>? progress, CancellationToken ct, out string? whyNot)
+    private static WalkResult? TryMft(string root, IProgress<ScanProgress>? progress, CancellationToken ct, out string? whyNot) =>
+        Guarded((out string? why) => MftScanner.Walk(root, progress, ct, out why), out whyNot);
+
+    internal delegate WalkResult? Attempt(out string? whyNot);
+
+    /// <summary>An accelerated backend's attempt: any failure but cancellation becomes "fall back", with the message as the reason.</summary>
+    internal static WalkResult? Guarded(Attempt attempt, out string? whyNot)
     {
         try
         {
-            return MftScanner.Walk(root, progress, ct, out whyNot);
+            return attempt(out whyNot);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)

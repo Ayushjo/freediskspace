@@ -514,11 +514,20 @@ public sealed class FileTree
     }
 
     /// <summary>
+    /// A child name that joins into exactly the path it shows: not empty,
+    /// not a "." or ".." step, and no separator, NUL or stream colon.
+    /// Trailing dots and spaces are legal on disk, so they pass. Scanners
+    /// drop names that fail, and a packed tree carrying one is rejected.
+    /// </summary>
+    internal static bool IsSafeName(ReadOnlySpan<char> name) =>
+        name.Length > 0 && name is not ("." or "..") && name.IndexOfAny("\\/:\0") < 0;
+
+    /// <summary>
     /// Replaces packed storage after a snapshot load and rebuilds the
     /// name lookup. Arrays must all have <c>nameIndex.Count</c> elements;
     /// <paramref name="fileId"/> may be empty (pre-v3 file) and is then
     /// zero-filled. Returns false and leaves the tree unchanged if the
-    /// counts disagree.
+    /// counts disagree or the arrays are not one tree (see <see cref="IsOneTree"/>).
     /// </summary>
     public bool ReplacePacked(
         List<string> nameTable,
@@ -542,8 +551,8 @@ public sealed class FileTree
         {
             return false;
         }
-        foreach (int index in nameIndex)
-            if (index < 0 || index >= nameTable.Count) return false;
+        if (!IsOneTree(nameTable, nameIndex, parent, firstChild, nextSibling, logicalSize, allocatedSize))
+            return false;
 
         _nameTable.Clear();
         _nameTable.AddRange(nameTable);
@@ -566,6 +575,52 @@ public sealed class FileTree
         // them with ReplaceSharing when the file carries rows.
         ClearSharing();
         return true;
+    }
+
+    /// <summary>
+    /// Scan caches and .snapshot files are user-writable and the app runs
+    /// elevated, so packed arrays are untrusted: a cycle would hang PathOf
+    /// and the rollups, and a name like "..\x" would act on a path other
+    /// than the one shown. Accepts only one tree rooted at node 0 — every
+    /// other node reached exactly once through firstChild/nextSibling,
+    /// with a matching parent — plus in-range links and names, sizes ≥ 0,
+    /// and safe child names. Explicit stack, no recursion.
+    /// </summary>
+    private static bool IsOneTree(
+        List<string> nameTable, int[] nameIndex, int[] parent, int[] firstChild,
+        int[] nextSibling, long[] logicalSize, long[] allocatedSize)
+    {
+        int n = nameIndex.Length;
+        if (n == 0) return true;
+        if (parent[0] != -1 || nextSibling[0] != -1) return false;
+        var unsafeName = new bool[nameTable.Count];
+        for (int i = 0; i < nameTable.Count; i++) unsafeName[i] = !IsSafeName(nameTable[i]);
+        static bool Link(int index, int n) => index >= -1 && index < n;
+        for (int i = 0; i < n; i++)
+        {
+            if (nameIndex[i] < 0 || nameIndex[i] >= nameTable.Count
+                || !Link(parent[i], n) || !Link(firstChild[i], n) || !Link(nextSibling[i], n)
+                || logicalSize[i] < 0 || allocatedSize[i] < 0
+                || (i > 0 && unsafeName[nameIndex[i]]))
+            {
+                return false;
+            }
+        }
+        var visited = new System.Collections.BitArray(n) { [0] = true };
+        int reached = 1;
+        var stack = new Stack<int>();
+        stack.Push(0);
+        while (stack.TryPop(out int node))
+        {
+            for (int child = firstChild[node]; child != -1; child = nextSibling[child])
+            {
+                if (visited[child] || parent[child] != node) return false;
+                visited[child] = true;
+                reached++;
+                stack.Push(child);
+            }
+        }
+        return reached == n;
     }
 
     /// <summary>

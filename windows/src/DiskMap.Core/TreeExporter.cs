@@ -44,41 +44,50 @@ public static class TreeExporter
 
     private static string ToJson(FileTree tree, long[] totals, string rootPath)
     {
-        // Recursion depth = real directory depth — bounded by the
-        // filesystem's own limits, fine for a by-request export.
+        // Iterative: paths can nest thousands deep (NTFS allows ~32k
+        // chars), which overflows a recursive writer's stack — and each
+        // level is two JSON levels, past Utf8JsonWriter's default 1000.
         var buffer = new StringBuilder(totals.Length * 48);
-        var writer = new Utf8JsonWriter(new JsonBufferWriterAdapter(buffer));
-        WriteNode(writer, tree, totals, rootPath, 0);
-        writer.Flush();
-        return buffer.ToString();
-    }
-
-    private static void WriteNode(
-        Utf8JsonWriter w, FileTree tree, long[] totals, string rootPath, int id)
-    {
-        w.WriteStartObject();
-        w.WriteString("name", id == 0 ? rootPath : tree.NameOf(id));
-        w.WriteNumber("logicalBytes", tree.LogicalSize[id]);
-        w.WriteNumber("allocatedBytes", totals[id]);
-        w.WriteBoolean("directory", tree.IsDirectory[id]);
-        if (tree.ModifiedDay[id] > 0)
-            w.WriteNumber("modifiedDay", tree.ModifiedDay[id]);
-        if (tree.CreatedDay[id] > 0)
-            w.WriteNumber("createdDay", tree.CreatedDay[id]);
-        if (tree.Flags[id] != 0)
-            w.WriteString("flags", Convert.ToHexString([tree.Flags[id]]));
-        int child = tree.FirstChild[id];
-        if (child != -1)
+        var w = new Utf8JsonWriter(new JsonBufferWriterAdapter(buffer),
+            new JsonWriterOptions { MaxDepth = int.MaxValue });
+        // Next sibling to write in each open children array; -1 closes the array and its parent.
+        var pending = new Stack<int>();
+        void Open(int id)
         {
-            w.WriteStartArray("children");
-            while (child != -1)
+            w.WriteStartObject();
+            w.WriteString("name", id == 0 ? rootPath : tree.NameOf(id));
+            w.WriteNumber("logicalBytes", tree.LogicalSize[id]);
+            w.WriteNumber("allocatedBytes", totals[id]);
+            w.WriteBoolean("directory", tree.IsDirectory[id]);
+            if (tree.ModifiedDay[id] > 0)
+                w.WriteNumber("modifiedDay", tree.ModifiedDay[id]);
+            if (tree.CreatedDay[id] > 0)
+                w.WriteNumber("createdDay", tree.CreatedDay[id]);
+            if (tree.Flags[id] != 0)
+                w.WriteString("flags", Convert.ToHexString([tree.Flags[id]]));
+            int child = tree.FirstChild[id];
+            if (child == -1)
             {
-                WriteNode(w, tree, totals, rootPath, child);
-                child = tree.NextSibling[child];
+                w.WriteEndObject();
+                return;
             }
-            w.WriteEndArray();
+            w.WriteStartArray("children");
+            pending.Push(child);
         }
-        w.WriteEndObject();
+        Open(0);
+        while (pending.TryPop(out int id))
+        {
+            if (id == -1)
+            {
+                w.WriteEndArray();
+                w.WriteEndObject();
+                continue;
+            }
+            pending.Push(tree.NextSibling[id]);
+            Open(id);
+        }
+        w.Flush();
+        return buffer.ToString();
     }
 
     private static string ToNdjson(FileTree tree, long[] totals, string rootPath)
@@ -120,11 +129,18 @@ public static class TreeExporter
         return sb.ToString();
     }
 
-    /// <summary>RFC 4180: quote when the field holds a comma, quote, or newline.</summary>
-    private static string Csv(string field) =>
-        field.IndexOfAny([',', '"', '\n', '\r']) < 0
+    /// <summary>
+    /// RFC 4180: quote when the field holds a comma, quote, or newline —
+    /// after neutralising a leading formula character (OWASP CSV
+    /// injection), so a file named "=cmd|…" opens as text in a spreadsheet.
+    /// </summary>
+    private static string Csv(string field)
+    {
+        if (field.Length > 0 && field[0] is '=' or '+' or '-' or '@' or '\t' or '\r') field = "'" + field;
+        return field.IndexOfAny([',', '"', '\n', '\r']) < 0
             ? field
             : "\"" + field.Replace("\"", "\"\"") + "\"";
+    }
 
     /// <summary>
     /// ncdu `-o` JSON: [[1,0,{progver}],[rootEntry]] where an entry is
@@ -134,33 +150,35 @@ public static class TreeExporter
     {
         var sb = new StringBuilder(totals.Length * 32);
         sb.Append("[1,0,{\"progname\":\"diskmap\"},");
-        WriteNcduEntry(sb, tree, totals, rootPath, 0);
+        // Iterative for the same reason as ToJson. Each frame is the next
+        // entry to write in an open children array; -1 closes that array.
+        var pending = new Stack<(int Id, bool First)>();
+        void Open(int id)
+        {
+            sb.Append("{\"name\":");
+            sb.Append(JsonSerializer.Serialize(id == 0 ? rootPath : tree.NameOf(id)));
+            sb.Append(",\"asize\":").Append(tree.LogicalSize[id]);
+            sb.Append(",\"dsize\":").Append(totals[id]);
+            sb.Append('}');
+            int child = tree.FirstChild[id];
+            if (child == -1) return;
+            sb.Append(",[");
+            pending.Push((child, true));
+        }
+        Open(0);
+        while (pending.TryPop(out var next))
+        {
+            if (next.Id == -1)
+            {
+                sb.Append(']');
+                continue;
+            }
+            if (!next.First) sb.Append(',');
+            pending.Push((tree.NextSibling[next.Id], false));
+            Open(next.Id);
+        }
         sb.Append(']');
         return sb.ToString();
-    }
-
-    private static void WriteNcduEntry(
-        StringBuilder sb, FileTree tree, long[] totals, string rootPath, int id)
-    {
-        sb.Append("{\"name\":");
-        sb.Append(JsonSerializer.Serialize(id == 0 ? rootPath : tree.NameOf(id)));
-        sb.Append(",\"asize\":").Append(tree.LogicalSize[id]);
-        sb.Append(",\"dsize\":").Append(totals[id]);
-        sb.Append('}');
-        int child = tree.FirstChild[id];
-        if (child != -1)
-        {
-            sb.Append(",[");
-            bool first = true;
-            while (child != -1)
-            {
-                if (!first) sb.Append(',');
-                first = false;
-                WriteNcduEntry(sb, tree, totals, rootPath, child);
-                child = tree.NextSibling[child];
-            }
-            sb.Append(']');
-        }
     }
 
     /// <summary>

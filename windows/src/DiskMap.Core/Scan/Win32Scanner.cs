@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using DiskMap.Core.Native;
+using Microsoft.Win32.SafeHandles;
 
 namespace DiskMap.Core;
 
@@ -204,9 +205,41 @@ internal static class Win32Scanner
                 }
                 job = state.Jobs.Dequeue();
             }
-            ScanDirectory(job, state, buffer);
+            // A throw costs this folder, never the process (an unhandled
+            // exception on a raw thread ends the app), and the job settles
+            // exactly once — twice would end the walk early, never would hang it.
+            Listing listing;
+            try { listing = ScanDirectory(job, state, buffer); }
+            catch (Exception) { listing = new Listing([], Failed: true); }
+            try { state.Settle(job, listing); }
+            catch (Exception) { }   // Settle's accounting runs in a finally
         }
     }
+
+    /// <summary>How one directory's listing ended; Unopened carries the Win32 error or NTSTATUS that stopped it.</summary>
+    private readonly record struct Listing(
+        List<Entry> Entries, bool Failed, bool Unopened = false, int Error = 0, int NtStatus = 0);
+
+    // FILE_ATTRIBUTE_TAG_INFO via GetFileInformationByHandleEx(FileAttributeTagInfo = 9):
+    // one cheap query per folder for "is this handle a link".
+    private const int FileAttributeTagInfo = 9;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FILE_ATTRIBUTE_TAG_INFO
+    {
+        public uint FileAttributes;
+        public uint ReparseTag;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetFileInformationByHandleEx(
+        SafeFileHandle hFile, int FileInformationClass, out FILE_ATTRIBUTE_TAG_INFO lpFileInformation, int dwBufferSize);
+
+    /// <summary>True when the handle is itself a reparse point (opened with FILE_FLAG_OPEN_REPARSE_POINT).</summary>
+    internal static unsafe bool IsLink(SafeFileHandle handle) =>
+        GetFileInformationByHandleEx(handle, FileAttributeTagInfo, out var tag, sizeof(FILE_ATTRIBUTE_TAG_INFO))
+        && (tag.FileAttributes & Win32.FILE_ATTRIBUTE_REPARSE_POINT) != 0;
 
     /// <summary>
     /// Field offsets inside one FILE_ID_BOTH_DIR_INFORMATION record —
@@ -218,21 +251,24 @@ internal static class Win32Scanner
     private const int FileIdOffset = 96;
     private const int FileNameOffset = 104;
 
-    private static unsafe void ScanDirectory(Job job, State state, byte[] buffer)
+    private static unsafe Listing ScanDirectory(Job job, State state, byte[] buffer)
     {
         string dirPath = Win32.ExtendedPath(job.Path);
+        // Below the root every folder was listed as a plain directory, so
+        // a link there now was swapped in mid-scan: open it without
+        // following, and skip it. The root may be a link the user chose.
+        bool belowRoot = job.NodeId != 0;
         using var handle = Win32.CreateFileW(
             dirPath,
             Win32.FILE_LIST_DIRECTORY | Win32.FILE_READ_ATTRIBUTES | Win32.SYNCHRONIZE,
             Win32.FILE_SHARE_READ | Win32.FILE_SHARE_WRITE | Win32.FILE_SHARE_DELETE,
             IntPtr.Zero, Win32.OPEN_EXISTING,
-            Win32.FILE_FLAG_BACKUP_SEMANTICS | Win32.FILE_SYNCHRONOUS_IO_NONALERT,
+            Win32.FILE_FLAG_BACKUP_SEMANTICS | Win32.FILE_SYNCHRONOUS_IO_NONALERT
+                | (belowRoot ? Win32.FILE_FLAG_OPEN_REPARSE_POINT : 0),
             IntPtr.Zero);
         if (handle.IsInvalid)
-        {
-            state.NoteUnopenedDirectory(job, Marshal.GetLastWin32Error());
-            return;
-        }
+            return new Listing([], Failed: false, Unopened: true, Error: Marshal.GetLastWin32Error());
+        if (belowRoot && IsLink(handle)) return new Listing([], Failed: true);
         lock (state.Jobs) state.CurrentFolder = job.Path;
 
         var entries = new List<Entry>(256);
@@ -248,10 +284,7 @@ internal static class Win32Scanner
                     ReturnSingleEntry: false, IntPtr.Zero, RestartScan: restart);
                 restart = false;
                 if (status == Win32.STATUS_ACCESS_DENIED)
-                {
-                    state.NoteUnopenedDirectory(job, 0, ntStatus: status);
-                    return;
-                }
+                    return new Listing([], Failed: false, Unopened: true, NtStatus: status);
                 if (status == Win32.STATUS_NO_MORE_FILES || status == Win32.STATUS_NO_SUCH_FILE
                     || status == Win32.STATUS_OBJECT_NAME_NOT_FOUND)
                 {
@@ -267,34 +300,44 @@ internal static class Win32Scanner
                 bool sane = true;
                 while (true)
                 {
+                    // Offsets and lengths come from the page (a network
+                    // server's, say): bound each before reading, so a bad
+                    // one costs this folder rather than a read past the buffer.
+                    if (buffer.Length - offset < FileNameOffset)
+                    {
+                        sane = false;
+                        break;
+                    }
                     var rec = new ReadOnlySpan<byte>(p + offset, buffer.Length - offset);
                     int next = I32(rec, 0);
                     int nameLength = I32(rec, NameLengthOffset);
-                    if (nameLength < 0 || FileNameOffset + nameLength > rec.Length)
+                    if (nameLength < 0 || nameLength > rec.Length - FileNameOffset || next < 0 || next > rec.Length)
                     {
                         sane = false;
                         break;  // malformed page — stop trusting it
                     }
                     string name = System.Text.Encoding.Unicode.GetString(
                         rec.Slice(FileNameOffset, nameLength));
-                    if (name is not ("." or ".."))
+                    if (FileTree.IsSafeName(name))
                     {
                         entries.Add(new Entry(
                             Name: name,
                             Attributes: (uint)I32(rec, 56),
-                            LogicalSize: I64(rec, 40),
-                            AllocatedSize: I64(rec, 48),
+                            LogicalSize: Math.Max(0, I64(rec, 40)),
+                            AllocatedSize: Math.Max(0, I64(rec, 48)),
                             ModifiedDay: Win32.FileTimeToModifiedDay(I64(rec, 24)),
                             CreatedDay: Win32.FileTimeToModifiedDay(I64(rec, 8)),
                             FileId: I64(rec, FileIdOffset)));
                     }
-                    if (next <= 0) break;
+                    // A name that wouldn't join to its own path is dropped, so this folder's total is short.
+                    else if (name is not ("." or "..")) failed = true;
+                    if (next == 0) break;
                     offset += next;
                 }
                 if (!sane) { failed = true; break; }
             }
         }
-        state.Publish(job, entries, failed);
+        return new Listing(entries, failed);
 
         static int I32(ReadOnlySpan<byte> rec, int at) =>
             System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(rec[at..]);
@@ -303,83 +346,94 @@ internal static class Win32Scanner
     }
 
     /// <summary>
-    /// Inserts a completed listing's nodes and enqueues the child
-    /// directories — always inside the same lock, so a dequeued-but-
-    /// unpublished batch can never look like termination.
+    /// Settles one job: inserts a completed listing's nodes and enqueues
+    /// the child directories — always inside the same lock, so a dequeued-
+    /// but-unpublished batch can never look like termination. The job's
+    /// accounting runs in a finally: a lost decrement would hang the walk.
     /// </summary>
-    private static void Publish(this State state, Job job, List<Entry> entries, bool failed)
+    private static void Settle(this State state, Job job, Listing listing)
     {
         lock (state.Jobs)
         {
-            foreach (var e in entries)
+            bool failed = listing.Failed;
+            try
             {
-                var decision = ScanEngine.DecideFromAttributes(
-                    e.Attributes, e.LogicalSize, e.AllocatedSize);
-                if (!decision.Include) continue;
-                byte flags = 0;
-                if (decision.NotDownloaded)
+                if (listing.Unopened) failed = state.NoteUnopened(job, listing.Error, listing.NtStatus);
+                else state.Insert(job, listing.Entries);
+            }
+            catch { failed = true; throw; }
+            finally
+            {
+                state.Inflight--;
+                if (failed) state.FailedDirectories++;
+                if (state.Inflight == 0 && state.Jobs.Count == 0) state.Finished = true;
+                Monitor.PulseAll(state.Jobs);
+            }
+            if (!listing.Unopened) state.MaybeReport();
+        }
+    }
+
+    private static void Insert(this State state, Job job, List<Entry> entries)
+    {
+        foreach (var e in entries)
+        {
+            var decision = ScanEngine.DecideFromAttributes(
+                e.Attributes, e.LogicalSize, e.AllocatedSize);
+            if (!decision.Include) continue;
+            byte flags = 0;
+            if (decision.NotDownloaded)
+            {
+                flags |= NodeFlags.NotDownloaded;
+                state.NotDownloaded++;
+            }
+            bool isDir = (e.Attributes & Win32.FILE_ATTRIBUTE_DIRECTORY) != 0;
+            if (!isDir && e.FileId == 0) state.NoIdentity++;
+            int nodeId = state.Tree.AddNode(
+                e.Name, job.NodeId, isDir,
+                decision.LogicalSize, decision.AllocatedSize,
+                e.ModifiedDay, flags, e.CreatedDay, e.FileId);
+            state.ItemCount++;
+            int top = job.TopLevelId == -1 ? nodeId : job.TopLevelId;
+            state.TopBytes[top] = state.TopBytes.GetValueOrDefault(top) + decision.AllocatedSize;
+            if (isDir && !decision.SkipDescendants)
+            {
+                // Inflight counts enqueued-but-unpublished jobs; a
+                // publish can only ever be one job down.
+                state.Jobs.Enqueue(new Job(nodeId, job.Path + '\\' + e.Name, top));
+                state.Inflight++;
+            }
+            else if (!isDir && e.FileId != 0)
+            {
+                if (state.FirstByFileId.TryGetValue(e.FileId, out int first))
                 {
-                    flags |= NodeFlags.NotDownloaded;
-                    state.NotDownloaded++;
+                    state.Tree.AddFlags(first, NodeFlags.HardLink);
+                    state.Tree.AddFlags(nodeId, NodeFlags.HardLink);
                 }
-                bool isDir = (e.Attributes & Win32.FILE_ATTRIBUTE_DIRECTORY) != 0;
-                if (!isDir && e.FileId == 0) state.NoIdentity++;
-                int nodeId = state.Tree.AddNode(
-                    e.Name, job.NodeId, isDir,
-                    decision.LogicalSize, decision.AllocatedSize,
-                    e.ModifiedDay, flags, e.CreatedDay, e.FileId);
-                state.ItemCount++;
-                int top = job.TopLevelId == -1 ? nodeId : job.TopLevelId;
-                state.TopBytes[top] = state.TopBytes.GetValueOrDefault(top) + decision.AllocatedSize;
-                if (isDir && !decision.SkipDescendants)
+                else
                 {
-                    // Inflight counts enqueued-but-unpublished jobs; a
-                    // publish can only ever be one job down.
-                    state.Jobs.Enqueue(new Job(nodeId, job.Path + '\\' + e.Name, top));
-                    state.Inflight++;
-                }
-                else if (!isDir && e.FileId != 0)
-                {
-                    if (state.FirstByFileId.TryGetValue(e.FileId, out int first))
-                    {
-                        state.Tree.AddFlags(first, NodeFlags.HardLink);
-                        state.Tree.AddFlags(nodeId, NodeFlags.HardLink);
-                    }
-                    else
-                    {
-                        state.FirstByFileId[e.FileId] = nodeId;
-                    }
+                    state.FirstByFileId[e.FileId] = nodeId;
                 }
             }
-            state.Inflight--;
-            if (failed) state.FailedDirectories++;
-            if (state.Inflight == 0 && state.Jobs.Count == 0) state.Finished = true;
-            state.MaybeReport();
-            Monitor.PulseAll(state.Jobs);
         }
     }
 
     /// <summary>
     /// A directory whose listing never ran — the node is already in the
     /// tree, so access-denied cases are reported against it while other
-    /// failures are only counted.
+    /// failures are only counted. True when this one counts as failed.
     /// </summary>
-    private static void NoteUnopenedDirectory(this State state, Job job, int error,
-        int ntStatus = 0)
+    private static bool NoteUnopened(this State state, Job job, int error, int ntStatus)
     {
-        lock (state.Jobs)
+        bool denied = error is Win32.ERROR_ACCESS_DENIED or Win32.ERROR_NETWORK_ACCESS_DENIED
+            || ntStatus == Win32.STATUS_ACCESS_DENIED;
+        if (denied)
         {
-            bool denied = error is Win32.ERROR_ACCESS_DENIED or Win32.ERROR_NETWORK_ACCESS_DENIED
-                || ntStatus == Win32.STATUS_ACCESS_DENIED;
-            if (denied) state.DeniedDirectoryIds.Add(job.NodeId);
-            // ERROR_FILE_NOT_FOUND / PATH_NOT_FOUND = raced deletion —
-            // transient, not a failure worth reporting.
-            else if (error is not (Win32.ERROR_FILE_NOT_FOUND or Win32.ERROR_PATH_NOT_FOUND)
-                && ntStatus is not (Win32.STATUS_NO_SUCH_FILE or Win32.STATUS_OBJECT_NAME_NOT_FOUND))
-                state.FailedDirectories++;
-            state.Inflight--;
-            if (state.Inflight == 0 && state.Jobs.Count == 0) state.Finished = true;
-            Monitor.PulseAll(state.Jobs);
+            state.DeniedDirectoryIds.Add(job.NodeId);
+            return false;
         }
+        // ERROR_FILE_NOT_FOUND / PATH_NOT_FOUND = raced deletion —
+        // transient, not a failure worth reporting.
+        return error is not (Win32.ERROR_FILE_NOT_FOUND or Win32.ERROR_PATH_NOT_FOUND)
+            && ntStatus is not (Win32.STATUS_NO_SUCH_FILE or Win32.STATUS_OBJECT_NAME_NOT_FOUND);
     }
 }

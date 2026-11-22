@@ -46,7 +46,8 @@ public static class UsnJournal
     /// <summary>
     /// Reads every journal record strictly after <paramref name="from"/>
     /// on journal <paramref name="journalId"/>. Wrapped when the window
-    /// [from, firstReturned) was overwritten before we could read it.
+    /// [from, firstReturned) was overwritten before we could read it; null
+    /// when a read fails or returns a record <see cref="ParsePage"/> rejects.
     /// </summary>
     public static unsafe Changes? ReadAll(
         SafeFileHandle volume, Marker from, CancellationToken ct, int maxEntries = 2_000_000)
@@ -63,7 +64,6 @@ public static class UsnJournal
         var entries = new List<Entry>();
         var buffer = new byte[64 * 1024];
         bool wrapped = false;
-        bool first = true;
         long cursor = from.NextUsn;
 
         while (true)
@@ -80,45 +80,48 @@ public static class UsnJournal
             }
             if (bytes <= 8) break;   // just the continuation USN — journal empty
             cursor = BinaryPrimitives.ReadInt64LittleEndian(buffer.AsSpan(0, 8));
-            int pos = 8;
-            while (pos + 8 <= bytes)
-            {
-                int recordLength = BinaryPrimitives.ReadInt32LittleEndian(buffer.AsSpan(pos));
-                if (recordLength <= 0 || pos + recordLength > bytes) break;
-                var rec = buffer.AsSpan(pos, recordLength);
-                int major = BinaryPrimitives.ReadUInt16LittleEndian(rec.Slice(4));
-                if (major == Win32.UsnRecordVersion2 && rec.Length >= Win32.UsnRecordMinLength)
-                {
-                    long frn = BinaryPrimitives.ReadInt64LittleEndian(rec.Slice(8))
-                        & Win32.UsnRecordMask;
-                    long parent = BinaryPrimitives.ReadInt64LittleEndian(rec.Slice(16))
-                        & Win32.UsnRecordMask;
-                    long usn = BinaryPrimitives.ReadInt64LittleEndian(rec.Slice(24));
-                    uint reason = BinaryPrimitives.ReadUInt32LittleEndian(rec.Slice(40));
-                    uint attrs = BinaryPrimitives.ReadUInt32LittleEndian(rec.Slice(52));
-                    int nameBytes = BinaryPrimitives.ReadUInt16LittleEndian(rec.Slice(56));
-                    int nameOffset = BinaryPrimitives.ReadUInt16LittleEndian(rec.Slice(58));
-                    string name = nameOffset + nameBytes <= rec.Length && nameBytes > 0
-                        ? System.Text.Encoding.Unicode.GetString(
-                            rec.Slice(nameOffset, nameBytes))
-                        : "";
-                    entries.Add(new Entry(frn, parent, name, reason, usn, attrs));
-                    if (first)
-                    {
-                        // The first record we get back carries a USN newer
-                        // than our marker when the journal overwrote what
-                        // we meant to replay.
-                        first = false;
-                        if (usn > from.NextUsn + 1) wrapped = true;
-                    }
-                    if (entries.Count >= maxEntries)
-                        return new Changes(entries, new Marker(from.JournalId, usn), Wrapped: true);
-                }
-                pos += recordLength;
-            }
-            // A zero-length tail means the read returned no records.
-            if (pos <= 8) break;
+            int before = entries.Count;
+            // A record we can't read is a change the replay would miss.
+            if (!ParsePage(buffer.AsSpan(8, bytes - 8), entries)) return null;
+            // The first record we get back carries a USN newer than our
+            // marker when the journal overwrote what we meant to replay.
+            if (before == 0 && entries.Count > 0 && entries[0].Usn > from.NextUsn + 1) wrapped = true;
+            if (entries.Count >= maxEntries)
+                return new Changes(entries, new Marker(from.JournalId, entries[^1].Usn), Wrapped: true);
+            // A tail too short for a record means the read returned none.
+            if (entries.Count == before) break;
         }
         return new Changes(entries, new Marker(from.JournalId, cursor), wrapped);
+    }
+
+    /// <summary>
+    /// The USN_RECORD_V2s of one FSCTL_READ_USN_JOURNAL page (after its
+    /// 8-byte continuation USN). False on any record shorter than the V2
+    /// header, running past the page, or of another version — the replay
+    /// must fail rather than skip it. A tail under 8 bytes is padding.
+    /// </summary>
+    internal static bool ParsePage(ReadOnlySpan<byte> page, List<Entry> entries)
+    {
+        int pos = 0;
+        while (pos + 8 <= page.Length)
+        {
+            int recordLength = BinaryPrimitives.ReadInt32LittleEndian(page.Slice(pos));
+            if (recordLength < Win32.UsnRecordMinLength || recordLength > page.Length - pos) return false;
+            var rec = page.Slice(pos, recordLength);
+            if (BinaryPrimitives.ReadUInt16LittleEndian(rec.Slice(4)) != Win32.UsnRecordVersion2) return false;
+            long frn = BinaryPrimitives.ReadInt64LittleEndian(rec.Slice(8)) & Win32.UsnRecordMask;
+            long parent = BinaryPrimitives.ReadInt64LittleEndian(rec.Slice(16)) & Win32.UsnRecordMask;
+            long usn = BinaryPrimitives.ReadInt64LittleEndian(rec.Slice(24));
+            uint reason = BinaryPrimitives.ReadUInt32LittleEndian(rec.Slice(40));
+            uint attrs = BinaryPrimitives.ReadUInt32LittleEndian(rec.Slice(52));
+            int nameBytes = BinaryPrimitives.ReadUInt16LittleEndian(rec.Slice(56));
+            int nameOffset = BinaryPrimitives.ReadUInt16LittleEndian(rec.Slice(58));
+            string name = nameOffset + nameBytes <= rec.Length && nameBytes > 0
+                ? System.Text.Encoding.Unicode.GetString(rec.Slice(nameOffset, nameBytes))
+                : "";
+            entries.Add(new Entry(frn, parent, name, reason, usn, attrs));
+            pos += recordLength;
+        }
+        return true;
     }
 }
