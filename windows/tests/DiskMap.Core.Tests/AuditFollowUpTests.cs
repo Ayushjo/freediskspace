@@ -95,14 +95,14 @@ public class AuditFollowUpTests : IDisposable
     // ---- The delete path ----
 
     [Fact]
-    public void AVanishedItemSaysSoAndACommitThatMovedNothingKeepsTheLastPutBack()
+    public async Task AVanishedItemSaysSoAndACommitThatMovedNothingKeepsTheLastPutBack()
     {
         var previous = new CleanupRecord(DateTimeOffset.Now.AddDays(-1),
             [new CleanupRecord.Item(@"C:\x\old.bin", @"C:\$Recycle.Bin\S-1\$Rold.bin", 1)]);
         previous.Save();
         var queue = new CleanupQueue();
         Assert.True(queue.Stage(Path.Combine(_dir, "gone.bin"), 1, "test"));
-        queue.WaitForMeasurements().Wait();
+        await queue.WaitForMeasurements();
 
         var report = queue.Commit();
 
