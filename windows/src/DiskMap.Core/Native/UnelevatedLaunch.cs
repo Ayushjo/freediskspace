@@ -55,6 +55,31 @@ public static class UnelevatedLaunch
     }
 
     /// <summary>
+    /// Runs <paramref name="action"/> on this thread as the desktop shell's user: the signed-in
+    /// person's own rights, never this process's administrator token, so whatever it writes the
+    /// user could have written. False, with nothing run, when there is no shell token to take.
+    /// </summary>
+    internal static bool RunAsShellUser(Action action)
+    {
+        uint shellPid = ShellProcessId();
+        if (shellPid == 0) return false;
+        using var shell = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, shellPid);
+        if (shell.IsInvalid || !OpenProcessToken(shell, TOKEN_DUPLICATE | TOKEN_QUERY, out var primary)) return false;
+        using (primary)
+        {
+            if (!DuplicateTokenEx(primary, TOKEN_IMPERSONATE | TOKEN_QUERY, IntPtr.Zero,
+                    SecurityImpersonation, TokenImpersonation, out var token))
+                return false;
+            using (token)
+            {
+                try { WindowsIdentity.RunImpersonated(token, action); }
+                catch (System.Security.SecurityException) { return false; }   // Windows refused the token: nothing ran
+            }
+        }
+        return true;
+    }
+
+    /// <summary>
     /// The shell-parented start, whatever this process's elevation (tests call it unelevated).
     /// Returns the new process's handle, or null when any step failed.
     /// </summary>
@@ -108,6 +133,12 @@ public static class UnelevatedLaunch
     }
 
     private const uint PROCESS_CREATE_PROCESS = 0x0080;
+    private const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+    private const uint TOKEN_DUPLICATE = 0x0002;
+    private const uint TOKEN_IMPERSONATE = 0x0004;
+    private const uint TOKEN_QUERY = 0x0008;
+    private const int SecurityImpersonation = 2;
+    private const int TokenImpersonation = 2;
     private const int PROC_THREAD_ATTRIBUTE_PARENT_PROCESS = 0x00020000;
     private const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
     internal const uint CREATE_NEW_CONSOLE = 0x00000010;
@@ -145,6 +176,15 @@ public static class UnelevatedLaunch
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern SafeProcessHandle OpenProcess(uint access, bool inheritHandle, uint processId);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool OpenProcessToken(SafeProcessHandle process, uint access, out SafeAccessTokenHandle token);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DuplicateTokenEx(SafeAccessTokenHandle existing, uint access, IntPtr attributes,
+        int impersonationLevel, int tokenType, out SafeAccessTokenHandle token);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

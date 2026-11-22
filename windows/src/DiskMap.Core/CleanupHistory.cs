@@ -16,8 +16,8 @@ public sealed class CleanupHistory
     {
         public int Number { get; set; }
         public CleanupRecord Record { get; set; } = new(DateTimeOffset.MinValue, []);
-        /// <summary>Recycle Bin paths of the items already put back.</summary>
-        public List<string> Restored { get; set; } = [];
+        /// <summary>Recycle Bin paths of the items already put back. A set (still a JSON array), so lookups stay O(1).</summary>
+        public HashSet<string> Restored { get; set; } = [];
     }
 
     /// <summary>Where an item is now.</summary>
@@ -71,8 +71,7 @@ public sealed class CleanupHistory
     public void MarkRestored(IEnumerable<CleanupRecord.Item> items, int number)
     {
         if (Entries.FirstOrDefault(e => e.Number == number) is not { } entry) return;
-        foreach (var item in items)
-            if (!entry.Restored.Contains(item.TrashedPath)) entry.Restored.Add(item.TrashedPath);
+        foreach (var item in items) entry.Restored.Add(item.TrashedPath);
     }
 
     /// <summary>Put back wins; otherwise the Recycle Bin copy decides.</summary>

@@ -377,11 +377,51 @@ internal static partial class Win32
         return @"\\?\" + path;
     }
 
+    // ---- Final paths ----
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetFinalPathNameByHandleW(
+        SafeFileHandle hFile, [Out] char[] lpszFilePath, uint cchFilePath, uint dwFlags);
+
+    /// <summary>
+    /// Where <paramref name="path"/> really is, \\?\-prefixed: 8.3 names expanded and every
+    /// junction, mount point and subst drive above it resolved. The item itself is not followed.
+    /// Null when it can't be opened.
+    /// </summary>
+    public static string? FinalPath(string path)
+    {
+        using var handle = CreateFileW(ExtendedPath(Path.GetFullPath(path)), FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, IntPtr.Zero, OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, IntPtr.Zero);
+        if (handle.IsInvalid) return null;
+        var buffer = new char[512];
+        // Flags 0: FILE_NAME_NORMALIZED | VOLUME_NAME_DOS. Too small a buffer returns the size it needs.
+        uint length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Length, 0);
+        if (length >= buffer.Length)
+        {
+            buffer = new char[length];
+            length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Length, 0);
+        }
+        return length == 0 || length >= buffer.Length ? null : new string(buffer, 0, (int)length);
+    }
+
+    // ---- Known folders ----
+
+    private static readonly Guid FOLDERID_Downloads = new("374DE290-123F-4565-9164-39C4925E467B");
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern int SHGetKnownFolderPath(
+        [MarshalAs(UnmanagedType.LPStruct)] Guid rfid, uint dwFlags, IntPtr hToken,
+        [MarshalAs(UnmanagedType.LPWStr)] out string? ppszPath);
+
+    /// <summary>The real Downloads folder, wherever it was moved (.NET has no SpecialFolder for it); null when unknown.</summary>
+    public static string? DownloadsFolder() =>
+        SHGetKnownFolderPath(FOLDERID_Downloads, 0, IntPtr.Zero, out var path) == 0 ? path : null;
+
     // ---- Token privileges ----
     //
-    // Raw volume reads need SeBackupPrivilege/SeRestorePrivilege
-    // *enabled* in the process token —
-    // elevated tokens carry them present-but-disabled, so AdjustTokenPrivileges
+    // Raw volume reads need SeBackupPrivilege *enabled* in the process token —
+    // elevated tokens carry it present-but-disabled, so AdjustTokenPrivileges
     // is mandatory before touching $MFT. Without it the MFT path silently
     // fails and every scan falls back to FindFirstFileExW.
 
@@ -427,8 +467,10 @@ internal static partial class Win32
     public static extern bool CloseHandle(IntPtr hObject);
 
     /// <summary>
-    /// Enables SeBackupPrivilege + SeRestorePrivilege on the current process
-    /// token. Returns false when the process can't hold them (non-elevated).
+    /// Enables SeBackupPrivilege on the current process token — every caller
+    /// only reads (volume, $MFT, change journal). Never the restore privilege:
+    /// it lets backup-semantics opens write and delete past ACLs, the net the
+    /// never-stage list relies on. False when the process can't hold it (non-elevated).
     /// </summary>
     public static bool EnableBackupPrivileges()
     {
@@ -436,23 +478,16 @@ internal static partial class Win32
             return false;
         try
         {
-            bool ok = true;
-            foreach (var name in new[] { "SeBackupPrivilege", "SeRestorePrivilege" })
+            if (!LookupPrivilegeValueW(null, "SeBackupPrivilege", out var luid)) return false;
+            var tp = new TOKEN_PRIVILEGES
             {
-                if (!LookupPrivilegeValueW(null, name, out var luid)) { ok = false; continue; }
-                var tp = new TOKEN_PRIVILEGES
-                {
-                    PrivilegeCount = 1,
-                    Privileges = new LUID_AND_ATTRIBUTES { Luid = luid, Attributes = SE_PRIVILEGE_ENABLED },
-                };
-                if (!AdjustTokenPrivileges(token, false, ref tp, 0, IntPtr.Zero, IntPtr.Zero))
-                    ok = false;
-                // AdjustTokenPrivileges returns success even when a privilege
-                // isn't assigned — GetLastError reports NOT_ALL_ASSIGNED.
-                else if (Marshal.GetLastWin32Error() == 1300 /* ERROR_NOT_ALL_ASSIGNED */)
-                    ok = false;
-            }
-            return ok;
+                PrivilegeCount = 1,
+                Privileges = new LUID_AND_ATTRIBUTES { Luid = luid, Attributes = SE_PRIVILEGE_ENABLED },
+            };
+            // AdjustTokenPrivileges returns success even when the privilege
+            // isn't assigned — GetLastError reports NOT_ALL_ASSIGNED.
+            return AdjustTokenPrivileges(token, false, ref tp, 0, IntPtr.Zero, IntPtr.Zero)
+                && Marshal.GetLastWin32Error() != 1300 /* ERROR_NOT_ALL_ASSIGNED */;
         }
         finally
         {

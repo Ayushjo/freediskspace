@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using DiskMap.Core.Native;
 
 namespace DiskMap.Core;
 
@@ -137,7 +138,7 @@ public static class RecycleBinStore
         return result;
     }
 
-    private static string Normalize(string path) => Path.GetFullPath(path).TrimEnd('\\');
+    internal static string Normalize(string path) => Path.GetFullPath(path).TrimEnd('\\');
 
     /// <summary>
     /// $I v1 (Win7/8): version(8)=1, size(8), deletedTime(8), name = 260
@@ -182,59 +183,109 @@ public static class RecycleBinStore
 
 public static class PutBack
 {
+    private const string NotInBin = "No longer in the Recycle Bin";
+    private const string ExplorerRestores = "restore it from the Recycle Bin in File Explorer";
+
     /// <summary>
     /// Moves the last cleanup's items from the Recycle Bin back where they
     /// were. Never a removal: an item is skipped, with the reason, when
     /// it is no longer in the bin or when something new already sits at
     /// its old path (nothing is replaced). A missing parent folder is
     /// recreated. Only File.Move / Directory.Move — restoring a file.
+    ///
+    /// The record is a file any program the user runs can rewrite, and this
+    /// app runs elevated, so nothing in it is trusted: only this user's bin
+    /// copy of that very path comes back, never to a place the queue would
+    /// refuse to stage, and elevated the moves run as the signed-in user.
     /// </summary>
-    public static PutBackReport Run(CleanupRecord record)
+    public static PutBackReport Run(CleanupRecord record) => Run(record, asShellUser: UnelevatedLaunch.IsElevated);
+
+    /// <param name="asShellUser">Move with the desktop shell's token; tests force it unelevated.</param>
+    internal static PutBackReport Run(CleanupRecord record, bool asShellUser)
     {
         var restored = new List<CleanupRecord.Item>();
         var skipped = new List<(CleanupRecord.Item, string)>();
+        string sid = System.Security.Principal.WindowsIdentity.GetCurrent().User?.Value ?? "";
+
+        // Stale bin paths (the bin renamed an item on a later collision) are
+        // looked up anew: one read of each volume's bin for all of them.
+        var resolved = new Dictionary<string, RecycleBinStore.Entry>();
+        try
+        {
+            var stale = record.Items.Where(i => !File.Exists(i.TrashedPath) && !Directory.Exists(i.TrashedPath))
+                .Select(i => i.OriginalPath).ToList();
+            if (stale.Count > 0) resolved = RecycleBinStore.ResolveAll(stale);
+        }
+        catch { /* an unreadable path is skipped by the check below */ }
+
+        var moves = new List<(CleanupRecord.Item Item, string Original, RecycleBinStore.Entry Copy)>();
         foreach (var item in record.Items)
         {
-            string original = Path.GetFullPath(item.OriginalPath).TrimEnd('\\');
-            string trashed = item.TrashedPath;
-            bool inBin = File.Exists(trashed) || Directory.Exists(trashed);
-            if (!inBin)
-            {
-                // The recorded bin path is stale — try resolving anew in
-                // case the bin renamed it on a subsequent collision.
-                var resolved = RecycleBinStore.Resolve(original);
-                if (resolved is null)
-                {
-                    skipped.Add((item, "No longer in the Recycle Bin"));
-                    continue;
-                }
-                trashed = resolved.DataPath;
-            }
-            if (File.Exists(original) || Directory.Exists(original))
-            {
-                skipped.Add((item, $"Something new is at {original}"));
-                continue;
-            }
             try
             {
-                string? parent = Path.GetDirectoryName(original);
-                if (parent is not null) Directory.CreateDirectory(parent);
-                if (Directory.Exists(trashed)) Directory.Move(trashed, original);
-                else File.Move(trashed, original);
-                // The $I metadata record goes too — otherwise the bin
-                // keeps listing a ghost entry. This deletes a metadata
-                // sidecar inside $Recycle.Bin itself, never user data.
-                string infoSibling = Path.Combine(
-                    Path.GetDirectoryName(trashed)!,
-                    "$I" + Path.GetFileName(trashed)[2..]);
-                if (File.Exists(infoSibling)) File.Delete(infoSibling);
-                restored.Add(item);
+                string original = RecycleBinStore.Normalize(item.OriginalPath);
+                if (CleanupQueue.IsExcludedPath(original))
+                {
+                    skipped.Add((item, "A protected location — " + ExplorerRestores));
+                    continue;
+                }
+                var copy = BinCopyOf(item.TrashedPath, original, sid)
+                    ?? (resolved.TryGetValue(original, out var e) ? BinCopyOf(e.DataPath, original, sid) : null);
+                if (copy is null) skipped.Add((item, NotInBin));
+                else moves.Add((item, original, copy));
             }
-            catch (Exception ex)
+            catch { skipped.Add((item, NotInBin)); }
+        }
+
+        void MoveAll()
+        {
+            foreach (var (item, original, copy) in moves)
             {
-                skipped.Add((item, ex.Message));
+                if (File.Exists(original) || Directory.Exists(original))
+                {
+                    skipped.Add((item, $"Something new is at {original}"));
+                    continue;
+                }
+                try
+                {
+                    string? parent = Path.GetDirectoryName(original);
+                    if (parent is not null) Directory.CreateDirectory(parent);
+                    if (Directory.Exists(copy.DataPath)) Directory.Move(copy.DataPath, original);
+                    else File.Move(copy.DataPath, original);
+                    // Its $I metadata record goes too — otherwise the bin keeps
+                    // listing a ghost entry. Only the one checked above, inside
+                    // this user's $Recycle.Bin, never user data.
+                    File.Delete(copy.InfoPath);
+                    restored.Add(item);
+                }
+                catch (UnauthorizedAccessException) { skipped.Add((item, "Access denied — " + ExplorerRestores)); }
+                catch (Exception ex) { skipped.Add((item, ex.Message)); }
             }
         }
+
+        if (!asShellUser) MoveAll();
+        else if (!UnelevatedLaunch.RunAsShellUser(MoveAll))   // fail closed: no shell token, no move
+            skipped.AddRange(moves.Select(m => (m.Item, "Couldn't act as the signed-in user — " + ExplorerRestores)));
         return new PutBackReport(restored, skipped);
+    }
+
+    /// <summary>
+    /// The bin's own record of <paramref name="trashed"/> when it is this user's
+    /// Recycle Bin copy of <paramref name="original"/>: a $R entry directly in
+    /// &lt;original's drive&gt;\$Recycle.Bin\&lt;user SID&gt; whose $I sibling names
+    /// that same path. Null for anything else.
+    /// </summary>
+    internal static RecycleBinStore.Entry? BinCopyOf(string trashed, string original, string sid)
+    {
+        string full = Path.GetFullPath(trashed);
+        string name = Path.GetFileName(full);
+        string? root = Path.GetPathRoot(original);
+        if (sid.Length == 0 || string.IsNullOrEmpty(root) || name.Length <= 2 || !name.StartsWith("$R", StringComparison.Ordinal))
+            return null;
+        string bin = Path.Combine(root, "$Recycle.Bin", sid);
+        if (!string.Equals(Path.GetDirectoryName(full), bin, StringComparison.OrdinalIgnoreCase)) return null;
+        var entry = RecycleBinStore.ReadInfoFile(Path.Combine(bin, "$I" + name[2..]));
+        return entry is not null && RecycleBinStore.Normalize(entry.OriginalPath).Equals(original, StringComparison.OrdinalIgnoreCase)
+            ? entry : null;
     }
 }

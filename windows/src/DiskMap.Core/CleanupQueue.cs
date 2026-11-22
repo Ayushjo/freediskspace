@@ -1,4 +1,7 @@
+using System.ComponentModel;
+using System.Runtime.InteropServices;
 using DiskMap.Core.Native;
+using Microsoft.Win32.SafeHandles;
 
 namespace DiskMap.Core;
 
@@ -128,8 +131,8 @@ public sealed class CleanupQueue
         }
     }
 
-    /// <summary>Test seam: replaces the journal read (returns the changed-FRN set).</summary>
-    internal Func<UsnJournal.Marker, HashSet<long>?>? JournalChangesForTest;
+    /// <summary>Test seam: replaces the journal read (returns its entries since the marker).</summary>
+    internal Func<UsnJournal.Marker, IReadOnlyList<UsnJournal.Entry>?>? JournalChangesForTest;
 
     /// <summary>
     /// Staging measurement straight from the scan tree (TASK-082 port):
@@ -166,12 +169,14 @@ public sealed class CleanupQueue
         }
 
         // Change check: every file id under the staged dir must be absent
-        // from the journal's delta since the scan's marker.
+        // from the journal's delta since the scan's marker. The journal names
+        // a file by its 48-bit record number; the walk's ids carry the
+        // sequence number above it, so the tree's side is masked the same way.
         var subtreeFrns = new HashSet<long>();
         var stack = new Stack<int>([node]);
         while (stack.TryPop(out int id))
         {
-            long frn = tree.FileId[id];
+            long frn = tree.FileId[id] & Win32.UsnRecordMask;
             if (frn != 0) subtreeFrns.Add(frn);
             int c = tree.FirstChild[id];
             while (c != -1) { stack.Push(c); c = tree.NextSibling[c]; }
@@ -221,12 +226,29 @@ public sealed class CleanupQueue
         {
             EnsureSeedCache(tree, marker);
             if (_scanChangesLoaded) return _scanChangedFrns;
-            _scanChangedFrns = JournalChangesForTest is { } probe
+            var entries = JournalChangesForTest is { } probe
                 ? probe(marker)
                 : JournalChangesSince(marker, root);
+            _scanChangedFrns = entries is null ? null : ChangedFrns(entries);
             _scanChangesLoaded = true;
             return _scanChangedFrns;
         }
+    }
+
+    /// <summary>
+    /// Every record a change touched, masked to the record number — the parent's
+    /// too: a file created inside a staged folder has an id the scan never saw,
+    /// so only its parent's id shows the folder changed.
+    /// </summary>
+    private static HashSet<long> ChangedFrns(IReadOnlyList<UsnJournal.Entry> entries)
+    {
+        var frns = new HashSet<long>(entries.Count * 2);
+        foreach (var e in entries)
+        {
+            frns.Add(e.Frn & Win32.UsnRecordMask);
+            frns.Add(e.ParentFrn & Win32.UsnRecordMask);
+        }
+        return frns;
     }
 
     private Dictionary<long, List<int>> CachedHardLinkNames(FileTree tree, UsnJournal.Marker marker)
@@ -264,8 +286,8 @@ public sealed class CleanupQueue
         return false;
     }
 
-    /// <summary>Changed FRNs since <paramref name="marker"/> on <paramref name="path"/>'s volume; null when unreadable.</summary>
-    private static HashSet<long>? JournalChangesSince(UsnJournal.Marker marker, string path)
+    /// <summary>The journal's entries since <paramref name="marker"/> on <paramref name="path"/>'s volume; null when unreadable.</summary>
+    private static List<UsnJournal.Entry>? JournalChangesSince(UsnJournal.Marker marker, string path)
     {
         try
         {
@@ -279,8 +301,7 @@ public sealed class CleanupQueue
                 || current.JournalId != marker.JournalId)
                 return null;
             var changes = UsnJournal.ReadAll(volume, marker, CancellationToken.None);
-            if (changes is null || changes.Wrapped) return null;
-            return changes.Entries.Select(e => e.Frn).ToHashSet();
+            return changes is null || changes.Wrapped ? null : changes.Entries;
         }
         catch { return null; }
     }
@@ -301,7 +322,6 @@ public sealed class CleanupQueue
         string programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
         string programData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
         string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        string systemDrive = Path.GetPathRoot(windows) ?? @"C:\";
         return
         [
             windows,                                                // C:\Windows (covers WinSxS)
@@ -317,26 +337,60 @@ public sealed class CleanupQueue
             // security › Recall & snapshots; staging its files would break
             // Recall rather than free space cleanly.
             Path.Combine(localAppData, "CoreAIPlatform.00"),
-            Path.Combine(systemDrive, "$Recycle.Bin"),              // the bin itself
-            Path.Combine(systemDrive, "System Volume Information"), // restore points / USN journal
-            Path.Combine(systemDrive, "Recovery"),
-            // WIN-069 audit: memory files at the drive root — locked at
-            // best, corrupting at worst; never stageable.
-            Path.Combine(systemDrive, "pagefile.sys"),
-            Path.Combine(systemDrive, "hiberfil.sys"),
-            Path.Combine(systemDrive, "swapfile.sys"),
+            // The bin, restore points, Recovery and the memory files are
+            // refused at every drive's root: DriveRootSystemNames.
         ];
     }
 
     /// <summary>
-    /// True when <paramref name="path"/> sits under a never-stage prefix
-    /// (the exact test <see cref="Stage"/> applies). Catalogs use this to
-    /// demote hits to "keep" — and skip them entirely — instead of
-    /// offering a location the queue would refuse anyway.
+    /// Never staged at the root of any drive, the item or anything inside it:
+    /// the bin itself, restore points and the USN journal, Recovery, and the
+    /// memory and dump files (WIN-069: locked at best, corrupting at worst).
     /// </summary>
-    public static bool IsExcludedPath(string path)
+    private static readonly HashSet<string> DriveRootSystemNames = new(StringComparer.OrdinalIgnoreCase)
     {
-        string normalized = NormalizePath(path);
+        "$Recycle.Bin", "System Volume Information", "Recovery",
+        "pagefile.sys", "hiberfil.sys", "swapfile.sys", "DumpStack.log", "DumpStack.log.tmp",
+    };
+
+    /// <summary>
+    /// The real known folders themselves, wherever they were moved (D:\Documents):
+    /// never staged as a whole, while what is inside them still can be.
+    /// </summary>
+    private static readonly HashSet<string> KnownFolders = BuildKnownFolders();
+
+    private static readonly string WindowsFolder = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+
+    private static HashSet<string> BuildKnownFolders()
+    {
+        string?[] folders =
+        [
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            Environment.GetFolderPath(Environment.SpecialFolder.Desktop),
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
+            Environment.GetFolderPath(Environment.SpecialFolder.MyVideos),
+            Environment.GetFolderPath(Environment.SpecialFolder.MyMusic),
+            Environment.GetFolderPath(Environment.SpecialFolder.Favorites),
+            OperatingSystem.IsWindows() ? Win32.DownloadsFolder() : null,
+        ];
+        return folders.Where(f => !string.IsNullOrEmpty(f)).Select(f => NormalizePath(f!))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// True when <paramref name="path"/>, as spelled, is never stageable —
+    /// the test <see cref="Stage"/> applies first, before
+    /// <see cref="LandsInExcludedPlace"/> checks where the item really is.
+    /// Catalogs use this to demote hits to "keep" — and skip them entirely —
+    /// instead of offering a location the queue would refuse anyway.
+    /// </summary>
+    public static bool IsExcludedPath(string path) => IsExcludedPath(path, KnownFolders);
+
+    /// <param name="knownFolders">The folders refused as a whole — a seam for testing a moved Documents.</param>
+    internal static bool IsExcludedPath(string path, IReadOnlySet<string> knownFolders)
+    {
+        if (ComparablePath(path) is not { } normalized) return true;
         foreach (var prefix in ExcludedPrefixes)
         {
             if (normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
@@ -345,14 +399,78 @@ public sealed class CleanupQueue
                 return true;
             }
         }
-        // Exact folders only: the profile, AppData, Documents, Downloads…
-        // themselves are never staged — what is inside them still can be.
-        // A "Select all" on Biggest Folders once offered all of AppData.
-        return StorageClassifier.IsContainer(normalized) || IsDriveRoot(normalized);
+        // Exact folders only: the drive root and the known folders themselves
+        // are never staged — what is inside them still can be.
+        if (IsDriveRoot(normalized) || knownFolders.Contains(normalized)
+            || DriveRootSystemNames.Contains(FirstNameUnderRoot(normalized)))
+            return true;
+        // Whatever the classifier calls Windows-managed or secret, as a folder
+        // or as a file: .ssh, .gnupg, .aws, .azure, boot, $WinREAgent, and the
+        // profile's own folders (a "Select all" on Biggest Folders once offered
+        // all of AppData).
+        return StorageClassifier.Classify(normalized, isDirectory: true).Advice == CleanupAdvice.Never
+            || StorageClassifier.Classify(normalized, isDirectory: false).Advice == CleanupAdvice.Never;
+    }
+
+    /// <summary>
+    /// <see cref="NormalizePath"/> with the other spellings of a local path
+    /// folded onto it, so none slips past the never-stage list: \\?\ and \\.\
+    /// dropped, and an admin share read as what it exposes (\\host\C$\x → C:\x,
+    /// \\host\ADMIN$\x → the Windows folder). Null for any other device path.
+    /// </summary>
+    private static string? ComparablePath(string path)
+    {
+        string p = path.Replace('/', '\\');
+        if (p.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase) || p.StartsWith(@"\\.\UNC\", StringComparison.OrdinalIgnoreCase))
+            p = @"\\" + p[8..];
+        else if (p.StartsWith(@"\\?\") || p.StartsWith(@"\\.\"))
+        {
+            p = p[4..];
+            if (p is not [_, ':', ..]) return null;   // a volume GUID, GLOBALROOT, a device
+        }
+        if (p.StartsWith(@"\\"))
+        {
+            var parts = p[2..].Split('\\', 3);   // host, share, rest
+            string rest = parts.Length == 3 ? parts[2] : "";
+            if (parts.Length >= 2 && parts[1] is [var letter, '$'] && char.IsAsciiLetter(letter))
+                p = letter + @":\" + rest;
+            else if (parts.Length >= 2 && parts[1].Equals("ADMIN$", StringComparison.OrdinalIgnoreCase))
+                p = Path.Combine(WindowsFolder, rest);
+        }
+        return NormalizePath(p);
+    }
+
+    /// <summary>The first name below the root: D:\$RECYCLE.BIN\x → $RECYCLE.BIN; empty at the root.</summary>
+    private static string FirstNameUnderRoot(string normalized)
+    {
+        var rest = normalized.AsSpan(Path.GetPathRoot(normalized)?.Length ?? 0).TrimStart('\\');
+        int separator = rest.IndexOf('\\');
+        return (separator < 0 ? rest : rest[..separator]).ToString();
     }
 
     private static bool IsDriveRoot(string normalized) =>
         Path.GetPathRoot(normalized) is { } root && root.Equals(normalized, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// True when <paramref name="path"/> really lives somewhere other than its
+    /// spelling says, and that place is on the never-stage list: a junction or
+    /// mount point above it, or a subst drive. (8.3 names never get this far:
+    /// GetFullPath expands them.) The item itself isn't followed — a staged
+    /// link goes as the link.
+    /// </summary>
+    internal static bool LandsInExcludedPlace(string path)
+    {
+        // shortcut: network paths skip this — the server resolves its own links, and a
+        // user-level program can't map drives into the elevated session; revisit if the
+        // app ever maps drives itself.
+        if (path.StartsWith(@"\\") || Path.GetPathRoot(path) is not { Length: > 0 } root
+            || new DriveInfo(root).DriveType == DriveType.Network)
+            return false;
+        // Fails open when it can't be opened (gone): its spelling was checked already.
+        if (Win32.FinalPath(path) is not { } real) return false;
+        return !string.Equals(ComparablePath(real), ComparablePath(path), StringComparison.OrdinalIgnoreCase)
+            && IsExcludedPath(real);
+    }
 
     /// <summary>
     /// Full path without a trailing separator — except on a root, which keeps
@@ -399,11 +517,18 @@ public sealed class CleanupQueue
         string? sharesStorageGroup = null,
         int groupCopyCount = 1)
     {
+        // Only a path that already names exactly one item. \\?\ and \\.\ skip
+        // Windows' name rules, and a path normalizing changes would act on a
+        // different item than the one shown: "cache." and "cache " both mean
+        // "cache", so a decoy planted beside a real folder would move the real one.
+        string input = path.Replace('/', '\\');
+        if (input.StartsWith(@"\\?\") || input.StartsWith(@"\\.\")) return false;
         string normalized = NormalizePath(path);
+        if (!normalized.Equals(Path.TrimEndingDirectorySeparator(input), StringComparison.Ordinal)) return false;
+        if (IsExcludedPath(normalized) || LandsInExcludedPlace(normalized)) return false;
         StagedItem item;
         lock (_gate)
         {
-            if (IsExcludedPath(normalized)) return false;
             if (!_paths.Add(normalized)) return false;   // already staged
             item = new StagedItem
             {
@@ -644,8 +769,6 @@ public sealed class CleanupQueue
             reported = now;
             progress?.Report(new CommitProgress("Verifying sizes", now.Measured, now.Total));
         }
-        // Clock slack: $I creation times are what ResolveAll filters on.
-        var startedUtc = DateTime.UtcNow.AddSeconds(-5);
         StagedItem[] snapshot;
         lock (_gate) snapshot = _items.ToArray();
 
@@ -660,6 +783,9 @@ public sealed class CleanupQueue
         progress?.Report(new CommitProgress("Moving to the Recycle Bin", 0, snapshot.Length));
         var moved = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var outcomes = new List<(StagedItem Item, Exception? Error, bool WithFolder)>();
+        // Where each moved item landed in the bin: Put Back's record.
+        var date = DateTimeOffset.Now;
+        var bin = new Dictionary<string, RecycleBinStore.Entry>(StringComparer.OrdinalIgnoreCase);
         bool UnderAny(string path, ICollection<string> set)
         {
             for (var dir = Path.GetDirectoryName(path); !string.IsNullOrEmpty(dir); dir = Path.GetDirectoryName(dir))
@@ -675,9 +801,15 @@ public sealed class CleanupQueue
             }
             var top = pending.Keys.Where(k => !UnderAny(k, pending.Keys)).ToList();
             if (top.Count == 0) break;
+            // Clock slack: $I creation times are what ResolveAll filters on.
+            var roundStartedUtc = DateTime.UtcNow.AddSeconds(-5);
+            // Checked again right before the move: a folder above an item may
+            // have been swapped for a junction into a protected place since it
+            // was staged.
+            var nowProtected = top.Where(LandsInExcludedPlace).ToHashSet(StringComparer.OrdinalIgnoreCase);
             // Only paths that exist go in the batch — "gone afterwards" is
             // how batch success is read, so a vanished path must not count.
-            var batch = top.Where(k => File.Exists(k) || Directory.Exists(k)).ToList();
+            var batch = top.Where(k => !nowProtected.Contains(k) && (File.Exists(k) || Directory.Exists(k))).ToList();
             var refused = Shell32.RecycleItemsParallel(batch, n =>
                 progress?.Report(new CommitProgress("Moving to the Recycle Bin",
                     Interlocked.Add(ref movedCount, n), snapshot.Length)));
@@ -688,45 +820,107 @@ public sealed class CleanupQueue
                 pending.Remove(key);
                 Exception? error = null;
                 bool gone = inBatch.Contains(key) && !File.Exists(key) && !Directory.Exists(key);
-                if (refused.Contains(key))
-                    error = new RecycleRefusedException(item.Path);   // too big for the bin — untouched
+                if (nowProtected.Contains(key))
+                    error = new IOException($"It now leads into a protected location — nothing was moved: {item.Path}");
+                else if (refused.Contains(key))
+                    error = new RecycleRefusedException(item.Path);   // the bin wouldn't take it — untouched
                 else if (!gone)
                     error = Shell32.RecycleItem(item.Path);  // real per-item error, or a retry that works
                 if (error is null) moved.Add(key);
                 outcomes.Add((item, error, false));
             }
+            // Put Back's record after every round, so a forced quit mid-move
+            // still leaves what already moved restorable.
+            var movedNow = top.Where(moved.Contains).ToList();
+            if (movedNow.Count == 0) continue;
+            try
+            {
+                foreach (var (path, entry) in RecycleBinStore.ResolveAll(movedNow, roundStartedUtc)) bin[path] = entry;
+                RecordOf(Report(outcomes), bin, date).Save();
+            }
+            catch { /* a failed receipt write never fails the commit */ }
         }
 
-        // Recompute the freed figure over what actually moved — a partial
-        // failure never claims bytes still on disk.
-        var succeeded = outcomes.Where(o => o.Error is null).Select(o => o.Item).ToList();
-        var freed = Estimate(succeeded);
-        var entries = outcomes.Select(o => new CommitEntry(
-            o.Item, o.Error, o.WithFolder,
-            o.Error is null ? freed.PerItem.GetValueOrDefault(o.Item.Id) : 0))
-            .ToList();
-
+        var report = Report(outcomes);
         lock (_gate)
         {
-            var failedIds = outcomes.Where(o => o.Error is not null).Select(o => o.Item.Id).ToHashSet();
-            RemoveItems(i => !failedIds.Contains(i.Id));
+            // Only snapshot items that moved leave the basket: one staged
+            // while this ran was never offered to the bin.
+            var movedIds = outcomes.Where(o => o.Error is null).Select(o => o.Item.Id).ToHashSet();
+            RemoveItems(i => movedIds.Contains(i.Id));
         }
-        var report = new CommitReport(entries, freed.Bytes, freed.IsLowerBound);
-        SaveCleanupRecord(report, startedUtc);
+        try
+        {
+            var record = RecordOf(report, bin, date);
+            record.Save();
+            CleanupHistory.RecordCommit(record);   // once per commit
+        }
+        catch { /* a failed receipt write never fails the commit */ }
         return report;
+    }
+
+    /// <summary>
+    /// The report over what actually moved — the freed figure recomputed so a
+    /// partial failure never claims bytes still on disk.
+    /// </summary>
+    private static CommitReport Report(List<(StagedItem Item, Exception? Error, bool WithFolder)> outcomes)
+    {
+        var freed = Estimate(outcomes.Where(o => o.Error is null).Select(o => o.Item).ToList());
+        return new CommitReport(
+            outcomes.Select(o => new CommitEntry(o.Item, o.Error, o.WithFolder,
+                o.Error is null ? freed.PerItem.GetValueOrDefault(o.Item.Id) : 0)).ToList(),
+            freed.Bytes, freed.IsLowerBound);
     }
 
     /// <summary>
     /// True when <paramref name="path"/> is regenerable developer output —
     /// dependencies (node_modules, virtualenvs, build output), package
-    /// caches or temp caches — the only things <see cref="DeletePermanently"/>
-    /// will touch. Anything excluded is never regenerable.
+    /// caches or temp caches the classifier calls Fine — the only things
+    /// <see cref="DeletePermanently"/> will touch. Never anything excluded,
+    /// anything marked Review (a design backup, Revit's collaboration cache or
+    /// a waveform dump may be someone's only copy), anything reached through a
+    /// link or cloud placeholder, or a venv folder without a pyvenv.cfg.
     /// </summary>
     public static bool IsRegenerable(string path)
     {
-        if (IsExcludedPath(path)) return false;
-        var c = StorageClassifier.Classify(path, Directory.Exists(path)).Class;
-        return c == StorageClassifier.Dependencies || c == StorageClassifier.PackageCaches || c == StorageClassifier.Caches;
+        if (IsExcludedPath(path) || LandsInExcludedPlace(path)) return false;
+        var verdict = StorageClassifier.Classify(path, Directory.Exists(path));
+        var c = verdict.Class;
+        return verdict.Advice == CleanupAdvice.Fine
+            && (c == StorageClassifier.Dependencies || c == StorageClassifier.PackageCaches || c == StorageClassifier.Caches)
+            && !ReachedThroughLink(path)
+            && VenvFoldersAreVirtualenvs(path);
+    }
+
+    /// <summary>
+    /// True when <paramref name="path"/> or any existing folder above it is a
+    /// link (junction, symlink, mount point) or a cloud placeholder: deleting
+    /// there could reach outside what was shown. Unreadable counts too.
+    /// </summary>
+    private static bool ReachedThroughLink(string path)
+    {
+        const FileAttributes linkLike = FileAttributes.ReparsePoint | FileAttributes.Offline
+            | (FileAttributes)Win32.FILE_ATTRIBUTE_RECALL_ON_OPEN | (FileAttributes)Win32.FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS;
+        for (string? p = Path.TrimEndingDirectorySeparator(path); !string.IsNullOrEmpty(p); p = Path.GetDirectoryName(p))
+        {
+            try { if ((File.GetAttributes(p) & linkLike) != 0) return true; }
+            catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException) { }   // not there: nothing to follow
+            catch { return true; }
+        }
+        return false;
+    }
+
+    /// <summary>A folder named venv or .venv is a virtualenv only with its pyvenv.cfg — otherwise it's someone's folder.</summary>
+    private static bool VenvFoldersAreVirtualenvs(string path)
+    {
+        for (string? p = Path.TrimEndingDirectorySeparator(path); !string.IsNullOrEmpty(p); p = Path.GetDirectoryName(p))
+        {
+            string name = Path.GetFileName(p);
+            if ((name.Equals("venv", StringComparison.OrdinalIgnoreCase) || name.Equals(".venv", StringComparison.OrdinalIgnoreCase))
+                && !File.Exists(Path.Combine(p, "pyvenv.cfg")))
+                return false;
+        }
+        return true;
     }
 
     /// <summary>
@@ -742,7 +936,7 @@ public sealed class CleanupQueue
     {
         StagedItem[] chosen;
         lock (_gate) chosen = _items.Where(i => ids.Contains(i.Id)).ToArray();
-        var outcomes = new List<(StagedItem Item, Exception? Error)>();
+        var outcomes = new List<(StagedItem Item, Exception? Error, bool WithFolder)>();
         int done = 0;
         foreach (var item in chosen)
         {
@@ -750,91 +944,141 @@ public sealed class CleanupQueue
             Exception? error = null;
             if (!IsRegenerable(item.Path))
             {
-                error = new IOException($"Not regenerable — only node_modules, build output and caches can be deleted permanently: {item.Path}");
+                error = new IOException($"Not regenerable — only node_modules, build output and caches, never through a link, can be deleted permanently: {item.Path}");
             }
             else
             {
                 try { DeleteTree(item.Path); }
                 catch (Exception ex) { error = ex; }
             }
-            outcomes.Add((item, error));
+            outcomes.Add((item, error, false));
             done++;
         }
         progress?.Report(new CommitProgress("Deleting permanently", done, chosen.Length));
-        var succeeded = outcomes.Where(o => o.Error is null).Select(o => o.Item).ToList();
-        var freed = Estimate(succeeded);
-        CleanupHistory.RecordPermanentDelete(succeeded.Count, freed.Bytes);
-        lock (_gate)
-        {
-            var deleted = succeeded.Select(i => i.Id).ToHashSet();
-            RemoveItems(i => deleted.Contains(i.Id));
-        }
-        return new CommitReport(
-            outcomes.Select(o => new CommitEntry(o.Item, o.Error, false,
-                o.Error is null ? freed.PerItem.GetValueOrDefault(o.Item.Id) : 0)).ToList(),
-            freed.Bytes, freed.IsLowerBound);
-    }
-
-    private static void DeleteTree(string path)
-    {
-        string full = Path.GetFullPath(path);
-        string ext = full.StartsWith(@"\\?\") ? full : @"\\?\" + full;
-        if (File.Exists(ext))
-        {
-            File.SetAttributes(ext, FileAttributes.Normal);
-            File.Delete(ext);
-            return;
-        }
-        if (!Directory.Exists(ext)) return;
-        // An explicit walk, never descending into a reparse point: a
-        // junction or symlink (pnpm, workspaces) is removed as a link with a
-        // single non-recursive call, so its target is never touched. Files
-        // lose read-only first (npm and git set it); folders go bottom-up.
-        var folders = new List<string>();
-        var stack = new Stack<string>([ext]);
-        while (stack.TryPop(out var dir))
-        {
-            folders.Add(dir);
-            foreach (var entry in new DirectoryInfo(dir).EnumerateFileSystemInfos("*", new EnumerationOptions
-                     { RecurseSubdirectories = false, AttributesToSkip = 0, IgnoreInaccessible = false }))
-            {
-                bool isLink = (entry.Attributes & FileAttributes.ReparsePoint) != 0;
-                bool isDir = (entry.Attributes & FileAttributes.Directory) != 0;
-                if ((entry.Attributes & FileAttributes.ReadOnly) != 0 && !isLink)
-                    entry.Attributes &= ~FileAttributes.ReadOnly;
-                if (isLink && isDir) Directory.Delete(entry.FullName, recursive: false);   // the link only
-                else if (isDir) stack.Push(entry.FullName);
-                else File.Delete(entry.FullName);
-            }
-        }
-        for (int i = folders.Count - 1; i >= 0; i--)
-            Directory.Delete(folders[i], recursive: false);
+        var report = Report(outcomes);
+        var deleted = outcomes.Where(o => o.Error is null).Select(o => o.Item.Id).ToHashSet();
+        CleanupHistory.RecordPermanentDelete(deleted.Count, report.FreedWhenEmptied);
+        lock (_gate) RemoveItems(i => deleted.Contains(i.Id));
+        return report;
     }
 
     /// <summary>
-    /// The last commit's bin locations, persisted for Put Back (WIN-012).
-    /// Only top-level moved items are recorded — an item recycled inside
-    /// its folder comes back with the folder.
+    /// Deletes <paramref name="path"/> for <see cref="DeletePermanently"/> without
+    /// ever reaching outside it. A link (junction, symlink, mount point) goes as
+    /// the link alone, at the root or inside: its target is never listed. Each
+    /// folder is pinned while it is emptied (<see cref="PinFolder"/>), and NTFS
+    /// refuses to rename any folder above an open one, so nothing on the way
+    /// down can be swapped for a junction mid-delete; the root's parent is
+    /// pinned too, for the root's own removal. Files lose read-only first (npm
+    /// and git set it); folders go bottom-up.
     /// </summary>
-    private static void SaveCleanupRecord(CommitReport report, DateTime recycledSinceUtc)
+    internal static void DeleteTree(string path)
     {
+        string full = Win32.ExtendedPath(Path.GetFullPath(path));
+        string? parent = Path.GetDirectoryName(full);
+        if (parent is null || !Path.Exists(full)) return;   // a drive root never gets here; gone is done
+        using var parentPin = PinFolder(parent);
+        // Pinned, nothing above can change any more, so this can't go stale.
+        if (ReachedThroughLink(parent)) throw new IOException($"Reached through a link — nothing was deleted: {path}");
+        var attributes = File.GetAttributes(full);   // the entry itself, never a link's target
+        if ((attributes & FileAttributes.ReparsePoint) != 0)
+        {
+            if ((attributes & FileAttributes.Directory) != 0) Directory.Delete(full, recursive: false);   // the link only
+            else File.Delete(full);
+            return;
+        }
+        if ((attributes & FileAttributes.Directory) == 0)
+        {
+            if ((attributes & FileAttributes.ReadOnly) != 0) File.SetAttributes(full, attributes & ~FileAttributes.ReadOnly);
+            File.Delete(full);
+            return;
+        }
+
+        var open = new Stack<(string Dir, SafeFileHandle Pin, IEnumerator<FileSystemInfo> Entries)>();
         try
         {
-            var items = new List<CleanupRecord.Item>();
-            var topLevel = report.Entries.Where(e => e.Error is null && !e.MovedWithFolder).ToList();
-            // The bin path is found by the $I metadata's recorded original
-            // path — same drive as the item lived on. One bin read per
-            // volume, not per item.
-            var resolved = RecycleBinStore.ResolveAll(topLevel.Select(e => e.Item.Path), recycledSinceUtc);
-            foreach (var entry in topLevel)
+            open.Push(OpenPinned(full));
+            while (open.TryPeek(out var folder))
             {
-                if (resolved.TryGetValue(Path.GetFullPath(entry.Item.Path).TrimEnd('\\'), out var bin))
-                    items.Add(new CleanupRecord.Item(entry.Item.Path, bin.DataPath, entry.FreedBytes));
+                if (!folder.Entries.MoveNext())
+                {
+                    open.Pop();
+                    folder.Entries.Dispose();
+                    folder.Pin.Dispose();
+                    Directory.Delete(folder.Dir, recursive: false);   // empty now; its parent is still pinned
+                    continue;
+                }
+                var entry = folder.Entries.Current;
+                var a = entry.Attributes;
+                bool isLink = (a & FileAttributes.ReparsePoint) != 0, isDir = (a & FileAttributes.Directory) != 0;
+                if (isDir && !isLink)
+                {
+                    open.Push(OpenPinned(entry.FullName));
+                    continue;
+                }
+                if ((a & FileAttributes.ReadOnly) != 0 && !isLink) entry.Attributes = a & ~FileAttributes.ReadOnly;
+                if (isDir) Directory.Delete(entry.FullName, recursive: false);   // the link only
+                else File.Delete(entry.FullName);
             }
-            var record = new CleanupRecord(DateTimeOffset.Now, items);
-            record.Save();
-            CleanupHistory.RecordCommit(record);
         }
-        catch { /* a failed receipt write never fails the commit */ }
+        finally
+        {
+            foreach (var folder in open)
+            {
+                folder.Entries.Dispose();
+                folder.Pin.Dispose();
+            }
+        }
+    }
+
+    private static (string, SafeFileHandle, IEnumerator<FileSystemInfo>) OpenPinned(string dir)
+    {
+        var pin = PinFolder(dir);
+        try
+        {
+            return (dir, pin, new DirectoryInfo(dir).EnumerateFileSystemInfos("*", new EnumerationOptions
+                { RecurseSubdirectories = false, AttributesToSkip = 0, IgnoreInaccessible = false }).GetEnumerator());
+        }
+        catch
+        {
+            pin.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Holds <paramref name="dir"/> open as itself, never through a link, and
+    /// without FILE_SHARE_DELETE, so nobody can rename or replace it while the
+    /// handle lives (and NTFS refuses to rename any folder above an open one).
+    /// Re-checked here, just before listing: throws unless it is still a plain folder.
+    /// </summary>
+    internal static SafeFileHandle PinFolder(string dir)
+    {
+        // FILE_LIST_DIRECTORY, not attributes alone: a share mode only binds an open that asks for data access.
+        var pin = Win32.CreateFileW(dir, Win32.FILE_LIST_DIRECTORY | Win32.FILE_READ_ATTRIBUTES,
+            Win32.FILE_SHARE_READ | Win32.FILE_SHARE_WRITE, IntPtr.Zero, Win32.OPEN_EXISTING,
+            Win32.FILE_FLAG_BACKUP_SEMANTICS | Win32.FILE_FLAG_OPEN_REPARSE_POINT, IntPtr.Zero);
+        if (pin.IsInvalid)
+            throw new IOException($"Couldn't hold {dir} open — {new Win32Exception(Marshal.GetLastPInvokeError()).Message}");
+        if (!Win32.GetFileInformationByHandle(pin, out var info)
+            || (info.dwFileAttributes & (Win32.FILE_ATTRIBUTE_DIRECTORY | Win32.FILE_ATTRIBUTE_REPARSE_POINT)) != Win32.FILE_ATTRIBUTE_DIRECTORY)
+        {
+            pin.Dispose();
+            throw new IOException($"{dir} became a link or a file while it was being deleted — stopped there");
+        }
+        return pin;
+    }
+
+    /// <summary>
+    /// Put Back's record (WIN-012): where each top-level moved item landed in
+    /// the bin. An item recycled inside its folder comes back with the folder.
+    /// </summary>
+    private static CleanupRecord RecordOf(CommitReport report, Dictionary<string, RecycleBinStore.Entry> bin, DateTimeOffset date)
+    {
+        var items = new List<CleanupRecord.Item>();
+        foreach (var entry in report.Entries.Where(e => e.Error is null && !e.MovedWithFolder))
+            if (bin.TryGetValue(RecycleBinStore.Normalize(entry.Item.Path), out var copy))
+                items.Add(new CleanupRecord.Item(entry.Item.Path, copy.DataPath, entry.FreedBytes));
+        return new CleanupRecord(date, items);
     }
 }
