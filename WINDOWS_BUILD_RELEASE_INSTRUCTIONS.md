@@ -27,7 +27,7 @@ dotnet test .\windows\DiskMap.Win.slnx -c Release --no-build
 ## Run a development build
 
 ```powershell
-Start-Process .\windows\app\DiskMap.App\bin\Release\net10.0-windows\DiskMap.App.exe
+Start-Process .\windows\app\DiskMap.App\bin\Release\net10.0-windows\Freedisk.exe
 ```
 
 Windows displays a UAC prompt because the application intentionally requests
@@ -55,11 +55,12 @@ dotnet publish .\windows\app\DiskMap.App\DiskMap.App.csproj `
     -p:PublishSingleFile=true `
     -p:IncludeNativeLibrariesForSelfExtract=true `
     -p:IncludeAllContentForSelfExtract=true `
+    -p:EnableCompressionInSingleFile=true `
     -p:DebugType=None `
     -p:DebugSymbols=false
 
 Rename-Item `
-    "$out\DiskMap.App.exe" `
+    "$out\Freedisk.exe" `
     "freedisk.space-$version-windows-x64.exe"
 ```
 
@@ -72,7 +73,9 @@ dist\windows-<version>-x64\freedisk.space-<version>-windows-x64.exe
 This is a self-contained Windows x64 executable, so the user does not need to
 install .NET. `IncludeNativeLibrariesForSelfExtract` and
 `IncludeAllContentForSelfExtract` are required to make the WPF publication an
-actual single-file executable.
+actual single-file executable. `EnableCompressionInSingleFile` cuts the
+download to less than half (76 MB instead of 167 MB for 0.5.0); the files
+are unpacked once, on first launch.
 
 Test the packaged executable:
 
