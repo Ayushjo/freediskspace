@@ -488,7 +488,6 @@ public partial class MainWindow : Window
         _currentPage = name;
         if (!_pages.TryGetValue(name, out var page)) _pages[name] = page = factory();
         PageHost.Content = page;
-        if (page is ListPage listPage) listPage.ResetScrollPosition();
         if (_lastSidebarCompact == true)
         {
             _compactSidebarOpen = false;
@@ -576,45 +575,6 @@ public partial class MainWindow : Window
                 ScanCache.Remove(rp);
             _ = _model.RescanAsync();
             return;
-        }
-        if (e.OriginalSource is TextBox) return;   // let inputs own their keys
-
-        // List navigation — the shared row behavior on every list page.
-        if (PageHost.Content is FileListPage list)
-        {
-            if (e.Key == Key.A && mods == ModifierKeys.Control)
-            {
-                list.SelectAll(); e.Handled = true; return;
-            }
-            if (e.Key == Key.Escape)
-            {
-                _model.ClearMulti(); list.ClearChecked(); e.Handled = true; return;
-            }
-            bool handled = e.Key switch
-            {
-                Key.Down or Key.J => list.NavigateSelection(1),
-                Key.Up or Key.K => list.NavigateSelection(-1),
-                Key.Enter => list.ActivateSelection(),
-                Key.Delete or Key.Back when mods == ModifierKeys.Control || e.Key == Key.Delete
-                    => list.StageSelection(),
-                _ => false,
-            };
-            // Ctrl+Down/Up: drill into / out of the selected folder.
-            if (!handled && mods == ModifierKeys.Control
-                && _model.Tree is { } t && _model.SelectedNode >= 0)
-            {
-                if (e.Key == Key.Down && t.IsDirectory[_model.SelectedNode])
-                {
-                    _model.DrillTo(_model.SelectedNode);
-                    handled = true;
-                }
-                else if (e.Key == Key.Up)
-                {
-                    int parent = t.Parent[_model.SelectedNode];
-                    if (parent >= 0) { _model.DrillToAncestor(parent); handled = true; }
-                }
-            }
-            if (handled) e.Handled = true;
         }
     }
 

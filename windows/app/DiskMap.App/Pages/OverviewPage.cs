@@ -577,7 +577,7 @@ public sealed class OverviewPage : UserControl
         }
         else if (FileListCategories.Contains(cat.Key))
         {
-            FileListPage.PendingClassFilter = cat.Key;
+            BiggestFilesExplorePage.PendingClassFilter = cat.Key;
             Model.ShowPage("Biggest Files");
         }
         else if (cat.NodeId is { } node)

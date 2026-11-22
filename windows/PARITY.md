@@ -498,6 +498,8 @@ state, but the inspector and coloring layers are missing entirely.
   = dominant kind pastel, age = dominant AgeBucket on the Forgotten
   ramp, folder = stable name-hash hue; sub-threshold children collapse
   into a non-drillable "Other (N)" tile in every chart.
+  (2026-11-22: `TreemapControl` was removed with the pre-redesign pages
+  nothing constructed; Explore's map is `Pages/ExploreMap.cs`.)
 
 - [x] **WIN-049: Mind map v2 labels** (TASK-070) — the collapse
   threshold rides the shared depth slider (ChartLayout otherFraction);
@@ -527,6 +529,8 @@ state, but the inspector and coloring layers are missing entirely.
   jumps destinations in sidebar order (Overview then Find), Ctrl+K/F
   opens the palette, Ctrl+Shift+Delete opens Cleanup, Ctrl+R rescans,
   Ctrl+Shift+R drops `ScanCache` then rescans (true full rescan).
+  (2026-11-22: the `FileListPage` row keys left with the pre-redesign
+  pages; each redesigned list page handles its own keys.)
   TextBox focus swallows its own keys first.
 
 - [x] **WIN-052: Multi-selection** — `ScanModel.MultiSelection`

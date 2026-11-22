@@ -660,6 +660,9 @@ public sealed class BiggestFilesExplorePage : UserControl
 {
     private static ScanModel Model => ScanModel.Shared;
 
+    /// <summary>A storage class Overview asked this page to filter by when it opens next.</summary>
+    public static string? PendingClassFilter { get; set; }
+
     public enum AgeFilter { Any = 0, ThreeMonths = 90, SixMonths = 180, Year = 365, TwoYears = 730 }
 
     public static string AgeTitle(AgeFilter a) => a switch
@@ -770,7 +773,7 @@ public sealed class BiggestFilesExplorePage : UserControl
         _class = Rd.ClassFor(WindowWidth);
         if (Model.Tree is not { } tree) { Model.ShowPage("Overview"); return; }
         if (!ReferenceEquals(_rankedFor, Model.Totals)) { Rank(); }
-        if (FileListPage.PendingClassFilter is { } pending) { _category = pending; FileListPage.PendingClassFilter = null; }
+        if (PendingClassFilter is { } pending) { _category = pending; PendingClassFilter = null; }
         bool searchFocused = _search?.IsKeyboardFocusWithin == true;
         int caret = _search?.CaretIndex ?? 0;
 
