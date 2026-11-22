@@ -280,7 +280,7 @@ public static class OldDownloadsCatalog
     public static string Recommendation(OldDownloadsStatus status, FileKind kind)
     {
         if (status == OldDownloadsStatus.LikelyDisposable)
-            return "If the software is already installed and you don’t need the installer again, add it to Cleanup and review it before removing.";
+            return "If the software is already installed and you don’t need the installer again, add it to the basket and review it before it goes.";
         if (kind == FileKind.Video || kind == FileKind.Document)
             return "This looks like a personal file. freedisk.space can’t determine whether you still need it. Review before removing.";
         return "Review first. Old doesn’t mean unused — confirm you no longer need this before staging.";

@@ -44,5 +44,27 @@ Filename: "{app}\Freedisk.exe"; Description: "{cm:LaunchProgram,freedisk.space}"
 
 [UninstallDelete]
 ; The scan cache indexes every file on each scanned drive (ScanCache.DirectoryPath) — don't
-; leave it behind. Settings, history and snapshots beside it in DiskMap\ are the user's and stay.
+; leave it behind. Settings, history and snapshots beside it are the user's and stay.
+; Versions before the admin-only state folder kept it here:
 Type: filesandordirs; Name: "{localappdata}\DiskMap\ScanCache"
+
+[Code]
+// The elevated app keeps its state in {commonappdata}\freedisk.space\<user SID> (Core AdminState),
+// an admin-only folder, so each account's scan cache is <SID>\ScanCache there.
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  Found: TFindRec;
+  Base: String;
+begin
+  if CurUninstallStep <> usPostUninstall then Exit;
+  Base := ExpandConstant('{commonappdata}\freedisk.space\');
+  if FindFirst(Base + '*', Found) then
+  try
+    repeat
+      if ((Found.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0) and (Found.Name <> '.') and (Found.Name <> '..') then
+        DelTree(Base + Found.Name + '\ScanCache', True, True, True);
+    until not FindNext(Found);
+  finally
+    FindClose(Found);
+  end;
+end;

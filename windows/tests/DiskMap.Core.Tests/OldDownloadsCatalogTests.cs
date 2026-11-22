@@ -140,7 +140,7 @@ public class OldDownloadsCatalogTests
         Assert.Equal(new[] { iso, oldExe, newMsix, oldMsi }, installers.Select(c => c.NodeID));
 
         Assert.Equal(
-            "If the software is already installed and you don’t need the installer again, add it to Cleanup and review it before removing.",
+            "If the software is already installed and you don’t need the installer again, add it to the basket and review it before it goes.",
             byId[oldExe].Recommendation);
         Assert.Equal("Installer or disk image (100 MB) in Downloads, last modified 6mo ago.", byId[oldExe].WhyHere);
         Assert.Equal(

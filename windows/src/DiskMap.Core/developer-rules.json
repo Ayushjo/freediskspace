@@ -33,15 +33,14 @@
       "rebuildCost": "networked"
     },
     {
-      "names": [".yarn"],
-      "forbidSibling": ["package.json"],
-      "skipIfTracked": true,
+      "names": ["cache"],
+      "requiresParent": [".yarn\\berry"],
       "category": "caches",
       "ecosystem": "node",
       "reclaimability": "reclaimable",
       "isToolRoot": true,
       "projectFromParent": false,
-      "whyLarge": "Yarn's global cache. (A project's own .yarn folder holds the Yarn release it runs — never offered.)",
+      "whyLarge": "Yarn's global package cache (~\\.yarn\\berry\\cache) — refilled on the next install. The rest of ~\\.yarn, and a project's own .yarn (the Yarn release it runs, patches, plugins), are never offered.",
       "rebuildCost": "networked"
     },
     {
@@ -223,13 +222,14 @@
       "rebuildCost": "networked"
     },
     {
-      "names": [".nuget"],
+      "names": ["packages"],
+      "requiresParent": [".nuget"],
       "category": "caches",
       "ecosystem": "dotnet",
       "reclaimability": "reclaimable",
       "isToolRoot": true,
       "projectFromParent": false,
-      "whyLarge": "NuGet global package cache — every restore copies out of here.",
+      "whyLarge": "NuGet's global packages folder (~\\.nuget\\packages) — every restore copies out of here and refills it. The rest of ~\\.nuget (credential providers in plugins) is never offered.",
       "rebuildCost": "networked"
     },
     {

@@ -195,6 +195,10 @@ Non-negotiables that apply to every ticket below (restated from AGENTS.md):
   last-cleanup.json` (atomic rewrite, survives relaunch); after commit,
   `RecycleBinStore` parses `$I*` metadata under `<drive>:\$Recycle.Bin\
   <SID>` (v1 + v2 layouts) to resolve each moved item's `$R` payload.
+  (2026-11-22: elevated, all state — this record, settings, history, the scan
+  cache, snapshots, saved searches — lives in the admin-only
+  `%ProgramData%\freedisk.space\<SID>` (Core `AdminState`); the plain user
+  controls %LOCALAPPDATA% and could redirect an administrator's writes there.)
   `PutBack.Run` moves it back (File/Directory.Move — a restore, never a
   delete), recreates missing parents, skips occupied paths and emptied
   items with reasons, and removes the `$I` sidecar. The Cleanup page

@@ -82,6 +82,9 @@ public sealed class ScanEngine
         bool profileBlockClones = false)
     {
         var started = System.Diagnostics.Stopwatch.StartNew();
+        var startedUtc = DateTime.UtcNow;
+        // A root that is gone (or never was) fails the scan; a walk would publish an empty tree for it.
+        if (!Directory.Exists(root)) throw new DirectoryNotFoundException($"{root} doesn't exist or can't be opened");
         var walked = await Task.Run(() => Walk(root, progress, cancellationToken), cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
         walked.Tree.Compact();
@@ -102,7 +105,7 @@ public sealed class ScanEngine
         // before the walk is the next rescan's baseline — saved off the
         // critical path. Walk results carry file ids on NTFS too.
         if (walked.ScanMarker is { } marker)
-            ScanCache.SaveInBackground(root, walked.Tree, marker);
+            ScanCache.SaveInBackground(root, walked.Tree, marker, startedUtc);
         var afterRelease = ProcessMemory.Current();
         started.Stop();
         var result = new Result

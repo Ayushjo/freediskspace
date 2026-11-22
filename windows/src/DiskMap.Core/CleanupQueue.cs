@@ -822,6 +822,8 @@ public sealed class CleanupQueue
                 bool gone = inBatch.Contains(key) && !File.Exists(key) && !Directory.Exists(key);
                 if (nowProtected.Contains(key))
                     error = new IOException($"It now leads into a protected location — nothing was moved: {item.Path}");
+                else if (!inBatch.Contains(key))
+                    error = new FileNotFoundException($"It's no longer there — nothing was moved: {item.Path}", item.Path);
                 else if (refused.Contains(key))
                     error = new RecycleRefusedException(item.Path);   // the bin wouldn't take it — untouched
                 else if (!gone)
@@ -849,13 +851,17 @@ public sealed class CleanupQueue
             var movedIds = outcomes.Where(o => o.Error is null).Select(o => o.Item.Id).ToHashSet();
             RemoveItems(i => movedIds.Contains(i.Id));
         }
-        try
+        // A commit that moved nothing keeps the previous cleanup's Put Back record.
+        if (report.Entries.Any(e => e.Error is null))
         {
-            var record = RecordOf(report, bin, date);
-            record.Save();
-            CleanupHistory.RecordCommit(record);   // once per commit
+            try
+            {
+                var record = RecordOf(report, bin, date);
+                record.Save();
+                CleanupHistory.RecordCommit(record);   // once per commit
+            }
+            catch { /* a failed receipt write never fails the commit */ }
         }
-        catch { /* a failed receipt write never fails the commit */ }
         return report;
     }
 

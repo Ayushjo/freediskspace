@@ -166,9 +166,11 @@ switch (command)
             projects = projects.Where(p => stale.Contains(p.Key)).ToList();
             items = items.Where(i => i.ProjectKey is { } k && stale.Contains(k)).ToList();
         }
+        // Only what rebuilds by itself, as the Developer page's "what rebuilds" add: review-first
+        // items (backups, a no-git build folder) are not reclaimable just because they aren't kept.
         if (onlyReclaimable)
             items = items.Where(i =>
-                i.Reclaimability != DeveloperReclaimability.Keep && !i.IsProtected).ToList();
+                i.Reclaimability == DeveloperReclaimability.Reclaimable && !i.IsProtected).ToList();
         if (argsList.Contains("--json"))
         {
             Console.WriteLine(JsonSerializer.Serialize(new
@@ -215,8 +217,9 @@ switch (command)
                 Console.WriteLine("items:");
                 foreach (var i in items.OrderByDescending(i => i.Bytes).Take(30))
                 {
-                    string tag = i.Reclaimability == DeveloperReclaimability.Keep || i.IsProtected
-                        ? "keep" : i.Recipe?.Command is { } cmd ? $"rebuild: {cmd}" : "reclaimable";
+                    string tag = i.Reclaimability == DeveloperReclaimability.Keep || i.IsProtected ? "keep"
+                        : i.Reclaimability == DeveloperReclaimability.ReviewFirst ? "review first"
+                        : i.Recipe?.Command is { } cmd ? $"rebuild: {cmd}" : "reclaimable";
                     Console.WriteLine($"{HumanUnits.Format(i.Bytes),10}  {i.AbsolutePath}  [{tag}]");
                 }
             }

@@ -5,7 +5,7 @@ namespace DiskMap.Core;
 
 /// <summary>
 /// A Find query kept in the sidebar (TASK-081 port). Stored as JSON under
-/// %LOCALAPPDATA%\DiskMap; nothing here touches the disk beyond that.
+/// the app's state folder (UserFolders.StateDirectory); nothing here touches the disk beyond that.
 /// </summary>
 public sealed record SavedSearch(
     Guid Id,

@@ -175,15 +175,18 @@ public class SafetyRulesTests
         Filled(t, root, ".claude");
         int web = Dir(t, root, "web");
         File(t, web, "package.json");
-        Filled(t, web, ".yarn");     // a Berry project's own yarn release
-        Filled(t, root, ".yarn");    // the global cache
+        Filled(t, Filled(t, web, ".yarn"), "cache");   // a Berry project's own yarn release; zero-installs commit its cache
+        int home = Dir(t, root, ".yarn");
+        File(t, Dir(t, home, "bin"), "yarn.js");
+        Filled(t, Dir(t, home, "berry"), "cache");  // the global cache
 
         var items = Catalog(t);
         Assert.Contains(items, i => i.DisplayName == "venv");
         Assert.DoesNotContain(items, i => i.DisplayName == "env");
         Assert.Equal(DeveloperReclaimability.Keep, Assert.Single(items, i => i.DisplayName == ".claude").Reclaimability);
-        var yarn = Assert.Single(items, i => i.DisplayName == ".yarn");
-        Assert.DoesNotContain(@"\web\", yarn.AbsolutePath);
+        var yarn = Assert.Single(items, i => i.DisplayName == "Yarn cache");
+        Assert.EndsWith(@"\.yarn\berry\cache", yarn.AbsolutePath);
+        Assert.DoesNotContain(items, i => i.DisplayName == ".yarn");
     }
 
     [Fact]

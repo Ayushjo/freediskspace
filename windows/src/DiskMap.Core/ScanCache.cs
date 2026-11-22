@@ -9,7 +9,7 @@ namespace DiskMap.Core;
 /// The rescan baseline (WIN-031): the last scan's tree, plus the journal
 /// cursor captured BEFORE that scan ran, persisted so a rescan replays
 /// only what changed — same contract as the macOS FSEvents baseline.
-/// Files live under `%LOCALAPPDATA%\DiskMap\ScanCache\<fnv-of-root>`:
+/// Files live under `<state folder>\ScanCache\<fnv-of-root>` (UserFolders.StateDirectory):
 /// `.dmap` (snapshot codec — shared binary format) + `.marker.json`.
 /// </summary>
 public static class ScanCache
@@ -42,8 +42,11 @@ public static class ScanCache
     // and a forced full rescan (Remove) can't be undone by a late save.
     private static readonly object PendingGate = new();
     private static Task _pending = Task.CompletedTask;
-    /// <summary>Roots whose baseline Remove dropped: never loaded again until a Save replaces it, even if a file couldn't be deleted.</summary>
-    private static readonly HashSet<string> Dropped = [];
+    /// <summary>
+    /// Roots whose baseline Remove dropped, with when: never loaded again until a Save replaces
+    /// it, even if a file couldn't be deleted, and never saved again by a scan that began earlier.
+    /// </summary>
+    private static readonly Dictionary<string, DateTime> Dropped = [];
 
     /// <summary>
     /// An elevated run keeps its cache admin-only: the tree indexes every
@@ -64,10 +67,14 @@ public static class ScanCache
     /// Queues <see cref="Save"/> off the caller's thread. The tree must not
     /// be mutated afterwards — ScanEngine hands it over only once final.
     /// </summary>
-    public static void SaveInBackground(string rootPath, FileTree tree, UsnJournal.Marker marker)
+    public static void SaveInBackground(string rootPath, FileTree tree, UsnJournal.Marker marker, DateTime scanStartedUtc)
     {
         lock (PendingGate)
+        {
+            // A full rescan asked for while this scan ran: its older tree must not come back as the baseline.
+            if (Dropped.TryGetValue(rootPath, out var droppedUtc) && scanStartedUtc <= droppedUtc) return;
             _pending = _pending.ContinueWith(_ => Save(rootPath, tree, marker), TaskScheduler.Default);
+        }
     }
 
     /// <summary>Blocks until every queued background save has landed.</summary>
@@ -82,7 +89,7 @@ public static class ScanCache
     {
         WaitForPendingSaves();
         lock (PendingGate)
-            if (Dropped.Contains(rootPath)) return null;
+            if (Dropped.ContainsKey(rootPath)) return null;
         try
         {
             var marker = JsonSerializer.Deserialize<MarkerFile>(
@@ -207,7 +214,7 @@ public static class ScanCache
     public static void Remove(string rootPath)
     {
         WaitForPendingSaves();
-        lock (PendingGate) Dropped.Add(rootPath);
+        lock (PendingGate) Dropped[rootPath] = DateTime.UtcNow;
         try { File.Delete(MarkerPath(rootPath)); } catch { }
         try { File.Delete(TreePath(rootPath)); } catch { }
     }

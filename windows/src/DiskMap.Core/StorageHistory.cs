@@ -9,7 +9,7 @@ namespace DiskMap.Core;
 /// is a few hundred folder sizes.
 ///
 /// One file per scanned root:
-/// `%LOCALAPPDATA%\DiskMap\History\&lt;fnv-1a of the path&gt;.json`.
+/// `&lt;state folder&gt;\History\&lt;fnv-1a of the path&gt;.json` (UserFolders.StateDirectory).
 /// Written whole and atomically after each scan; never deleted. A file
 /// that no longer decodes is left alone and a `.v2.json` beside it takes
 /// over.

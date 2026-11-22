@@ -77,7 +77,9 @@ internal static class Shell32
                     op.DeleteItem(item, IntPtr.Zero);
                     queued++;
                 }
-                catch (COMException) { /* vanished or unreadable — the caller sees it still/never there */ }
+                // A vanished path arrives as FileNotFoundException (HRESULT → .NET), not COMException:
+                // skip it, never the rest of the batch. The caller sees it still/never there.
+                catch (Exception ex) when (ex is COMException or IOException or UnauthorizedAccessException) { }
             }
             if (queued == 0) return refused;
             try { op.PerformOperations(); }

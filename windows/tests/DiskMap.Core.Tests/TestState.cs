@@ -34,6 +34,9 @@ public class TestStateTests
     [Fact]
     public void WithoutTheVariableStateIsUnderLocalAppData()
     {
+        // Elevated, the state is the admin-only %ProgramData% folder (AdminState); reading the
+        // default would create it, so an elevated run checks nothing here.
+        if (DiskMap.Core.Native.UnelevatedLaunch.IsElevated) return;
         string? previous = Environment.GetEnvironmentVariable(UserFolders.StateVariable);
         try
         {

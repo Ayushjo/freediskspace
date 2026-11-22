@@ -31,13 +31,18 @@ public static class UserFolders
 
     /// <summary>
     /// Where the app keeps its own files: settings, scan history, the scan cache, snapshots,
-    /// saved searches and the last cleanup's Put Back record. %LOCALAPPDATA%\DiskMap (the
-    /// real one — DISKMAP_HOME never moves it) unless DISKMAP_STATE_DIR points elsewhere.
+    /// saved searches and the last cleanup's Put Back record. DISKMAP_STATE_DIR when set (tests
+    /// and the render harness, which run unelevated; the elevated app drops DISKMAP_*). Elevated,
+    /// the admin-only %ProgramData%\freedisk.space\&lt;SID&gt; (<see cref="AdminState"/>): the plain
+    /// user controls %LOCALAPPDATA% and could redirect an administrator's writes there.
+    /// Otherwise %LOCALAPPDATA%\DiskMap (the real one — DISKMAP_HOME never moves it).
     /// </summary>
     public static string StateDirectory =>
         Environment.GetEnvironmentVariable(StateVariable) is { Length: > 0 } dir
             ? Path.GetFullPath(dir)
-            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DiskMap");
+            : Native.UnelevatedLaunch.IsElevated
+                ? AdminState.Folder
+                : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DiskMap");
 
     public static string Home =>
         Override ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);

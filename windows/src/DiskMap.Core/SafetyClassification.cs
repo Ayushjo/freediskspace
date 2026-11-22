@@ -52,7 +52,7 @@ public sealed record SafetyAssessment
 
     private static string DefaultAction(SafetyLevel level) => level switch
     {
-        SafetyLevel.Safe => "Add to Cleanup, then review it before moving it to the Recycle Bin.",
+        SafetyLevel.Safe => "Add it to the basket, then review it there before it goes to the Recycle Bin.",
         SafetyLevel.Review => "Inspect contents, show it in File Explorer, then stage only what you recognize.",
         _ => "Do not remove. Leave system and credential data alone.",
     };
@@ -116,7 +116,7 @@ public static class SafetyClassifier
             return new SafetyAssessment(SafetyLevel.Safe,
                 "npm cache stores downloaded packages so installs are faster. npm can recreate it.",
                 "npm cache", "Next npm install may re-download packages (slower once).",
-                "Add to Cleanup and review before removing.");
+                "Add it to the basket and review it before it goes.");
         }
         if (n is ".pnpm-store" or ".pnpm" || p.Contains(@"\pnpm\cache") || p.Contains(@"\pnpm\store")
             || p.Contains(@"\.pnpm-store"))
@@ -126,7 +126,9 @@ public static class SafetyClassifier
                 "pnpm store", "Projects may need pnpm install again.",
                 "Safe to clear if you can reinstall dependencies.");
         }
-        if (n is ".yarn" or "yarn-cache" || p.Contains(@"\yarn\cache") || p.Contains(@"\.yarn\cache"))
+        // Not a bare ".yarn" or ".yarn\cache": a project's own .yarn holds the Yarn release it runs, its
+        // patches and plugins, and zero-install repositories commit .yarn\cache. Only Yarn's own caches.
+        if (n == "yarn-cache" || p.Contains(@"\yarn\cache") || p.Contains(@"\.yarn\berry\cache"))
         {
             return new SafetyAssessment(SafetyLevel.Safe,
                 "Yarn package cache. Yarn recreates it on the next install.", "Yarn cache",

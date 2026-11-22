@@ -653,7 +653,7 @@ public static partial class DeveloperCatalog
                 if (lockfile is null) rebuildCost = RebuildCost.NetworkedUnpinned;
             }
 
-            string display = DisplayTitle(hit.Name);
+            string display = DisplayTitle(hit.Name, hit.Path);
             items.Add(new DeveloperItem(
                 NodeID: hit.Id,
                 DisplayName: display,
@@ -745,11 +745,9 @@ public static partial class DeveloperCatalog
     /// developer rule for that name holds here with its evidence and is
     /// not a keep — so a "build" that is really a tool's or a tracked
     /// source folder is never called regenerable. Names no rule knows only
-    /// need to be outside installed tools. <paramref name="gitignores"/> is
-    /// unused: parsed ignore files are cached on <paramref name="locator"/>.
+    /// need to be outside installed tools. Parsed ignore files are cached on <paramref name="locator"/>.
     /// </summary>
-    internal static bool IsVerifiedOutput(FileTree tree, int id, string rootPath,
-        ProjectLocator locator, Dictionary<string, string?> gitignores)
+    internal static bool IsVerifiedOutput(FileTree tree, int id, string rootPath, ProjectLocator locator)
     {
         string name = tree.NameOf(id);
         string path = tree.PathOf(id, rootPath);
@@ -876,10 +874,11 @@ public static partial class DeveloperCatalog
         return rule.Category;
     }
 
-    private static string DisplayTitle(string name) => name.ToLowerInvariant() switch
+    private static string DisplayTitle(string name, string path) => name.ToLowerInvariant() switch
     {
         ".npm" or "npm-cache" or "_cacache" => "npm cache",
-        ".nuget" => "NuGet cache",
+        "cache" => "Yarn cache",   // the only rule named "cache": ~\.yarn\berry\cache
+        "packages" when path.Contains(@"\.nuget\", StringComparison.OrdinalIgnoreCase) => "NuGet packages",
         ".vs" => "Visual Studio cache",
         ".docker" or "dockerdesktop" => "Docker data",
         // Tool-home cache folders: their rules only match them under the tool's home.

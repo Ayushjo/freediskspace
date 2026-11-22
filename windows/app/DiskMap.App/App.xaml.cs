@@ -15,6 +15,13 @@ public partial class App : Application
         if (UnelevatedLaunch.IsElevated)
             foreach (string name in HarnessVariables(Environment.GetEnvironmentVariables().Keys.Cast<string>()))
                 Environment.SetEnvironmentVariable(name, null);
+        // Elevated, the app's own files live in an admin-only folder (Core AdminState). One that
+        // someone else created first, or a link, is never used: say how to fix it and stop.
+        if (UnelevatedLaunch.IsElevated && DiskMap.Core.AdminState.Problem is { } problem)
+        {
+            MessageBox.Show(problem, "freedisk.space", MessageBoxButton.OK, MessageBoxImage.Error);
+            Environment.Exit(1);
+        }
         // WIN-055: `diskmap C:\some\folder` launches straight into a scan. A relative folder is
         // read against the folder the app started in, before the working folder moves.
         StartupPath = e.Args is [{ } arg, ..] && Directory.Exists(arg)

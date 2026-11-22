@@ -28,7 +28,7 @@ public static class SystemStorageCatalog
         Never,
         /// <summary>Freed through the tool's own command or settings.</summary>
         Guide,
-        /// <summary>Safe to add to Cleanup (goes to the Recycle Bin).</summary>
+        /// <summary>Can go in the basket (then the Recycle Bin).</summary>
         Trash,
     }
 

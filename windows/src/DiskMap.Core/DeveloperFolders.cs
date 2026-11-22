@@ -13,7 +13,7 @@ public sealed class DeveloperFolders
         /// <summary>Developer bytes at or under this folder.</summary>
         public long Bytes { get; set; }
         public int ItemCount { get; set; }
-        /// <summary>Bytes of the items here that can go to Cleanup.</summary>
+        /// <summary>Bytes of the items here that can go in the basket.</summary>
         public long RemovableBytes { get; set; }
         /// <summary>The developer item this folder <em>is</em>, when it is one.</summary>
         public string? ItemId { get; set; }

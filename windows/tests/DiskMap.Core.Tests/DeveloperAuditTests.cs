@@ -169,7 +169,7 @@ public class DeveloperAuditTests
         int lib = Dir(t, root, "Lib");
         Put(t, lib, "Lib.csproj");
         Put(t, Dir(t, lib, "bin"), "Vendor.dll", 20_000_000);      // maybe a checked-in dependency
-        Filled(t, root, ".yarn");                                  // Yarn's global cache is never in a repository
+        Filled(t, Dir(t, Dir(t, root, ".yarn"), "berry"), "cache"); // Yarn's global cache is never in a repository
 
         var items = Build(t).Items;
 
@@ -177,7 +177,7 @@ public class DeveloperAuditTests
         var bin = Assert.Single(items, i => i.DisplayName == "bin");
         Assert.Equal(DeveloperReclaimability.ReviewFirst, bin.Reclaimability);
         Assert.EndsWith(DeveloperCatalog.NotInGit, bin.WhyLarge);
-        Assert.Equal(DeveloperReclaimability.Reclaimable, Assert.Single(items, i => i.DisplayName == ".yarn").Reclaimability);
+        Assert.Equal(DeveloperReclaimability.Reclaimable, Assert.Single(items, i => i.DisplayName == "Yarn cache").Reclaimability);
     }
 
     [Fact]
