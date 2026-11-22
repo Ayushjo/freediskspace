@@ -14,7 +14,7 @@ namespace DiskMap.App.Pages;
 /// its own size and the data it keeps in AppData, ProgramData and Documents, beside an
 /// inspector that shows what uninstalling frees. Windows never removes a program's own files
 /// here: the program is uninstalled from Settings › Apps or its own uninstaller (its registry
-/// command can be copied, never run), and Clean up puts the leftovers you tick in the basket.
+/// command can be copied, never run), and the app data you tick can go in the basket.
 /// </summary>
 public sealed class AppsBoardPage : UserControl
 {
@@ -28,11 +28,14 @@ public sealed class AppsBoardPage : UserControl
     private readonly ScrollViewer _tableScroll = new() { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false };
     private readonly ScrollViewer _inspectorScroll = new() { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false };
     private readonly Dictionary<string, FrameworkElement> _rowsById = [];
-    private readonly DispatcherTimer _flush = new(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(250) };
+    // Measured programs land at most once a second: every flush rebuilds the whole table.
+    private readonly DispatcherTimer _flush = new(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(1) };
     private readonly ConcurrentQueue<ApplicationEntry> _measured = new();
 
     private List<ApplicationEntry> _apps = [];
     private Dictionary<string, InstalledApp> _sources = [];
+    /// <summary>The scan the list was read for: a new scan reads the registry and folders again.</summary>
+    private FileTree? _loadedFor;
     private bool _isLoading = true;
     private bool _measuring;
     private string? _selectedId;
@@ -68,13 +71,18 @@ public sealed class AppsBoardPage : UserControl
         Loaded += (_, _) =>
         {
             Model.StagedChanged += OnStaged;
-            Reload();
+            // The registry and every program's folders are read once per scan, not on every visit.
+            if (_apps.Count == 0 || !ReferenceEquals(_loadedFor, Model.Tree)) Reload();
+            else
+            {
+                _flush.Start();   // what was measured while away
+                Rebuild();
+            }
         };
         Unloaded += (_, _) =>
         {
             Model.StagedChanged -= OnStaged;
-            _load?.Cancel();
-            _flush.Stop();
+            _flush.Stop();   // measuring carries on, so the next visit needn't start over
         };
         SizeChanged += (_, _) => { if (Rd.ClassFor(WindowWidth) != _class) Rebuild(); };
         PreviewKeyDown += OnKey;
@@ -114,17 +122,17 @@ public sealed class AppsBoardPage : UserControl
     public static string StaleText(IReadOnlyCollection<ApplicationEntry> stale) =>
         stale.Count == 0 ? "none" : $"{stale.Count} · {ShellFormat.HeroBytes(stale.Sum(a => a.TotalBytes))}";
 
-    public static string PlacesLabel(int count) => $"LEFTOVERS · {count} PLACE{(count == 1 ? "" : "S")}";
+    public static string PlacesLabel(int count) => $"APP DATA · {count} PLACE{(count == 1 ? "" : "S")}";
 
     /// <summary>"Valve Corporation · version 2.10.91.91".</summary>
     public static string PublisherLine(string? publisher, string? version) =>
         string.Join(" · ", new[] { publisher, version is null ? null : "version " + version }.Where(s => !string.IsNullOrWhiteSpace(s)));
 
-    /// <summary>The inspector's big button.</summary>
-    public static string PrimaryTitle(bool staged, int tickedCount, long tickedBytes) =>
+    /// <summary>The inspector's big button (the legend above it gives the size).</summary>
+    public static string PrimaryTitle(bool staged, int tickedCount) =>
         staged ? "In the basket"
-        : tickedCount == 0 ? "Tick the leftovers to clean up"
-        : $"Clean up · add {ShellFormat.HeroBytes(tickedBytes)} to basket";
+        : tickedCount == 0 ? "Tick the app data to add"
+        : "Add app data to basket";
 
     /// <summary>"Installed  Sep 2026" (the Mac's month and year).</summary>
     public static string MonthYear(DateTimeOffset date) =>
@@ -132,7 +140,22 @@ public sealed class AppsBoardPage : UserControl
 
     public static string Guidance(ApplicationEntry app) => app.Source == ApplicationSource.Store
         ? $"Microsoft Store apps are managed by Windows and keep their data with them. Uninstall {app.Name} from Settings › Apps."
-        : $"freedisk.space never removes a program itself. Uninstall {app.Name} from Settings › Apps or with its own uninstaller; Clean up puts the leftovers you tick in the basket.";
+        : $"freedisk.space never removes a program itself. Uninstall {app.Name} from Settings › Apps or with its own uninstaller; the app data you tick can go in the basket.";
+
+    /// <summary>
+    /// Ticked app data split by the classifier's verdict: Warn and Never places (Docker's disk,
+    /// a WSL distro…) never go in with a bulk add; added one at a time, they show why.
+    /// </summary>
+    public static (List<ApplicationRelatedItem> Safe, List<ApplicationRelatedItem> Risky) SplitRisky(
+        IEnumerable<ApplicationRelatedItem> items, Func<string, bool> isDirectory)
+    {
+        var safe = new List<ApplicationRelatedItem>();
+        var risky = new List<ApplicationRelatedItem>();
+        foreach (var item in items)
+            (StorageClassifier.Classify(item.Path, isDirectory(item.Path)).Advice is CleanupAdvice.Warn or CleanupAdvice.Never
+                ? risky : safe).Add(item);
+        return (safe, risky);
+    }
 
     // ---- State ----
 
@@ -154,6 +177,7 @@ public sealed class AppsBoardPage : UserControl
         _load?.Cancel();
         var cts = new CancellationTokenSource();
         _load = cts;
+        _loadedFor = Model.Tree;
         _isLoading = true;
         Rebuild();
         var (installed, stubs, places, broad) = await Task.Run(() =>
@@ -287,7 +311,7 @@ public sealed class AppsBoardPage : UserControl
         {
             add(Table(visible, active), new GridLength(1, GridUnitType.Star), gap);
             if (_class == Rd.WidthClass.Wide)
-                add(Rd.Text("Uninstall a program from Settings › Apps. Clean up puts the leftovers you tick in the basket. Nothing moves until you review it there.",
+                add(Rd.Text("Uninstall a program from Settings › Apps. The app data you tick goes in the basket, and nothing moves until you review it there.",
                     12, null, "RdInk3"), GridLength.Auto, gap);
         }
     }
@@ -434,9 +458,12 @@ public sealed class AppsBoardPage : UserControl
 
     // ---- Table ----
 
-    private double LastOpenedWidth => _class == Rd.WidthClass.Compact ? 110 : 190;
+    private double LastOpenedWidth => _class == Rd.WidthClass.Compact ? 94 : 174;
 
-    /// <summary>App | App | Data | Total | Last opened | action, the same widths as the Mac.</summary>
+    /// <summary>
+    /// App | App | Data | Total | Last opened | action: the Mac's widths, but 16 more for the
+    /// action ("Add to basket" is wider than "Clean up") taken from Last opened's spare room.
+    /// </summary>
     private Grid Columns()
     {
         var grid = new Grid { Margin = new Thickness(16, 0, 16, 0) };
@@ -446,7 +473,7 @@ public sealed class AppsBoardPage : UserControl
         if (_class != Rd.WidthClass.Compact) col(new GridLength(84));
         col(new GridLength(90));
         col(new GridLength(LastOpenedWidth + 24));
-        col(new GridLength(96));
+        col(new GridLength(112));
         return grid;
     }
 
@@ -560,9 +587,9 @@ public sealed class AppsBoardPage : UserControl
         else if (staged) { }   // the violet row says it
         else
         {
-            var button = selected ? Rd.AccentButton("Clean up", () => CleanUp(app)) : Rd.SecondaryButton("Clean up", () => CleanUp(app));
-            button.ToolTip = "Put the leftovers you tick in the basket";
-            System.Windows.Automation.AutomationProperties.SetName(button, $"Clean up {app.Name}");
+            var button = selected ? Rd.AccentButton("Add to basket", () => CleanUp(app)) : Rd.SecondaryButton("Add to basket", () => CleanUp(app));
+            button.ToolTip = "Add the app data you tick to the basket";
+            System.Windows.Automation.AutomationProperties.SetName(button, $"Add {app.Name}’s app data to basket");
             action = button;
         }
         if (action is not null) Put(grid, action, c, right: true);
@@ -587,7 +614,7 @@ public sealed class AppsBoardPage : UserControl
         return host;
     }
 
-    /// <summary>The row's menu: reveal the program and its leftovers, copy its uninstall command, clean up.</summary>
+    /// <summary>The row's menu: reveal the program and its data, copy its uninstall command, add the data to the basket.</summary>
     private ContextMenu RowMenu(ApplicationEntry app)
     {
         var menu = new ContextMenu();
@@ -599,7 +626,7 @@ public sealed class AppsBoardPage : UserControl
             System.Windows.Automation.AutomationProperties.SetName(mi, header);
             menu.Items.Add(mi);
         }
-        if (app.CanStageForCleanup && !IsStaged(app)) item("Add leftovers to basket", () => CleanUp(app));
+        if (app.CanStageForCleanup && !IsStaged(app)) item("Add app data to basket", () => CleanUp(app));
         item("Show in File Explorer", () => Reveal(app), app.InstallPath.Length > 0);
         foreach (var r in app.Related.Take(5))
         {
@@ -623,7 +650,8 @@ public sealed class AppsBoardPage : UserControl
         try
         {
             string? path = app.DisplayIcon?.Split(',')[0].Trim().Trim('"');
-            if (path is not { Length: > 0 } || !System.IO.File.Exists(path)
+            // A share's icon would be read over the network.
+            if (path is not { Length: > 0 } || !AppLeftoverFinder.IsLocalPath(path) || !System.IO.File.Exists(path)
                 || !path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && !path.EndsWith(".ico", StringComparison.OrdinalIgnoreCase))
                 return null;
             using var icon = path.EndsWith(".ico", StringComparison.OrdinalIgnoreCase)
@@ -735,7 +763,7 @@ public sealed class AppsBoardPage : UserControl
         {
             Background = Rd.HatchBrush(Ui.Brush("AppAccent"), Ui.Brush("RdAccentWash"), 4, 1.5),
             BorderBrush = Ui.Brush("AppAccent"), BorderThickness = new Thickness(1),
-        }, "Leftovers ticked", tickedBytes, accent: true);
+        }, "App data ticked", tickedBytes, accent: true);
         hatch.Margin = new Thickness(0, 8, 0, 0);
         legend.Children.Add(hatch);
         if (unticked.Count > 0)
@@ -787,7 +815,7 @@ public sealed class AppsBoardPage : UserControl
         footer.Children.Add(pair);
         if (app.CanStageForCleanup)
         {
-            var primary = Rd.AccentButton(PrimaryTitle(staged, ticked.Count, tickedBytes), () =>
+            var primary = Rd.AccentButton(PrimaryTitle(staged, ticked.Count), () =>
             {
                 if (staged) Model.OpenBasket(); else CleanUp(app);
             }, large: true, fullWidth: true, hard: !staged);
@@ -971,8 +999,9 @@ public sealed class AppsBoardPage : UserControl
     // ---- Actions ----
 
     /// <summary>
-    /// The ticked leftovers, through the one confirmation, into the basket. The program itself
-    /// is never staged: Windows uninstalls it (Settings › Apps or its own uninstaller).
+    /// The ticked app data, through the one confirmation, into the basket. The program itself
+    /// is never staged: Windows uninstalls it (Settings › Apps or its own uninstaller). Risky
+    /// places are skipped with the same toast as every other bulk add.
     /// </summary>
     private void CleanUp(ApplicationEntry app)
     {
@@ -982,19 +1011,27 @@ public sealed class AppsBoardPage : UserControl
         {
             _selectedId = app.Id;
             Rebuild();
-            Model.Toast($"Tick the leftovers of {app.Name} you want to remove");
+            Model.Toast($"Tick the app data of {app.Name} you want to remove");
             return;
         }
-        var items = picked.Select(r => new Dialogs.ConfirmItem(ApplicationsCatalog.KindTitle(r.Kind), r.Path, r.Bytes)).ToList();
-        bool ok = Model.ConfirmBulk?.Invoke($"Clean up {app.Name}",
-            $"These leftovers of {app.Name} will be added to the basket. Nothing moves yet — you review the basket and confirm again before anything goes to the Recycle Bin.",
-            items, $"freedisk.space never removes {app.Name} itself. Uninstall it from Settings › Apps or with its own uninstaller.") == true;
-        if (!ok) return;
+        var (safe, risky) = SplitRisky(picked, System.IO.Directory.Exists);
+        if (safe.Count > 0)
+        {
+            var items = safe.Select(r => new Dialogs.ConfirmItem(ApplicationsCatalog.KindTitle(r.Kind), r.Path, r.Bytes)).ToList();
+            string footnote = $"freedisk.space never removes {app.Name} itself. Uninstall it from Settings › Apps or with its own uninstaller.";
+            if (risky.Count > 0)
+                footnote = $"{risky.Count} risky item{(risky.Count == 1 ? "" : "s")} (WSL/Docker disks, apps, browser data…) won't be added — add those one at a time to see the warning. " + footnote;
+            bool ok = Model.ConfirmBulk?.Invoke($"Add {app.Name}’s app data to the basket?",
+                $"This app data of {app.Name} will be added to the basket. Nothing moves yet — you review the basket and confirm again before anything goes to the Recycle Bin.",
+                items, footnote) == true;
+            if (!ok) return;
+        }
         int added = 0;
-        foreach (var r in picked)
+        foreach (var r in safe)
             if (Model.StagePath(r.Path, r.Bytes, "Application: " + app.Name, notify: false)) added++;
-        if (added > 0) Model.ToastAdded(added);
-        else Model.Toast("Already in the basket");
+        var riskyNames = risky.Select(r => ApplicationsCatalog.LastSegment(r.Path)).ToList();
+        if (DuplicatesBoardPage.StagedToast(added, safe.Count - added, 0, riskyNames, 0) is { } toast) Model.Toast(toast);
+        else if (added > 0) Model.ToastAdded(added);
     }
 
     private static void Reveal(ApplicationEntry app)

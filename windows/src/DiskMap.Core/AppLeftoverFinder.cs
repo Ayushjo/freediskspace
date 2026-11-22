@@ -45,13 +45,13 @@ public static class AppLeftoverFinder
 {
     private const string UninstallPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
 
+    // Not %LOCALAPPDATA%\Programs: what matches there is a per-user program's own folder.
     private static string[] SearchLocations =>
     [
         UserFolders.RoamingAppData,                                                // %APPDATA%
         UserFolders.LocalAppData,                                                  // %LOCALAPPDATA%
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),// %PROGRAMDATA%
         Path.Combine(UserFolders.Home, "Documents"),
-        Path.Combine(UserFolders.LocalAppData, "Programs"),
     ];
 
     /// <summary>
@@ -180,7 +180,8 @@ public static class AppLeftoverFinder
         long installSize = 0, leftoverSize = 0;
         if (measureSizes)
         {
-            installSize = !string.IsNullOrWhiteSpace(app.InstallLocation) && Directory.Exists(app.InstallLocation)
+            installSize = !string.IsNullOrWhiteSpace(app.InstallLocation) && IsLocalPath(app.InstallLocation)
+                          && Directory.Exists(app.InstallLocation)
                 ? AllocatedSize(app.InstallLocation)
                 : 0;
             leftoverSize = matches.Sum(AllocatedSize);
@@ -272,27 +273,44 @@ public static class AppLeftoverFinder
         return false;
     }
 
+    /// <summary>
+    /// Not a network share or device path ("\\server\share", "\\?\…", "\\.\…", "\??\…"): any
+    /// file call on one would reach the network or a raw device. The registry's InstallLocation
+    /// (a per-user Uninstall key anyone can write) can name either.
+    /// </summary>
+    public static bool IsLocalPath(string path)
+    {
+        string p = path.Trim().Trim('"');
+        return !(p.StartsWith(@"\\", StringComparison.Ordinal) || p.StartsWith("//", StringComparison.Ordinal)
+                 || p.StartsWith(@"\??\", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// What a file or folder occupies on disk, without following links: a junction or
+    /// directory symlink counts as itself (nothing), never as the folder it points at.
+    /// Local paths only; 0 for anything else.
+    /// </summary>
     public static long AllocatedSize(string path)
     {
+        if (!IsLocalPath(path)) return 0;
         try
         {
             var info = new FileInfo(path);
             if (!info.Exists && !Directory.Exists(path)) return 0;
             if ((info.Attributes & FileAttributes.Directory) == 0)
                 return OnDiskSize(path, info.Length, info.Attributes);
+            if ((info.Attributes & FileAttributes.ReparsePoint) != 0) return 0;
 
-            long total = 0;
-            foreach (var entry in Directory.EnumerateFileSystemEntries(path, "*",
-                         SearchOption.AllDirectories))
+            var walk = new System.IO.Enumeration.FileSystemEnumerable<long>(path,
+                (ref System.IO.Enumeration.FileSystemEntry e) =>
+                    e.IsDirectory ? 0 : OnDiskSize(e.ToFullPath(), e.Length, e.Attributes),
+                new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = 0 })
             {
-                try
-                {
-                    var fi = new FileInfo(entry);
-                    if ((fi.Attributes & FileAttributes.Directory) != 0) continue;
-                    total += OnDiskSize(entry, fi.Length, fi.Attributes);
-                }
-                catch { /* skip unreadable */ }
-            }
+                ShouldRecursePredicate = (ref System.IO.Enumeration.FileSystemEntry e) =>
+                    (e.Attributes & FileAttributes.ReparsePoint) == 0,
+            };
+            long total = 0;
+            foreach (long bytes in walk) total += bytes;
             return total;
         }
         catch { return 0; }

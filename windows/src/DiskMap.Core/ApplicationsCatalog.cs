@@ -200,9 +200,11 @@ public static class ApplicationsCatalog
     {
         if (IsSameOrInside(path, places.Documents)) return ApplicationRelatedKind.Documents;
         if (IsSameOrInside(path, places.Programs)) return ApplicationRelatedKind.Programs;
+        // The last word says what it is: "Spotify Cache" is a cache; "Event Log Explorer" is an app's data, not a log.
         var words = AppLeftoverFinder.Words(LastSegment(path));
-        if (words.Any(CacheWords.Contains)) return ApplicationRelatedKind.Caches;
-        if (words.Any(LogWords.Contains)) return ApplicationRelatedKind.Logs;
+        string last = words.Length > 0 ? words[^1] : "";
+        if (CacheWords.Contains(last)) return ApplicationRelatedKind.Caches;
+        if (LogWords.Contains(last)) return ApplicationRelatedKind.Logs;
         if (IsSameOrInside(path, places.LocalAppData)) return ApplicationRelatedKind.LocalData;
         if (IsSameOrInside(path, places.RoamingAppData)) return ApplicationRelatedKind.RoamingData;
         if (IsSameOrInside(path, places.ProgramData)) return ApplicationRelatedKind.ProgramData;
@@ -213,7 +215,9 @@ public static class ApplicationsCatalog
     /// The leftovers as the inspector lists them, biggest first. A match that is the program's
     /// own install folder, holds it, or sits inside it is the program, not a leftover: it is
     /// counted in the app's size and never offered for the basket (Squirrel apps install to
-    /// %LOCALAPPDATA%\Name, per-user installs to %LOCALAPPDATA%\Programs\Name).
+    /// %LOCALAPPDATA%\Name, per-user installs to %LOCALAPPDATA%\Programs\Name). Nothing under
+    /// %LOCALAPPDATA%\Programs is ever one either: it is a program's own folder, and half the
+    /// registry's entries name no install folder to tell it by.
     /// </summary>
     public static List<ApplicationRelatedItem> RelatedItems(IEnumerable<(string Path, long Bytes)> leftovers,
         string? installPath, Places places) =>
@@ -221,6 +225,7 @@ public static class ApplicationsCatalog
             .Where(l => string.IsNullOrWhiteSpace(installPath)
                         || !(IsSameOrInside(l.Path, installPath) || IsSameOrInside(installPath, l.Path)))
             .Select(l => new ApplicationRelatedItem(RelatedKind(l.Path, places), l.Path, l.Bytes))
+            .Where(r => r.Kind != ApplicationRelatedKind.Programs)
             .OrderByDescending(r => r.Bytes)
             .ToList();
 
@@ -245,13 +250,17 @@ public static class ApplicationsCatalog
         return list;
     }
 
-    /// <summary>A real, specific install folder: not empty, not a drive root, not one of (or above) <paramref name="broad"/>.</summary>
+    /// <summary>
+    /// A real, specific, local install folder: not empty, not a drive root, not a network share
+    /// or device path (measuring one would reach the network), not one of (or above) <paramref name="broad"/>.
+    /// </summary>
     public static bool IsUsableInstallPath(string? path, IEnumerable<string> broad)
     {
         if (string.IsNullOrWhiteSpace(path)) return false;
         string trimmed = path.Trim().Trim('"').TrimEnd('\\', '/');
         if (trimmed.Length <= 2) return false;                  // "C:", "", "\"
         if (trimmed.IndexOfAny(['\\', '/']) < 0) return false;  // not a folder path at all
+        if (!AppLeftoverFinder.IsLocalPath(trimmed)) return false;
         return !broad.Any(b => IsSameOrInside(b, trimmed));
     }
 

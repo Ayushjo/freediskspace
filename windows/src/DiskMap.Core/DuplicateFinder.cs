@@ -1,6 +1,23 @@
+using System.Buffers;
 using System.Security.Cryptography;
+using DiskMap.Core.Native;
 
 namespace DiskMap.Core;
+
+/// <summary>A file's length and last write time (UTC ticks), read without opening it.</summary>
+public readonly record struct FileStamp(long Length, long WriteTicks)
+{
+    /// <summary>The file as it is now; null when it is gone, a folder, or unreadable.</summary>
+    public static FileStamp? Of(string path)
+    {
+        try
+        {
+            var info = new FileInfo(path);
+            return info.Exists ? new FileStamp(info.Length, info.LastWriteTimeUtc.Ticks) : null;
+        }
+        catch { return null; }
+    }
+}
 
 public sealed record DuplicateGroup(
     string Hash,
@@ -20,6 +37,13 @@ public sealed record DuplicateGroup(
     }
 
     private readonly IReadOnlyList<IReadOnlyList<int>>? _cloneSets;
+
+    /// <summary>
+    /// Each copy's length and last write when the search read it. A copy that no longer
+    /// matches has changed since it was hashed, so it is no longer known to be a duplicate.
+    /// Null when no search built the group.
+    /// </summary>
+    public IReadOnlyDictionary<int, FileStamp>? Stamps { get; init; }
 
     /// <summary>
     /// Members that share blocks with each other (sorted ids, two or more each, ordered by
@@ -109,9 +133,10 @@ internal sealed record DuplicateScanResult(List<DuplicateGroup> Groups, int Full
 ///   1. Group by exact logical size.
 ///   2. Within a size group, hash only the first 64 KB.
 ///   3. Only for files that still collide, hash full content —
-///      unless CloneDetector.AreLikelyClones says they share a full
-///      extent map. A clone overwritten past the 64 KB window still
-///      collides on the partial hash and must be hashed.
+///      unless CloneDetector.Families says they are one file record
+///      (hard links) or share a full extent map. A clone overwritten
+///      past the 64 KB window still collides on the partial hash and
+///      must be hashed.
 ///
 /// A clone family and a plain copy of the same contents are one group (Mac PR #23): one
 /// member per family is hashed, and the family is kept as a clone set of that group.
@@ -186,22 +211,34 @@ public static class DuplicateFinder
         "WindowsApps", "$Recycle.Bin", "System Volume Information",
     };
 
-    internal static bool SkipsSubtree(FileTree tree, int id)
+    /// <param name="root">The scanned folder's path: the root node has no parent to tell a profile by.</param>
+    internal static bool SkipsSubtree(FileTree tree, int id, string root = "")
     {
         string name = tree.NameOf(id);
         if (name.StartsWith('.') || SkippedFolders.Contains(name)) return true;
         // A profile folder (Users\<name>) may hold a stray package.json —
         // it is still where personal files live, so only .git counts there.
         int parent = tree.Parent[id];
-        bool profile = parent >= 0 && tree.NameOf(parent).Equals("Users", StringComparison.OrdinalIgnoreCase);
+        string above = parent >= 0 ? tree.NameOf(parent)
+            : Path.GetFileName(Path.GetDirectoryName(root.TrimEnd('\\', '/'))) ?? "";
+        bool profile = above.Equals("Users", StringComparison.OrdinalIgnoreCase);
         var (manifests, extensions) = Manifests.Value;
+        bool exe = false, dll = false;
         for (int c = tree.FirstChild[id]; c != -1; c = tree.NextSibling[c])
         {
             string child = tree.NameOf(c);
             if (child == ".git") return true;   // a working tree: its files are the repo's
+            string extension = Path.GetExtension(child);
+            if (!tree.IsDirectory[c])
+            {
+                exe |= extension.Equals(".exe", StringComparison.OrdinalIgnoreCase);
+                dll |= extension.Equals(".dll", StringComparison.OrdinalIgnoreCase);
+            }
             // A project (package.json, .csproj, .xpr, pubspec.yaml…): its
             // copies are vendored sources, build output, simulation runs.
-            if (!profile && (manifests.Contains(child) || extensions.Contains(Path.GetExtension(child))))
+            // A program (an .exe beside its .dll): a game or app copied to
+            // D:\ outside Program Files, whose identical DLLs are its own.
+            if (!profile && (manifests.Contains(child) || extensions.Contains(extension) || exe && dll))
                 return true;
         }
         return false;
@@ -237,10 +274,11 @@ public static class DuplicateFinder
             {
                 result.Add((id, tree.PathOf(id, root), tree.LogicalSize[id]));
             }
-            if (id > 0 && tree.IsDirectory[id] && SkipsSubtree(tree, id)) continue;
+            // The root too: a repository or app folder scanned on its own is still the tool's.
+            if (tree.IsDirectory[id] && SkipsSubtree(tree, id, root)) continue;
             // Installed software (Scoop apps, SDKs, toolchains) lives near the
             // top of a scan; classifying the first levels catches it cheaply.
-            if (id > 0 && tree.IsDirectory[id] && depth <= 6
+            if (tree.IsDirectory[id] && depth <= 6
                 && DeveloperCatalog.ToolAreas.Contains(StorageClassifier.Classify(tree.PathOf(id, root), true).Class))
                 continue;
             int child = tree.FirstChild[id];
@@ -319,32 +357,36 @@ public static class DuplicateFinder
         CancellationToken cancellationToken)
     {
         var byPartial = new Dictionary<string, List<(int Id, string Path)>>();
+        var stamps = new Dictionary<int, FileStamp>();
         foreach (var file in files)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (PartialHash(file.Path, 65_536) is { } partial)
+            if (PartialHash(file.Path) is { } partial)
             {
-                if (!byPartial.TryGetValue(partial, out var list))
-                    byPartial[partial] = list = [];
+                stamps[file.Id] = partial.Stamp;
+                if (!byPartial.TryGetValue(partial.Hash, out var list))
+                    byPartial[partial.Hash] = list = [];
                 list.Add(file);
             }
         }
+        Dictionary<int, FileStamp> stampsOf(List<int> ids) => ids.ToDictionary(id => id, id => stamps[id]);
 
         var groups = new List<DuplicateGroup>();
         int fullContentHashCalls = 0;
         foreach (var (_, collision) in byPartial)
         {
             if (collision.Count < 2) continue;
-            var (clusters, needsFullHash) = PartitionClones(collision);
-            // Only one clone family and nothing else: identical by their
-            // extent maps, no hashing needed.
+            var (clusters, needsFullHash) = CloneDetector.Families(collision, f => f.Path, cancellationToken);
+            // Only one clone family and nothing else: one file record or
+            // identical extent maps, no hashing needed.
             if (needsFullHash.Count == 0 && clusters.Count == 1)
             {
+                var ids = clusters[0].Select(c => c.Id).OrderBy(x => x).ToList();
                 groups.Add(new DuplicateGroup(
                     Hash: "shared-extents",
-                    FileIDs: clusters[0].Select(c => c.Id).OrderBy(x => x).ToList(),
+                    FileIDs: ids,
                     SizeEach: size,
-                    SharesStorage: true));
+                    SharesStorage: true) { Stamps = stampsOf(ids) });
                 continue;
             }
             // Otherwise hash one member per clone family (they share blocks,
@@ -366,7 +408,8 @@ public static class DuplicateFinder
             {
                 if (entry.Ids.Count > 1)
                 {
-                    groups.Add(new DuplicateGroup(hash, entry.Ids.OrderBy(x => x).ToList(), size, entry.Sets));
+                    var ids = entry.Ids.OrderBy(x => x).ToList();
+                    groups.Add(new DuplicateGroup(hash, ids, size, entry.Sets) { Stamps = stampsOf(ids) });
                 }
             }
         }
@@ -374,56 +417,46 @@ public static class DuplicateFinder
     }
 
     /// <summary>
-    /// Full extent-map matches become clone groups and never reach
-    /// FullHash. Everyone else, including a clone that has been written
-    /// since, is hashed.
+    /// Online-only now. The scan's NotDownloaded flag can be stale (a long session, a saved
+    /// scan), and opening such a file downloads it: the search must stay offline.
     /// </summary>
-    private static (List<List<(int Id, string Path)>> Clusters, List<(int Id, string Path)> NeedsFullHash)
-        PartitionClones(List<(int Id, string Path)> files)
-    {
-        var remaining = new List<(int Id, string Path)>(files);
-        var clusters = new List<List<(int, string)>>();
-        var needsFullHash = new List<(int, string)>();
-        while (remaining.Count > 0)
-        {
-            var seed = remaining[0];
-            remaining.RemoveAt(0);
-            var cluster = new List<(int, string)> { seed };
-            var rest = new List<(int, string)>();
-            foreach (var other in remaining)
-            {
-                if (CloneDetector.AreLikelyClones(seed.Path, other.Path))
-                    cluster.Add(other);
-                else
-                    rest.Add(other);
-            }
-            remaining = rest;
-            if (cluster.Count > 1) clusters.Add(cluster);
-            else needsFullHash.Add(seed);
-        }
-        return (clusters.Select(c => c.ToList()).ToList(), needsFullHash);
-    }
+    internal static bool IsOnlineOnly(FileAttributes attributes) =>
+        ((uint)attributes & (Win32.FILE_ATTRIBUTE_OFFLINE | Win32.FILE_ATTRIBUTE_RECALL_ON_OPEN
+                             | Win32.FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS)) != 0;
 
-    private static string? PartialHash(string path, int bytes)
+    /// <summary>
+    /// SHA256 of the first 64 KB, and the stamp the page checks again before staging. Null
+    /// when the file is gone, unreadable or online-only.
+    /// </summary>
+    private static (string Hash, FileStamp Stamp)? PartialHash(string path)
     {
+        const int Bytes = 65_536;
+        byte[]? buffer = null;
         try
         {
+            // One stat for both, before the read: a write during the hash then fails the re-check.
+            var info = new FileInfo(path);
+            if (!info.Exists || IsOnlineOnly(info.Attributes)) return null;
+            var stamp = new FileStamp(info.Length, info.LastWriteTimeUtc.Ticks);
+            buffer = ArrayPool<byte>.Shared.Rent(Bytes);
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            var buffer = new byte[bytes];
-            int read = stream.Read(buffer, 0, bytes);
-            return Convert.ToHexString(SHA256.HashData(buffer.AsSpan(0, read)));
+            int read = stream.ReadAtLeast(buffer.AsSpan(0, Bytes), Bytes, throwOnEndOfStream: false);
+            return (Convert.ToHexString(SHA256.HashData(buffer.AsSpan(0, read))), stamp);
         }
         catch { return null; }
+        finally { if (buffer is not null) ArrayPool<byte>.Shared.Return(buffer); }
     }
 
     /// <summary>Streaming SHA256, a megabyte at a time, checking for cancellation between reads.</summary>
     private static string? FullHash(string path, CancellationToken cancellationToken)
     {
+        byte[]? buffer = null;
         try
         {
+            if (IsOnlineOnly(File.GetAttributes(path))) return null;
+            buffer = ArrayPool<byte>.Shared.Rent(1 << 20);
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-            var buffer = new byte[1 << 20];
             int read;
             while ((read = stream.Read(buffer, 0, buffer.Length)) > 0)
             {
@@ -434,5 +467,6 @@ public static class DuplicateFinder
         }
         catch (OperationCanceledException) { throw; }
         catch { return null; }
+        finally { if (buffer is not null) ArrayPool<byte>.Shared.Return(buffer); }
     }
 }
